@@ -86,6 +86,9 @@ if ! openclaw_e2e_maybe_timeout "${OPENCLAW_E2E_NPM_INSTALL_TIMEOUT:-600s}" npm 
   exit 1
 fi
 package_version="$(node -p "JSON.parse(require(\"node:fs\").readFileSync(\"/tmp/npm-prefix/lib/node_modules/openclaw/package.json\", \"utf8\")).version")"
+node scripts/docker/verify-fs-safe-native.mjs \
+  --package-root /tmp/npm-prefix/lib/node_modules/openclaw \
+  --mode require
 OPENCLAW_PACKAGE_ACCEPTANCE_LEGACY_COMPAT="$(
   node scripts/e2e/lib/package-compat.mjs "$package_version"
 )"
