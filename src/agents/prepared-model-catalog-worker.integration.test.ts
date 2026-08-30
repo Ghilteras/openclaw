@@ -42,6 +42,7 @@ import {
   DURABLE_AUTH_KEY,
   EXTERNAL_AUTH_PROFILE_ID,
   EXTERNAL_AUTH_PATH_ENV,
+  resolveProviderCatalogMarker,
   writeFixturePlugin,
 } from "./prepared-model-catalog-worker.test-support.js";
 import {
@@ -56,6 +57,7 @@ import {
   getPreparedModelRuntimeSnapshot,
   refreshPreparedModelRuntimeSnapshots,
 } from "./prepared-model-runtime.js";
+import { prepareScopedReadOnlyLiveModelCatalog } from "./prepared-model-runtime.scoped-catalog.js";
 import { AuthStorage } from "./sessions/auth-storage.js";
 import {
   markPluginMetadataSnapshotProvided,
@@ -94,6 +96,7 @@ function createCatalogFixture(
   envOverride: NodeJS.ProcessEnv = {},
   options?: {
     hydrateExternalCliProviderIds?: readonly string[];
+    providerCatalogEntry?: "./index.cjs" | "./provider-discovery.cjs";
   },
 ) {
   const root = makeTempDir("openclaw-model-catalog-worker-");
@@ -104,7 +107,13 @@ function createCatalogFixture(
   const externalAuthPath = path.join(root, "external-auth.txt");
   fs.mkdirSync(agentDir, { recursive: true });
   fs.mkdirSync(workspaceDir, { recursive: true });
-  const pluginFile = writeFixturePlugin({ root, spinMs });
+  const pluginFile = writeFixturePlugin({
+    root,
+    spinMs,
+    ...(options?.providerCatalogEntry
+      ? { providerCatalogEntry: options.providerCatalogEntry }
+      : {}),
+  });
   fs.writeFileSync(externalAuthPath, "A", "utf8");
   const env = {
     ...process.env,
@@ -255,6 +264,38 @@ async function createReadyWorkerFixture(spinMs: number) {
 describe("prepared model catalog worker boundary", () => {
   beforeEach(() => {
     vi.stubEnv("CODEX_HOME", makeTempDir("openclaw-worker-empty-codex-"));
+  });
+
+  it("fences a retired scoped owner before real plugin catalog I/O", async () => {
+    const fixture = createCatalogFixture(0, {}, { providerCatalogEntry: "./index.cjs" });
+    replacePersistedPluginModelCatalogs({ agentDir: fixture.agentDir, pluginCatalogWrites: {} });
+    const providerCatalogMarker = resolveProviderCatalogMarker(fixture.root);
+    const input = {
+      agentId: "main",
+      agentDir: fixture.agentDir,
+      inheritedAuthDir: fixture.agentDir,
+      workspaceDir: fixture.workspaceDir,
+      config: fixture.config,
+      env: fixture.env,
+      readOnly: true,
+    };
+    const retired = new Error("catalog owner retired");
+
+    await expect(
+      prepareScopedReadOnlyLiveModelCatalog(input, [PROVIDER_ID], () => {
+        throw retired;
+      }),
+    ).rejects.toBe(retired);
+    expect(fs.existsSync(providerCatalogMarker)).toBe(false);
+
+    const current = await prepareScopedReadOnlyLiveModelCatalog(input, [PROVIDER_ID]);
+    expect(fs.readFileSync(providerCatalogMarker, "utf8")).toBe("provider\n");
+    expect(current.entries).toContainEqual(
+      expect.objectContaining({
+        provider: PROVIDER_ID,
+        id: "plugin-generation-v1",
+      }),
+    );
   });
 
   it("preserves prepared catalog ownership across ambient environment changes", async () => {
