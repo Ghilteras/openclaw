@@ -23,6 +23,7 @@ export function writeFixturePlugin(params: {
   root: string;
   spinMs: number;
   pluginVersion?: string;
+  providerCatalogEntry?: "./index.cjs" | "./provider-discovery.cjs";
 }): string {
   const pluginDir = path.join(params.root, "plugin");
   fs.mkdirSync(pluginDir, { recursive: true });
@@ -75,6 +76,10 @@ module.exports = {
       },
       catalog: {
         run(context) {
+          const catalogMarker = process.env.OPENCLAW_WORKER_CATALOG_MARKER;
+          if (${JSON.stringify(params.providerCatalogEntry === "./index.cjs")} && catalogMarker) {
+            fs.appendFileSync(catalogMarker, "provider\\n");
+          }
           const refOnlyApi = context.resolveProviderApiKey(${JSON.stringify(REF_ONLY_API_PROVIDER_ID)}).apiKey;
           const refOnlyToken = context.resolveProviderApiKey(${JSON.stringify(REF_ONLY_TOKEN_PROVIDER_ID)}).apiKey;
           const durableAuth = context.resolveProviderApiKey(${JSON.stringify(DURABLE_AUTH_PROVIDER_ID)}).apiKey;
@@ -143,7 +148,7 @@ module.exports = {
       providers: [PROVIDER_ID],
       cliBackends: [HARNESS_ID, UNRELATED_SYNTHETIC_AUTH_ID],
       syntheticAuthRefs: [HARNESS_ID, UNRELATED_SYNTHETIC_AUTH_ID],
-      providerCatalogEntry: "./provider-discovery.cjs",
+      providerCatalogEntry: params.providerCatalogEntry ?? "./provider-discovery.cjs",
       configSchema: { type: "object", additionalProperties: false, properties: {} },
       contracts: { externalAuthProviders: [PROVIDER_ID] },
       modelCatalog: { discovery: { [PROVIDER_ID]: "runtime" }, runtimeAugment: true },
