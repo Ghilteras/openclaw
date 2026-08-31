@@ -89,7 +89,7 @@ it.skipIf(process.platform === "win32").each([
 );
 
 it.skipIf(process.platform === "win32")(
-  "Kova checkout is complete after its initial public fetch closes",
+  "custom Kova checkout is complete after its initial public fetch closes",
   async () => {
     const report = await runAuthFixture(
       "kova",

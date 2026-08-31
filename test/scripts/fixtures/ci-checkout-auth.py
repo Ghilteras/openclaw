@@ -173,7 +173,8 @@ node() { :; }
                 "RUNNER_TEMP": str(root), "KOVA_HOME": str(home / "kova"),
                 "GITHUB_ENV": str(root / "environment"), "GITHUB_PATH": str(root / "path"),
                 "OCM_VERSION": "fixture", "OCM_LINUX_X64_SHA256": "fixture",
-                "KOVA_REPOSITORY": "fixture/kova", "KOVA_REF": revision})
+                "KOVA_REPOSITORY": "fixture/kova", "KOVA_REF": revision,
+                "KOVA_TRUSTED_LIVE_REF": "trusted-fixture-ref"})
             complete = result.returncode == 0 and (workspace / "payload.txt").read_text() == (source / "payload.txt").read_text()
             local_config = (workspace / ".git/config").read_text()
             assert token not in result.stdout + result.stderr + local_config
