@@ -1406,6 +1406,48 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
     }
   });
 
+  it("matches the transcript fade to split panes without changing the normal chat surface", async () => {
+    const page = await openBrowserPage(800, 240);
+    try {
+      const splitViewCss = readStyleSheet("ui/src/styles/chat/split-view.css");
+      await page.setContent(
+        `<!doctype html><html data-theme-mode="light"><head><style>${readUiCss()}\n${splitViewCss}</style></head><body>
+          <div class="chat-split-view" data-mode="split">
+            <div class="chat-split-view__column">
+              <div class="chat-split-view__cell chat-split-view__cell--active">
+                <div class="chat-main__conversation"></div>
+              </div>
+            </div>
+          </div>
+          <div class="chat-split-view" data-mode="normal">
+            <div class="chat-split-view__column">
+              <div class="chat-split-view__cell">
+                <div class="chat-main__conversation"></div>
+              </div>
+            </div>
+          </div>
+        </body></html>`,
+      );
+
+      const fadeBackgrounds = await page
+        .locator(".chat-split-view")
+        .evaluateAll((views) =>
+          Object.fromEntries(
+            views.map((view) => [
+              (view as HTMLElement).dataset.mode,
+              getComputedStyle(view.querySelector(".chat-main__conversation")!, "::before")
+                .backgroundImage,
+            ]),
+          ),
+        );
+
+      expect(fadeBackgrounds.split).toContain("rgb(250, 249, 247)");
+      expect(fadeBackgrounds.normal).toContain("rgb(244, 241, 236)");
+    } finally {
+      await closeBrowserPage(page);
+    }
+  });
+
   it("keeps the split-pane close button reachable as the pane narrows", async () => {
     const page = await openBrowserPage(1100, 240);
     try {

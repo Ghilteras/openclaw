@@ -50,6 +50,13 @@ openclaw-chat-pane {
   filter: saturate(0.45);
 }
 
+/* Split panes expose the panel beneath their transparent transcript; keep the
+   normal chat fade on --bg-content while preventing a darker split-only band. */
+.chat-split-view:has(> .chat-split-view__column > .chat-split-view__cell--active)
+  .chat-main__conversation::before {
+  background: linear-gradient(to bottom, var(--panel), transparent);
+}
+
 .chat-split-view:has(> .chat-split-view__column > .chat-split-view__cell--active)
   > .chat-split-view__column
   > .chat-split-view__cell:not(.chat-split-view__cell--active)
