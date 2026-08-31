@@ -197,7 +197,14 @@ describe("OpenClaw performance workflow", () => {
     expect(installRun).toContain(
       "--retry 8 --retry-max-time 180 --retry-all-errors --retry-connrefused",
     );
+    expect(readWorkflow().env?.KOVA_ARCHIVE_SHA256).toBe(
+      "8cb2f4dd90e1bd5a5615d5d14f7766136057c4c5e66d399b5efb4d59a50dee7e",
+    );
+    expect(installRun).toContain('echo "${KOVA_ARCHIVE_SHA256}  ${kova_archive}" | sha256sum -c -');
     expect(installRun).toContain('tar -xzf "$kova_archive" --strip-components=1');
+    expect(
+      installRun.indexOf('echo "${KOVA_ARCHIVE_SHA256}  ${kova_archive}" | sha256sum -c -'),
+    ).toBeLessThan(installRun.indexOf('tar -xzf "$kova_archive" --strip-components=1'));
     expect(installRun).not.toContain('-C "$KOVA_SRC" fetch');
     expect(installRun).toContain(
       'npm --prefix "$KOVA_SRC" ci --ignore-scripts --no-audit --no-fund',
