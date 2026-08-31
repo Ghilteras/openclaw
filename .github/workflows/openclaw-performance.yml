@@ -75,6 +75,7 @@ env:
   OCM_VERSION: v0.2.33
   OCM_LINUX_X64_SHA256: 06b0e46791e750eb044e4a898b6643ad5e7b20224fe0c64f160e35a42f08d00a
   KOVA_REPOSITORY: openclaw/Kova
+  KOVA_ARCHIVE_SHA256: 8cb2f4dd90e1bd5a5615d5d14f7766136057c4c5e66d399b5efb4d59a50dee7e
   KOVA_CANONICAL_CONFIG_REF: 81919463ef9620722373c813192c688573f2b533
   KOVA_LEGACY_LIST_CONFIG_REF: 81919463ef9620722373c813192c688573f2b533
   KOVA_TRUSTED_LIVE_REF: 81919463ef9620722373c813192c688573f2b533
@@ -419,12 +420,24 @@ jobs:
           tar -xzf "$ocm_archive" -C "${RUNNER_TEMP}/ocm-install"
           install -m 0755 "${RUNNER_TEMP}/ocm-install/ocm" "$HOME/.local/bin/ocm"
 
-          python3 -I -S "$CI_GIT_OWNER" --git 0 init -b main "$KOVA_SRC"
-          python3 -I -S "$CI_GIT_OWNER" --git 0 -C "$KOVA_SRC" remote add origin "https://github.com/${KOVA_REPOSITORY}.git"
-          # The complete worktree is consumed next; do not defer its blobs to a
-          # second unauthenticated promisor fetch during checkout.
-          python3 -I -S "$CI_GIT_OWNER" --git 0 -C "$KOVA_SRC" fetch --depth 1 origin "$KOVA_REF"
-          python3 -I -S "$CI_GIT_OWNER" --git 0 -C "$KOVA_SRC" checkout --detach FETCH_HEAD
+          if [[ "$KOVA_REF" == "$KOVA_TRUSTED_LIVE_REF" ]]; then
+            kova_archive="${RUNNER_TEMP}/kova-${KOVA_REF}.tar.gz"
+            mkdir -p "$KOVA_SRC"
+            curl -fsSL --proto '=https' --tlsv1.2 \
+              --max-time 180 \
+              --retry 8 --retry-max-time 180 --retry-all-errors --retry-connrefused \
+              -o "$kova_archive" \
+              "https://codeload.github.com/${KOVA_REPOSITORY}/tar.gz/${KOVA_REF}"
+            echo "${KOVA_ARCHIVE_SHA256}  ${kova_archive}" | sha256sum -c -
+            tar -xzf "$kova_archive" --strip-components=1 -C "$KOVA_SRC"
+          else
+            python3 -I -S "$CI_GIT_OWNER" --git 0 init -b main "$KOVA_SRC"
+            python3 -I -S "$CI_GIT_OWNER" --git 0 -C "$KOVA_SRC" remote add origin "https://github.com/${KOVA_REPOSITORY}.git"
+            # The complete worktree is consumed next; do not defer its blobs to a
+            # second unauthenticated promisor fetch during checkout.
+            python3 -I -S "$CI_GIT_OWNER" --git 0 -C "$KOVA_SRC" fetch --depth 1 origin "$KOVA_REF"
+            python3 -I -S "$CI_GIT_OWNER" --git 0 -C "$KOVA_SRC" checkout --detach FETCH_HEAD
+          fi
           npm --prefix "$KOVA_SRC" ci --ignore-scripts --no-audit --no-fund
           node - "$KOVA_SRC" <<'NODE'
           const fs = require("node:fs");

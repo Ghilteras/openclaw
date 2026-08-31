@@ -192,6 +192,14 @@ describe("OpenClaw performance workflow", () => {
       "${{ needs.resolve_target.outputs.kova_ref_trusted_for_live }}",
     );
     expect(installRun).toContain(
+      "https://codeload.github.com/${KOVA_REPOSITORY}/tar.gz/${KOVA_REF}",
+    );
+    expect(installRun).toContain(
+      "--retry 8 --retry-max-time 180 --retry-all-errors --retry-connrefused",
+    );
+    expect(installRun).toContain('tar -xzf "$kova_archive" --strip-components=1');
+    expect(installRun).not.toContain('-C "$KOVA_SRC" fetch');
+    expect(installRun).toContain(
       'npm --prefix "$KOVA_SRC" ci --ignore-scripts --no-audit --no-fund',
     );
     expect(installRun).toContain('require.resolve("mock-ai-provider/package.json", {');
