@@ -76,7 +76,11 @@ import {
   isUiIsolatedTestFile,
   uiIsolatedTestFiles,
 } from "../test/vitest/vitest.ui-isolated-paths.mjs";
-import { isUiBrowserTestFile } from "../test/vitest/vitest.ui-paths.mjs";
+import {
+  isControlUiSourcePath,
+  isPluginControlUiPath,
+  isUiBrowserTestFile,
+} from "../test/vitest/vitest.ui-paths.mjs";
 import {
   getUnitFastIsolatedTestFiles,
   getUnitFastTestFiles,
@@ -1312,7 +1316,10 @@ function expandExplicitSourceTestTargets(targetArgs: string[], cwd: string) {
   const forceFullImportGraph = sourceTargetCount > EXPLICIT_SOURCE_FULL_IMPORT_GRAPH_THRESHOLD;
   return targetArgs.flatMap((targetArg) => {
     const relative = toRepoRelativeTarget(targetArg, cwd);
-    if (isPathAtOrUnder(relative, "ui") && isGlobTarget(relative)) {
+    if (
+      (isPathAtOrUnder(relative, "ui") || isPluginControlUiPath(relative)) &&
+      isGlobTarget(relative)
+    ) {
       // Expand mixed browser globs before assigning files to their disjoint runners.
       const targets = listExplicitTestTargetFilesForCwd(cwd).filter(
         (file) => isTestFileTarget(file) && path.matchesGlob(file, relative),
@@ -1957,7 +1964,7 @@ function isControlUiE2eTarget(relative: string) {
     relative === "ui/src/test-helpers/control-ui-e2e.ts" ||
     relative === "ui/src/e2e" ||
     relative.startsWith("ui/src/e2e/") ||
-    (relative.startsWith("ui/src/") && relative.endsWith(".e2e.test.ts"))
+    (isControlUiSourcePath(relative) && relative.endsWith(".e2e.test.ts"))
   );
 }
 
@@ -3279,7 +3286,7 @@ function shouldCombineSiblingTestWithImportGraph(changedPath: string) {
 }
 
 function shouldRouteChangedTargetWithoutImportGraph(changedPath: string) {
-  return changedPath.endsWith(".live.test.ts") || changedPath.startsWith("ui/src/");
+  return changedPath.endsWith(".live.test.ts") || isControlUiSourcePath(changedPath);
 }
 
 function resolvePromptSnapshotFixtureTargets(changedPath: string) {
@@ -3335,7 +3342,7 @@ function resolvePreciseChangedTestTargets(
     return [siblingTest];
   }
   if (shouldRouteChangedTargetWithoutImportGraph(changedPath)) {
-    return changedPath.startsWith("ui/src/") ? [changedPath] : null;
+    return isControlUiSourcePath(changedPath) ? [changedPath] : null;
   }
   if (options.skipImportGraph === true) {
     return null;
@@ -3493,7 +3500,7 @@ function classifyTarget(arg: string, cwd: string) {
   if (isUiBrowserTestFile(relative)) {
     return "uiBrowser";
   }
-  if (isPathAtOrUnder(relative, "ui")) {
+  if (isPathAtOrUnder(relative, "ui") || isPluginControlUiPath(relative)) {
     return "ui";
   }
   if (relative.startsWith("src/tui/tui-pty-") || tuiPtyTestFiles.includes(relative)) {
@@ -3784,7 +3791,10 @@ function shouldUseWholeConfigTarget(kind: string, targetArg: string, cwd: string
   if (isTestFileTarget(relative) || isExistingDirectoryTarget(targetArg, cwd)) {
     return false;
   }
-  return relative.startsWith("ui/src/");
+  if (isPluginControlUiPath(relative) && !isLikelyFileTarget(relative)) {
+    return false;
+  }
+  return isControlUiSourcePath(relative);
 }
 
 function createVitestArgs(
@@ -3868,9 +3878,13 @@ export function buildVitestRunPlans(
   const requestedTargetArgs = changedTargetArgs ?? targetArgs;
   if (
     watchMode &&
-    requestedTargetArgs.some(
-      (target) => isPathAtOrUnder(toRepoRelativeTarget(target, cwd), "ui") && isGlobTarget(target),
-    )
+    requestedTargetArgs.some((target) => {
+      const relative = toRepoRelativeTarget(target, cwd);
+      return (
+        (isPathAtOrUnder(relative, "ui") || isPluginControlUiPath(relative)) &&
+        isGlobTarget(relative)
+      );
+    })
   ) {
     throw new Error(
       "watch mode with UI glob targets is not supported; use a literal test path, directory, or dedicated UI suite",

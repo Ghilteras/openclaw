@@ -314,6 +314,7 @@ export async function writeConfigFile(
     skipPluginValidation: options.skipPluginValidation,
     preservedLegacyRootKeys: options.preservedLegacyRootKeys,
     lastTouchedVersionOverride: options.lastTouchedVersionOverride,
+    beforeCommit: options.beforeCommit,
     preCommitRuntimePreflight: async (sourceConfig) => {
       if (deferRuntimeActivation) {
         managedPreparedCandidates = await preflightManagedRuntimeConfigWrite(

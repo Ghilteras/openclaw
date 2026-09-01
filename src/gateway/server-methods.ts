@@ -105,6 +105,10 @@ const CORE_GATEWAY_HANDLER_MODULES = {
   connect: () => import("./server-methods/connect.js").then((module) => module.connectHandlers),
   "control-ui": () =>
     import("./server-methods/control-ui.js").then((module) => module.controlUiHandlers),
+  "plugins-control-ui": () =>
+    import("./server-methods/plugins-control-ui.js").then(
+      (module) => module.pluginsControlUiHandlers,
+    ),
   cron: () => import("./server-methods/cron.js").then((module) => module.cronHandlers),
   devices: () => import("./server-methods/devices.js").then((module) => module.deviceHandlers),
   "device-pair-setup": () =>

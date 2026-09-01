@@ -7,7 +7,8 @@ export type SidebarSlotId =
   | "discussion"
   | "tasks"
   | "terminal"
-  | "workspace";
+  | "workspace"
+  | `plugin:${string}/${string}`;
 export type SidebarPanel = { id: string; slot: SidebarSlotId };
 export type SidebarDock = "bottom" | "right";
 export type SidebarColumn = {
