@@ -53,7 +53,9 @@ if (JSON.stringify(args) === JSON.stringify(['pnpm', 'install', '--frozen-lockfi
 } else { console.error('unexpected corepack arguments', args); process.exit(92); }
 `,
   );
-  for (const file of [payload, corepack]) chmodSync(file, 0o755);
+  for (const file of [payload, corepack]) {
+    chmodSync(file, 0o755);
+  }
   return {
     bin,
     payload,

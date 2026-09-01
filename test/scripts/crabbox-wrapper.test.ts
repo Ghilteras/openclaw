@@ -4073,7 +4073,9 @@ run_remote_testbox_full_test_gate tests unused.log fixture`,
         );
         expect(rejected.result.status).toBe(2);
         expect(rejected.result.stdout).toBe("");
-        if (preparation) expect(preparation.readEvents()).toHaveLength(4);
+        if (preparation) {
+          expect(preparation.readEvents()).toHaveLength(4);
+        }
       }
       const emptyOrigin = path.join(root, "empty-origin");
       mkdirSync(emptyOrigin);
@@ -4086,7 +4088,9 @@ run_remote_testbox_full_test_gate tests unused.log fixture`,
       );
       expect(missingBase.result.status).toBe(2);
       expect(missingBase.result.stdout).toBe("");
-      if (preparation) expect(preparation.readEvents()).toHaveLength(4);
+      if (preparation) {
+        expect(preparation.readEvents()).toHaveLength(4);
+      }
     },
   );
 
