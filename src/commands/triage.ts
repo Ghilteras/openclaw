@@ -474,6 +474,7 @@ export async function triageCommand(
     );
   }
 
+  // Preflight and repair must validate the same local transport and installation.
   const result = await withInstallationTarget(target, async () => {
     const { verifySetupInference } = await import("../system-agent/setup-inference.js");
     if (!isCurrent()) return { exitCode: 1 };

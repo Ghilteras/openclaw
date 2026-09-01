@@ -222,7 +222,15 @@ describe.skipIf(process.platform === "win32")("embedded triage installation targ
                   },
                 ]);
                 mocks.writeDiagnosticSupportExport.mockResolvedValue({ path: archivePath });
-                mocks.verifySetupInference.mockResolvedValue({ ok: true });
+                const target = resolveInstallationTarget();
+                const observedTargets: Record<
+                  string,
+                  ReturnType<typeof getInstallationTarget>
+                > = {};
+                mocks.verifySetupInference.mockImplementation(async () => {
+                  observedTargets.preflight = getInstallationTarget();
+                  return { ok: true };
+                });
                 const runtime = {
                   log: vi.fn(),
                   error: vi.fn(),
@@ -254,6 +262,7 @@ describe.skipIf(process.platform === "win32")("embedded triage installation targ
                 const controller = new AbortController();
                 const runFailure = new Error("synthetic run failure");
                 mocks.agentCommand.mockImplementation(async (opts: Record<string, unknown>) => {
+                  observedTargets.repair = getInstallationTarget();
                   const prompt = String(opts.message);
                   const archiveReference = /^Sanitized ZIP: (.+)$/mu.exec(prompt)?.[1];
                   expect(archiveReference).toBe(
@@ -343,6 +352,7 @@ describe.skipIf(process.platform === "win32")("embedded triage installation targ
                 expect(runtime.error.mock.calls).toEqual(fails ? [["synthetic run failure"]] : []);
                 expect(runtime.exit.mock.calls).toEqual(fails ? [[1]] : []);
                 expect(getInstallationTarget()).toBeUndefined();
+                expect(observedTargets).toEqual({ preflight: target, repair: target });
                 expect(mocks.agentCommand).toHaveBeenCalledOnce();
                 expect(execSpy).toHaveBeenCalledOnce();
                 expect(execSpy.mock.calls[0]?.[1].stateDir).toBeUndefined();
