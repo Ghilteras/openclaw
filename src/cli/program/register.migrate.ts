@@ -11,18 +11,7 @@ import {
 import { defaultRuntime } from "../../runtime.js";
 import { runCommandWithRuntime } from "../cli-utils.js";
 import { formatHelpExamples } from "../help-format.js";
-
-function collectMigrationSkill(value: string, previous: string[] | undefined): string[] {
-  return [...(previous ?? []), value];
-}
-
-function collectMigrationPlugin(value: string, previous: string[] | undefined): string[] {
-  return [...(previous ?? []), value];
-}
-
-function collectMigrationItem(value: string, previous: string[] | undefined): string[] {
-  return [...(previous ?? []), value];
-}
+import { collectOption } from "./helpers.js";
 
 function readMigrationItems(value: unknown, command?: Command): string[] | undefined {
   const selected = Array.isArray(value) ? value : command?.parent?.opts().item;
@@ -33,7 +22,7 @@ function addMigrationSkillOption(command: Command): Command {
   return command.option(
     "--skill <name>",
     "Select one skill to migrate by name or item id; repeat for multiple skills",
-    collectMigrationSkill,
+    collectOption,
   );
 }
 
@@ -41,7 +30,7 @@ function addMigrationPluginOption(command: Command): Command {
   return command.option(
     "--plugin <name>",
     "Select one Codex plugin to migrate by name or item id; repeat for multiple plugins",
-    collectMigrationPlugin,
+    collectOption,
   );
 }
 
@@ -57,7 +46,7 @@ function addMigrationItemOption(command: Command): Command {
   return command.option(
     "--item <id>",
     "Select one exact migration item id; repeat for multiple items",
-    collectMigrationItem,
+    collectOption,
   );
 }
 
@@ -112,17 +101,17 @@ export function registerMigrateCommand(program: Command) {
       .option(
         "--skill <name>",
         "Select one skill to migrate by name or item id; repeat for multiple skills",
-        collectMigrationSkill,
+        collectOption,
       )
       .option(
         "--plugin <name>",
         "Select one Codex plugin to migrate by name or item id; repeat for multiple plugins",
-        collectMigrationPlugin,
+        collectOption,
       )
       .option(
         "--item <id>",
         "Select one exact migration item id; repeat for multiple items",
-        collectMigrationItem,
+        collectOption,
       )
       .option("--backup-output <path>", "Pre-migration backup archive path or directory")
       .option("--no-backup", "Skip the pre-migration OpenClaw backup")

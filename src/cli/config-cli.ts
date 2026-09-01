@@ -42,6 +42,7 @@ import { isConfigMachineOutput, isConfigSetJsonParseOnly } from "./config-output
 import { parseConfigSetCurrentExpectation, type ConfigSetOptions } from "./config-set-input.js";
 import { formatCliJsonFailure } from "./failure-output.js";
 import { exitCliAfterOutput } from "./one-shot-exit.js";
+import { collectOption } from "./program/helpers.js";
 import { setCommandJsonMode } from "./program/json-mode.js";
 import { quoteCliArg } from "./quote-cli-arg.js";
 
@@ -303,10 +304,6 @@ async function runConfigValidate(opts: { json?: boolean; runtime?: RuntimeEnv } 
     }
     exitCliAfterOutput(runtime, 1);
   }
-}
-
-function collectOption(value: string, previous: string[]): string[] {
-  return [...previous, value];
 }
 
 export function registerConfigCli(program: Command) {

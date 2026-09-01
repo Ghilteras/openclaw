@@ -3,6 +3,7 @@ import { parseStrictInteger } from "@openclaw/normalization-core/number-coercion
 import { InvalidArgumentError, type Command } from "commander";
 import type { CaptureQueryPreset } from "../proxy-capture/types.js";
 import { createLazyImportLoader } from "../shared/lazy-promise.js";
+import { collectOption } from "./program/helpers.js";
 import { setCommandJsonMode } from "./program/json-mode.js";
 import { isProxyMachineOutput } from "./proxy-output-mode.js";
 
@@ -39,10 +40,6 @@ function parsePositiveIntegerOption(value: string | undefined, flag: string): nu
     throw new InvalidArgumentError(`${flag} must be a positive integer.`);
   }
   return parsed;
-}
-
-function collectOption(value: string, previous: string[] | undefined): string[] {
-  return [...(previous ?? []), value];
 }
 
 export function registerProxyCli(program: Command) {

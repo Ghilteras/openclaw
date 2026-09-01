@@ -1,6 +1,7 @@
 // Commander registration for experimental Claws inspection and add previews.
 import type { Command } from "commander";
 import { isExperimentalClawsEnabled } from "../claws/experimental.js";
+import { collectOption } from "./program/helpers.js";
 import { applyParentDefaultHelpAction } from "./program/parent-default-help.js";
 
 export type ClawsInspectOptions = {
@@ -43,10 +44,6 @@ export type ClawsRemoveOptions = {
   json?: boolean;
 };
 export type ClawsExportOptions = { out: string; bootstrap?: string; json?: boolean };
-
-function collectOption(value: string, previous: string[]): string[] {
-  return [...previous, value];
-}
 
 export function registerClawsCli(program: Command) {
   if (!isExperimentalClawsEnabled()) {
