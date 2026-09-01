@@ -1,5 +1,6 @@
 // Update failures and control-plane results share one reporting boundary.
 import { theme } from "../../../packages/terminal-core/src/theme.js";
+import type { TriageFailureContext } from "../../commands/triage-prompt.js";
 import {
   markControlPlaneUpdateRestartSentinelFailure,
   resolveManagedServiceUpdateFailureExitCode,
@@ -20,6 +21,7 @@ export class UpdateCommandFailure extends Error {
     readonly exitCode = 1,
     readonly detail?: string,
     options?: ErrorOptions,
+    readonly automaticTriage?: TriageFailureContext,
   ) {
     super(detail ?? result.reason ?? "Update failed", options);
     this.name = "UpdateCommandFailure";

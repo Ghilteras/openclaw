@@ -387,9 +387,10 @@ async function runManagedServiceManagerBoundary(
       }
     };
     expect(readLease()).toEqual({
-      version: 1,
-      pid: runningHelper.pid,
-      startIdentity: expect.any(String),
+      version: 2,
+      executor: { pid: runningHelper.pid, startIdentity: expect.any(String) },
+      helper: { pid: runningHelper.pid, startIdentity: expect.any(String) },
+      action: { kind: "update" },
     });
     await expect(pathExists(commandsPath)).resolves.toBe(false);
     if (options?.controlDisconnect) {
@@ -587,6 +588,7 @@ describe("managed service update handoff", () => {
 
   it("rejects failed helper spawns and removes the sensitive handoff directory", async () => {
     const child = createSpawnMock();
+    Reflect.deleteProperty(child, "pid");
     // Fire after spawn installs readiness listeners; preparation has no one-second deadline.
     spawnMock.mockImplementationOnce(() => {
       process.nextTick(() => {

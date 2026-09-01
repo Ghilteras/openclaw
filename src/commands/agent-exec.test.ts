@@ -196,6 +196,25 @@ describe("agent exec strict result classification", () => {
 });
 
 describe("agent exec command composition", () => {
+  it("cancels a failure-owned turn and removes its temporary state", async () => {
+    const { runtime } = createRuntime();
+    const controller = new AbortController();
+    let stateDir = "";
+    const result = await agentExecCommand("inspect", { authEnvOnly: true }, runtime, {
+      abortSignal: controller.signal,
+      runAgent: async (invocation) => {
+        stateDir = process.env.OPENCLAW_STATE_DIR!;
+        const signal = invocation.abortSignal as AbortSignal;
+        expect(signal).toBe(controller.signal);
+        controller.abort(new Error("operator stopped the Gateway"));
+        signal.throwIfAborted();
+        return successResult();
+      },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.envelope.error?.message).toContain("operator stopped the Gateway");
+    await expect(fs.stat(stateDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
   it("writes plain final text to stdout when diagnostics are routed to stderr", async () => {
     const source = `
       import { agentExecCommand } from "./src/commands/agent-exec.ts";

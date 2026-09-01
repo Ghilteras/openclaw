@@ -1,3 +1,4 @@
+import { triageAfterFailure } from "../../commands/triage-failure.js";
 import {
   sanitizeTriageUpdateFailure,
   writeTriageUpdateFailure,
@@ -13,6 +14,7 @@ import { classifyUpdateOutcome } from "../../shared/update-outcome.js";
 import { exitCliAfterOutput } from "../one-shot-exit.js";
 import { isTerminalInteractive } from "../terminal-interactivity.js";
 import { resolveNodeRunner, resolveUpdateRoot, type UpdateCommandOptions } from "./shared.js";
+import { withOwnedManagedUpdateEnv } from "./update-command-managed-context.js";
 import { UpdateCommandFailure } from "./update-command-result.js";
 
 export type UpdateTriageTarget = TriageTarget & { failureResult?: UpdateRunResult };
@@ -52,7 +54,29 @@ export async function withUpdateFailureTriage(
             ...(target.failureResult ? { result: target.failureResult } : {}),
             error: formatErrorMessage(error),
           };
-      if (target.env.OPENCLAW_UPDATE_RUN_HANDOFF === "1") {
+      if (mode !== "interactive" && reportedFailure && error.automaticTriage) {
+        let updateResultPath: string | undefined;
+        try {
+          const meta = await readControlPlaneUpdateSentinelMeta(target.env);
+          updateResultPath = await writeTriageUpdateFailure(failure, {
+            env: target.env,
+            ...(meta?.triageContextPath ? { outputPath: meta.triageContextPath } : {}),
+          });
+        } catch (exportError) {
+          const diagnostic = sanitizeTriageUpdateFailure(
+            { error: formatErrorMessage(exportError) },
+            { env: target.env, stateDir: resolveStateDir(target.env) },
+          );
+          defaultRuntime.error(
+            `Update failure diagnostics could not be saved: ${diagnostic.error}`,
+          );
+        }
+        // Finalization records eligibility; this outer owner starts the sole repair
+        // only after update locks and service compensation have unwound.
+        await withOwnedManagedUpdateEnv(target.env, () =>
+          triageAfterFailure(defaultRuntime, error.automaticTriage!, undefined, updateResultPath),
+        );
+      } else if (target.env.OPENCLAW_UPDATE_RUN_HANDOFF === "1") {
         // This code was loaded before replacement. The helper stays dependency-free
         // and starts installed triage only after its own recovery has settled.
         try {

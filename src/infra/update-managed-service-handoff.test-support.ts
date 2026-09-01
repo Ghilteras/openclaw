@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Writable } from "node:stream";
-import { getFileLockProcessStartTime } from "../shared/pid-alive.js";
+import { readManagedHandoffProcessStartTime as getFileLockProcessStartTime } from "./update-managed-service-handoff-lease.js";
 
 export type MockManagedUpdateHandoffLeaseFailure =
   | "absent"
@@ -26,6 +26,9 @@ export function signalMockManagedUpdateHandoffReady(params: {
     updateLeaseDatabasePath: string;
     updateLeaseKey: string;
     updateLeaseOwner: string;
+    action: "update" | "triage";
+    scopeUnit: string;
+    serviceRecovery: { unit: string };
   };
   const startIdentity = params.startIdentity ?? getFileLockProcessStartTime(child.pid);
   if (startIdentity === null) {
@@ -35,9 +38,25 @@ export function signalMockManagedUpdateHandoffReady(params: {
   const owner =
     failure === "wrong-owner" ? `${lease.updateLeaseOwner}-replacement` : lease.updateLeaseOwner;
   const payload = JSON.stringify({
-    version: 1,
-    pid: failure === "dead-helper" ? child.pid + 1_000_000 : child.pid,
-    startIdentity: failure === "malformed" ? null : String(startIdentity),
+    version: 2,
+    executor: {
+      pid: failure === "dead-helper" ? child.pid + 1_000_000 : child.pid,
+      startIdentity: failure === "malformed" ? null : String(startIdentity),
+    },
+    helper: { pid: child.pid, startIdentity: String(startIdentity) },
+    action:
+      lease.action === "triage"
+        ? {
+            kind: "triage",
+            phase: "reserved",
+            lifetime: {
+              kind: "native",
+              unit: lease.serviceRecovery.unit,
+              scope: lease.scopeUnit,
+              placement: { kind: "attached", invocation: "a".repeat(32) },
+            },
+          }
+        : { kind: "update" },
   });
   const db = new DatabaseSync(lease.updateLeaseDatabasePath);
   try {

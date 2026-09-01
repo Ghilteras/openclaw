@@ -87,6 +87,57 @@ describe("renderTriagePrompt", () => {
     expect(prompt).toContain("...");
   });
 
+  it("bounds automatic failure evidence without losing verification goals", () => {
+    const findings: HealthFinding[] = Array.from({ length: 25 }, (_, index) => ({
+      checkId: `core/check-${index}`,
+      severity: "warning",
+      message: "🦞".repeat(4_000),
+      fixHint: "修".repeat(4_000),
+    }));
+
+    const prompt = renderTriagePrompt({
+      findings,
+      bundle: { kind: "skipped" },
+      redaction,
+      failure: {
+        kind: "update",
+        phase: "restart-unhealthy",
+        error: `Authorization: Bearer sk-test-triage-secret-1234567890 ${"🦞".repeat(4_000)}`,
+        expectedVersion: "2026.8.31",
+        gateway: "verify-running",
+      },
+    });
+
+    expect(Buffer.byteLength(prompt, "utf8")).toBeLessThanOrEqual(8 * 1024);
+    // Every finding is either rendered or explicitly counted as omitted, and the
+    // trailing sections survive because findings are fitted to the byte budget.
+    const rendered = prompt.match(/^- \[warning\]/gmu)?.length ?? 0;
+    expect(rendered).toBeGreaterThan(0);
+    expect(prompt).toContain(
+      `${findings.length - rendered} more findings omitted; run \`openclaw doctor\` for the full list.`,
+    );
+    expect(prompt).toContain("## Privacy");
+    expect(prompt).not.toContain("\uFFFD");
+    expect(prompt).toContain("...");
+    expect(prompt).toContain("restart-unhealthy");
+    expect(prompt).not.toContain("sk-test-triage-secret-1234567890");
+    expect(prompt).toContain("openclaw health --json");
+    expect(prompt).toContain("openclaw gateway status --deep");
+    expect(prompt).toContain("2026.8.31");
+    expect(prompt).toContain("original symptom");
+  });
+
+  it("preserves deliberate stopped state in the repair goal", () => {
+    const prompt = renderTriagePrompt({
+      findings: [],
+      bundle: { kind: "skipped" },
+      redaction,
+      failure: { kind: "update", phase: "build", error: "build failed", gateway: "preserve" },
+    });
+    expect(prompt).toContain("Do not start or restart the Gateway");
+    expect(prompt).toContain("remaining blocker");
+  });
+
   it("keeps the failed attempt ahead of healthy Doctor results and sanitizes its evidence", () => {
     const secret = "sk-test-update-triage-secret-1234567890";
     const prompt = renderTriagePrompt({

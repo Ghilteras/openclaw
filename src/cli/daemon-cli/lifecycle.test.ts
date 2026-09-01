@@ -4,6 +4,7 @@ import { mockSystemAccountHome } from "../../daemon/service.test-helpers.js";
 import { captureEnv } from "../../test-utils/env.js";
 import {
   expectRestartError,
+  registerDisabledSystemdStopTests,
   requireMockCallArg,
   type RestartParams,
 } from "./lifecycle.test-helpers.js";
@@ -753,16 +754,11 @@ describe("runDaemonRestart health checks", () => {
     expect(stopParams.stopWhenNotLoaded).toBe(true);
   });
 
-  it("stops a running disabled systemd unit through the service manager", async () => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-    service.readRuntime.mockResolvedValue({ status: "running" });
-
-    await runUnmanagedStop();
-
-    expect(service.stop).toHaveBeenCalledWith(
-      expect.objectContaining({ env: process.env, stdout: process.stdout }),
-    );
-    expect(findVerifiedGatewayListenerPidsOnPortSync).not.toHaveBeenCalled();
+  registerDisabledSystemdStopTests({
+    service,
+    findInstalledSystemdGatewayScope,
+    findVerifiedGatewayListenerPidsOnPortSync,
+    runUnmanagedStop,
   });
 
   it("skips gateway port resolution on stop when the service manager handles the stop", async () => {
@@ -1030,6 +1026,8 @@ describe("runDaemonRestart health checks", () => {
 
   function mockSystemdScope(unit: string) {
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    service.readRuntime.mockResolvedValue({ status: "stopped", state: "failed" });
+    service.stop.mockImplementation(stopSystemdService);
     findInstalledSystemdGatewayScope.mockResolvedValue({
       scope: "system" as const,
       unitName: unit,

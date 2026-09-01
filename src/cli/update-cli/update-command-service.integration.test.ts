@@ -27,6 +27,7 @@ import {
   writeRecoveryConfig,
 } from "./update-command-service-recovery.test-support.js";
 import { registerInstallRootTransitionTests } from "./update-command-service-transition.test-support.js";
+import { registerTriageMaintenancePolicyTests } from "./update-command-service-triage.test-support.js";
 import {
   maybeRestartService,
   maybeStopManagedServiceBeforeMutableUpdate,
@@ -246,6 +247,8 @@ afterEach(async () => {
 });
 
 describe("preserved update activation with real version guards", () => {
+  registerTriageMaintenancePolicyTests(() => ({ root, events: mocks.events }));
+
   it.each([
     ...(
       [

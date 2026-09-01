@@ -55,8 +55,6 @@ export {
   revalidateManagedGatewayServiceAfterUpdate,
   resolvePreparedGatewayUpdatePolicy,
   resolveUpdatedGatewayRestartPort,
-  shouldBlockMutableUpdateFromGatewayServiceEnv,
-  UpdateCommandAbort,
   type PreManagedServiceStop,
   type UpdateCommandRecoveryState,
 } from "./update-command-service-maintenance.js";

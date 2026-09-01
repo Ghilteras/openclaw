@@ -424,7 +424,7 @@ export function createManagedServiceLaunchdClockPreload(params: {
     "  }",
     "  const child = actualSpawn(command, args, options);",
     // Advance only when the exact guarded restart closes, before the helper resumes.
-    `  if (command === process.execPath && args.at(-1) === ${JSON.stringify(JSON.stringify(params.recoveryCommandArgv))}) {`,
+    `  if (command === ${JSON.stringify(params.recoveryCommandArgv[0])} && JSON.stringify(args.slice(-${params.recoveryCommandArgv.length - 1})) === ${JSON.stringify(JSON.stringify(params.recoveryCommandArgv.slice(1)))}) {`,
     `    child.once("close", () => { elapsed += ${params.recoveryClockAdvanceMs ?? 0}; });`,
     "  }",
     "  return child;",

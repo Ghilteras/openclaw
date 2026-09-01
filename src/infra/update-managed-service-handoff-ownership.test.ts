@@ -272,14 +272,13 @@ const childProcess = require("node:child_process");
 const originalSpawn = childProcess.spawn;
 const closedPath = ${JSON.stringify(runnerClosedPath)};
 childProcess.spawn = function(command, args, options) {
-  if (command !== process.execPath || args[0] !== "-e" ||
-      !args[1].includes('process.stdin.once("data"')) {
+  if (command !== process.execPath || !args.includes("--import") || !options.stdio.includes("ipc")) {
     return originalSpawn.apply(this, arguments);
   }
   const runnerScript = 'const fs=require("node:fs");fs.closeSync(0);' +
     'fs.writeFileSync(' + JSON.stringify(closedPath) + ',String(process.pid));' +
     'setTimeout(() => process.exit(0),5000)';
-  const child = originalSpawn.call(this, command, ["-e", runnerScript, args[2]], options);
+  const child = originalSpawn.call(this, command, ["-e", runnerScript], options);
   const deadline = Date.now() + 5000;
   const waitWord = new Int32Array(new SharedArrayBuffer(4));
   while (!fs.existsSync(closedPath) && Date.now() < deadline) {

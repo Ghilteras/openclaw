@@ -48,7 +48,11 @@ import {
   appendGatewayLifecycleAudit,
   createGatewayLifecycleMutationAudit,
 } from "./lifecycle-audit.js";
-import { resolveGatewayConfigPorts, resolveGatewayLifecycleContext } from "./lifecycle-context.js";
+import {
+  resolveGatewayConfigPorts,
+  resolveGatewayLifecycleContext,
+  shouldStopUnloadedSystemdService,
+} from "./lifecycle-context.js";
 import {
   runServiceRestart,
   runServiceStart,
@@ -488,18 +492,14 @@ export async function runDaemonStop(opts: DaemonLifecycleOptions = {}) {
     opts,
     stopWhenNotLoaded: process.platform === "darwin" && Boolean(opts.disable),
     onNotLoaded: async ({ stdout }) => {
-      if (process.platform === "linux") {
-        const runtime = await service.readRuntime(process.env).catch(() => null);
-        if (runtime?.status === "running") {
-          // systemd can run a disabled unit with Restart=always. Stop it through
-          // systemctl so a process-level SIGTERM cannot trigger a respawn.
-          await service.stop({
-            env: process.env,
-            stdout,
-            onMutation: createGatewayLifecycleMutationAudit({ action: "stop" }),
-          });
-          return { result: "stopped" };
-        }
+      if (process.platform === "linux" && (await shouldStopUnloadedSystemdService(service))) {
+        // Native STOP cancels disabled-unit respawn and stopped-unit recovery scopes.
+        await service.stop({
+          env: process.env,
+          stdout,
+          onMutation: createGatewayLifecycleMutationAudit({ action: "stop" }),
+        });
+        return { result: "stopped" };
       }
       // An unmanaged run loop keeps its lock port across config edits, so use it
       // for discovery the way restart already does; otherwise a valid port

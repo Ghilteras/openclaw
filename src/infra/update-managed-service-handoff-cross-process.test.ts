@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isPidAlive } from "../shared/pid-alive.js";
@@ -75,7 +76,6 @@ async function prepareConcurrentHandoffHelper(): Promise<{
   helperScriptPath: string;
   baseParams: Record<string, unknown>;
 }> {
-  const { DatabaseSync } = await import("node:sqlite");
   const { startManagedServiceUpdateHandoff } = await import("./update-managed-service-handoff.js");
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-handoff-concurrent-test-"));
   tempDirs.add(tmpDir);
@@ -254,7 +254,6 @@ describe("managed service update handoff cross-process lease", () => {
   ] as const)(
     "claims a separate systemd scope helper and fences cancellation against $label",
     async ({ replacement, reclaimed }) => {
-      const { DatabaseSync } = await import("node:sqlite");
       const { getFileLockProcessStartTime } = await import("../shared/pid-alive.js");
       const { spawn } =
         await vi.importActual<typeof import("node:child_process")>("node:child_process");
@@ -349,10 +348,9 @@ process.stdin.on("data", (chunk) => {
           }
           originalRow = current;
           const helperIdentity = JSON.parse(current.payload_json) as {
-            pid: number;
-            startIdentity: string;
+            executor: { pid: number; startIdentity: string };
           };
-          helperPid = helperIdentity.pid;
+          helperPid = helperIdentity.executor.pid;
 
           expect(helperPid).not.toBe(started.pid);
           expect(launcher?.pid).toBe(started.pid);
@@ -375,9 +373,12 @@ process.stdin.on("data", (chunk) => {
             leaseOwner = `${handoffId}-foreign`;
           } else if (replacement === "identity") {
             payload = JSON.stringify({
-              version: 1,
-              pid: helperPid,
-              startIdentity: `${helperIdentity.startIdentity}-mismatched`,
+              ...helperIdentity,
+              version: 2,
+              executor: {
+                pid: helperPid,
+                startIdentity: `${helperIdentity.executor.startIdentity}-mismatched`,
+              },
             });
           } else if (replacement === "live") {
             const liveStartIdentity = getFileLockProcessStartTime(process.pid);
@@ -385,9 +386,9 @@ process.stdin.on("data", (chunk) => {
               throw new Error("expected the live replacement to have a stable process identity");
             }
             payload = JSON.stringify({
-              version: 1,
-              pid: process.pid,
-              startIdentity: String(liveStartIdentity),
+              ...helperIdentity,
+              version: 2,
+              executor: { pid: process.pid, startIdentity: String(liveStartIdentity) },
             });
           } else if (replacement === "unknown") {
             payload = JSON.stringify({ version: 1, pid: helperPid, startIdentity: null });
@@ -448,7 +449,7 @@ process.stdin.on("data", (chunk) => {
     const { execFile } =
       await vi.importActual<typeof import("node:child_process")>("node:child_process");
     const { getFileLockProcessStartTime } = await import("../shared/pid-alive.js");
-    const { DatabaseSync } = await import("node:sqlite");
+
     const { tmpDir, helperScriptPath, baseParams } = await prepareConcurrentHandoffHelper();
     const markerPath = path.join(tmpDir, "invalid-parent-update-ran");
     const paramsPath = await writeConcurrentHandoffParams({
@@ -539,7 +540,7 @@ process.stdin.on("data", (chunk) => {
   it("preserves a live durable owner when its current start identity cannot be observed", async () => {
     const { execFile } =
       await vi.importActual<typeof import("node:child_process")>("node:child_process");
-    const { DatabaseSync } = await import("node:sqlite");
+
     const { getFileLockProcessStartTime } = await import("../shared/pid-alive.js");
     const { tmpDir, helperScriptPath, baseParams } = await prepareConcurrentHandoffHelper();
     const ownerStartIdentity = getFileLockProcessStartTime(process.pid);
@@ -550,9 +551,10 @@ process.stdin.on("data", (chunk) => {
     const leaseKey = String(baseParams.updateLeaseKey);
     const owner = "identity-probe-unavailable-owner";
     const payload = JSON.stringify({
-      version: 1,
-      pid: process.pid,
-      startIdentity: String(ownerStartIdentity),
+      version: 2,
+      executor: { pid: process.pid, startIdentity: String(ownerStartIdentity) },
+      helper: { pid: process.pid, startIdentity: String(ownerStartIdentity) },
+      action: { kind: "update" },
     });
     await fs.mkdir(path.dirname(leaseDatabasePath), { recursive: true, mode: 0o700 });
     const database = new DatabaseSync(leaseDatabasePath);
@@ -643,7 +645,7 @@ childProcess.spawnSync = function(command, args, options) {
   it("releases exact helper ownership when cancellation cannot record its terminal sentinel", async () => {
     const { spawn } =
       await vi.importActual<typeof import("node:child_process")>("node:child_process");
-    const { DatabaseSync } = await import("node:sqlite");
+
     const { tmpDir, helperScriptPath, baseParams } = await prepareConcurrentHandoffHelper();
     const markerPath = path.join(tmpDir, "sentinel-failure-updater-ran");
     const owner = "sentinel-failure-owner";
@@ -732,13 +734,13 @@ childProcess.spawnSync = function(command, args, options) {
     async () => {
       const { execFile } =
         await vi.importActual<typeof import("node:child_process")>("node:child_process");
-      const sqlite = await import("node:sqlite");
+
       const { tmpDir, helperScriptPath, baseParams } = await prepareConcurrentHandoffHelper();
       const leaseDatabasePath = String(baseParams.updateLeaseDatabasePath);
       const leaseKey = String(baseParams.updateLeaseKey);
       const commandStartedPath = path.join(tmpDir, "windows-reused-pid-started");
       await fs.mkdir(path.dirname(leaseDatabasePath), { recursive: true });
-      const db = new sqlite.DatabaseSync(leaseDatabasePath);
+      const db = new DatabaseSync(leaseDatabasePath);
       try {
         db.exec(
           "CREATE TABLE IF NOT EXISTS managed_update_handoffs (install_root TEXT NOT NULL PRIMARY KEY, owner TEXT NOT NULL, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL) STRICT;",

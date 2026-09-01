@@ -172,6 +172,10 @@ vi.mock("../infra/update-triage.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../commands/triage-failure.js", () => ({
+  triageAfterFailure: vi.fn(async () => undefined),
+}));
+
 // Mock the update-runner module
 vi.mock("../infra/update-runner.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../infra/update-runner.js")>()),
@@ -3307,24 +3311,27 @@ describe("update-cli", () => {
       primeNpmChannelTag("latest", "2026.4.10");
       mockCurrentProcessFreshDoctor();
 
+      updateNpmInstalledPlugins.mockImplementationOnce(async ({ onCapabilityConsent }) => {
+        await expect(onCapabilityConsent({ reviewToken: "reviewed-surface" })).resolves.toEqual(
+          acceptCapabilities ? { reviewToken: "reviewed-surface" } : undefined,
+        );
+        return { changed: false, config: baseConfig, outcomes: [] };
+      });
       await updateCommand({
         acceptCapabilities,
+        json: true,
         yes: true,
         tag: "2026.4.10",
         restart: false,
       });
 
-      const handler = npmPluginUpdateCall()?.onCapabilityConsent as
-        | ((review: { reviewToken: string }) => Promise<{ reviewToken: string }>)
-        | undefined;
-      if (acceptCapabilities) {
-        await expect(handler?.({ reviewToken: "reviewed-surface" })).resolves.toEqual({
-          reviewToken: "reviewed-surface",
-        });
-      } else {
-        expect(handler).toBeUndefined();
-      }
-      expect(syncPluginCall()?.onCapabilityConsent).toBe(handler);
+      expect(syncPluginCall()?.onCapabilityConsent).toBe(
+        npmPluginUpdateCall()?.onCapabilityConsent,
+      );
+      const result = lastWriteJsonCall() as UpdateRunResult;
+      expect(result.postUpdate?.plugins?.capabilityConsentRequired).toBe(
+        acceptCapabilities ? undefined : true,
+      );
     },
   );
 
@@ -10043,7 +10050,9 @@ describe("update-cli", () => {
       expect(syncPluginsForUpdateChannel).toHaveBeenCalledOnce();
       expect(lastWriteJsonCall()).toMatchObject({ status: "ok", mode: "finalize" });
       if (position === "absent") {
-        expect(handler).toBeUndefined();
+        await expect(
+          handler?.({ reviewToken: "repair-reviewed-surface" }),
+        ).resolves.toBeUndefined();
       } else {
         await expect(handler?.({ reviewToken: "repair-reviewed-surface" })).resolves.toEqual({
           reviewToken: "repair-reviewed-surface",

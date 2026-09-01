@@ -26,6 +26,7 @@ import type {
 } from "../plugins/hook-types.js";
 import { appendRuntimePluginToolGrant } from "../plugins/tool-grant-allowlist.js";
 import { getPluginToolMeta } from "../plugins/tool-metadata.js";
+import { getProcessSupervisor } from "../process/supervisor/index.js";
 import { getActiveSecretsRuntimeConfigSnapshot } from "../secrets/runtime-state.js";
 import { GATEWAY_OWNER_ONLY_CORE_TOOLS } from "../security/dangerous-tools.js";
 import type { InputProvenance } from "../sessions/input-provenance.js";
@@ -529,6 +530,18 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
     sessionId: options?.sessionId,
     agentId,
   });
+  if (options?.oneShotCliRun && scopeKey) {
+    const supervisor = getProcessSupervisor();
+    options.registerRunCleanup?.(async () => {
+      // Tool-generation retirement closes admission first; include yielded and
+      // still-starting commands in this exact scope without touching chat peers.
+      supervisor.cancelScope(scopeKey);
+      if (!supervisor.waitForScope) {
+        throw new Error("one-shot process cleanup cannot confirm scope settlement");
+      }
+      await supervisor.waitForScope(scopeKey);
+    });
+  }
   options?.recordToolPrepStage?.("tool-policy");
   const execConfig = resolveExecToolConfig({ cfg: options?.config, agentId });
   const execRuntimeConfig = options?.exec?.config ?? options?.config;

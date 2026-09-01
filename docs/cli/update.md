@@ -68,6 +68,11 @@ are labeled explicitly. The final total includes plugin updates and requested
 Gateway restart checks. `--json` keeps stdout machine-readable and does not
 print progress steps.
 
+Failures after installation changes or an unhealthy restart can hand off to
+[Triage](/cli/triage#automatic-failure-handoff) after existing restoration. The installed CLI owns recovery after package replacement. For Linux user-systemd handoffs, native stop cancellation begins at verified triage scope attachment; preceding update work retains its existing lifetime. Use an atomic Gateway restart during recovery, because an explicit stop cancels it.
+Triage diagnostics stay on stderr, and the update retains its original failure
+result until you inspect the verification evidence and retry.
+
 `--yes` also skips the optional shell-completion setup prompt. Existing
 completion profiles and caches are still repaired when needed; installing
 completion in a new shell profile remains an interactive choice.

@@ -27,6 +27,7 @@ export const vitestWorkerDeclarationEntries = {
   "state/openclaw-state-lease-runtime.test-support":
     "src/state/openclaw-state-lease-runtime.test-support.ts",
   "tui/tui-pty-runtime-test-support": "src/tui/tui-pty-runtime-test-support.ts",
+  "infra/triage-runtime.test-support": "src/infra/triage-runtime.test-support.ts",
 };
 
 export type VitestWorkerDescriptor = { directory: string };

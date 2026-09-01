@@ -6,6 +6,7 @@ import type {
 } from "../../plugins/cli-backend.types.js";
 import { prepareSystemAgentRunAdmission } from "../admitted-run-context.js";
 import { buildPreparedCliRunContext } from "../cli-runner.test-helpers.js";
+import { withAgentCleanupOutcome } from "../run-cleanup-timeout.js";
 import {
   acceptsCliLiveSession,
   buildCliLiveOwnerKey,
@@ -14,6 +15,7 @@ import {
   getCliLiveSessionGeneration,
   hasCliLiveSession,
 } from "./cli-live-session-registry.js";
+import { settlePreparedCliRun } from "./cli-run-settlement.js";
 import { buildCliLiveSessionFingerprint } from "./live-session-fingerprint.js";
 
 const admissions: Array<ReturnType<typeof prepareSystemAgentRunAdmission>> = [];
@@ -358,6 +360,124 @@ describe("generic plugin-owned live session registry", () => {
     expect(owner.close).toHaveBeenCalledWith("restart");
     expect(owner.waitForExit).toHaveBeenCalledOnce();
     expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])(
+    "joins natural removal cleanup without closing its successor (fails=%s)",
+    async (fails) => {
+      const held = createDeferred();
+      const failure = new Error("artifact cleanup failed");
+      const cleanup = vi.fn(async () => {
+        await held.promise;
+        if (fails) {
+          throw failure;
+        }
+      });
+      const original = await createOwner({ sessionId: "natural-owner", cleanup });
+      original.register();
+      original.capability.remove(original.session);
+      original.exited.resolve();
+      const successor = await createOwner({ sessionId: "natural-owner" });
+      successor.register();
+      const completed = vi.fn();
+      const rejected = vi.fn();
+      const closing = closeCliLiveSession(original.context, "restart").then(completed, rejected);
+      try {
+        await vi.waitFor(() => expect(cleanup).toHaveBeenCalledOnce());
+        expect(successor.close).not.toHaveBeenCalled();
+        expect(completed).not.toHaveBeenCalled();
+        expect(rejected).not.toHaveBeenCalled();
+      } finally {
+        held.resolve();
+        await closing;
+      }
+      expect(fails ? rejected : completed).toHaveBeenCalledOnce();
+      if (fails) {
+        expect(rejected).toHaveBeenCalledWith(failure);
+      }
+      expect(successor.capability.current()).toBe(successor.session);
+    },
+  );
+
+  it.each([
+    "agent-error",
+    "agent-and-cleanup-error",
+    "cleanup-error",
+    "delivered-cleanup-error",
+    "stalled",
+  ] as const)("retains the natural cleanup result through settlement: %s", async (outcome) => {
+    vi.useFakeTimers();
+    const held = createDeferred();
+    const originalError = new Error("original agent failure");
+    const cleanupError = new Error("registered cleanup failure");
+    const owner = await createOwner({
+      cleanup: async () => {
+        if (outcome === "stalled") {
+          await held.promise;
+        } else if (outcome !== "agent-error") {
+          throw cleanupError;
+        }
+      },
+    });
+    owner.context.params.oneShotCliRun = true;
+    owner.context.params.cleanupCliLiveSessionOnRunEnd = true;
+    owner.register();
+    owner.capability.remove(owner.session);
+    owner.exited.resolve();
+    const finish = vi.fn(async (_receipt: "closed" | "uncertain") => {});
+    const result = {
+      payloads: [{ text: "original delivery" }],
+      meta: { durationMs: 1 },
+      didSendViaMessagingTool: outcome === "delivered-cleanup-error",
+    };
+    const run = withAgentCleanupOutcome(
+      () =>
+        settlePreparedCliRun({
+          context: owner.context,
+          run: async () => {
+            if (outcome === "agent-error" || outcome === "agent-and-cleanup-error") {
+              throw originalError;
+            }
+            return result;
+          },
+        }),
+      finish,
+    );
+    const observed = run.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    try {
+      if (outcome === "stalled") {
+        await vi.advanceTimersByTimeAsync(9999);
+        expect(finish).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(await observed).toEqual(
+        outcome === "agent-error" || outcome === "agent-and-cleanup-error"
+          ? { error: originalError }
+          : outcome === "cleanup-error"
+            ? { error: cleanupError }
+            : { value: result },
+      );
+      expect(finish).toHaveBeenCalledExactlyOnceWith(
+        outcome === "agent-error" ? "closed" : "uncertain",
+      );
+    } finally {
+      held.resolve();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a previous turn close a process activated by its successor", async () => {
+    const original = await createOwner({ sessionId: "transferred-close" });
+    original.register();
+    const successor = await createOwner({ sessionId: "transferred-close" });
+    successor.capability.activate(original.session);
+    await closeCliLiveSession(original.context, "restart");
+    expect(original.close).not.toHaveBeenCalled();
+    await closeCliLiveSession(successor.context, "restart");
+    expect(original.close).toHaveBeenCalledOnce();
   });
 
   it("evicts an idle owner at capacity and fails closed when every owner is active", async () => {

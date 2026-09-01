@@ -27,9 +27,16 @@ import { resolveSystemdServiceName } from "../../daemon/systemd-service-files.js
 import { sha256Hex } from "../../infra/crypto-digest.js";
 import { readActiveGatewayLockIdentity } from "../../infra/gateway-lock.js";
 import { probePortUsage } from "../../infra/ports-probe.js";
+import { getSelfAndAncestorPidsSync } from "../../infra/restart-stale-pids.js";
 import { parseTcpPortFromArgs } from "../../infra/tcp-port.js";
+import { resolveUpdateInstallRoot } from "../../infra/update-install-root.js";
+import {
+  readManagedHandoffProcessStartTime,
+  readManagedServiceUpdateHandoffLease,
+} from "../../infra/update-managed-service-handoff-lease.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
+import { isPidAlive } from "../../shared/pid-alive.js";
 import {
   renderRestartDiagnostics,
   waitForGatewayHealthyRestart,
@@ -246,6 +253,33 @@ export class UpdateCommandAbort extends Error {
     super("openclaw-update-abort");
     this.name = "UpdateCommandAbort";
   }
+}
+
+function gatewayMaintenanceBlockMessage(
+  state: GatewayServiceState,
+  root: string,
+): string | undefined {
+  const ancestors = getSelfAndAncestorPidsSync();
+  const lease = readManagedServiceUpdateHandoffLease(resolveUpdateInstallRoot(root));
+  // PartOf makes a primary stop terminal for its separately supervised fixer.
+  // A current lease plus exact live ancestry only refuses self-stop; copied
+  // environment or claims never grant maintenance or cancellation exemptions.
+  if (
+    lease?.action.kind === "triage" &&
+    lease.action.phase === "running" &&
+    lease.action.lifetime.kind === "native" &&
+    lease.action.lifetime.placement.kind === "attached" &&
+    lease.action.lifetime.unit === `${resolveSystemdServiceName(state.env)}.service` &&
+    [lease.executor, lease.helper].every(
+      (owner) =>
+        ancestors.has(owner.pid) &&
+        isPidAlive(owner.pid) &&
+        readManagedHandoffProcessStartTime(owner.pid)?.toString() === owner.startIdentity,
+    )
+  ) {
+    return "This maintenance command cannot stop the Gateway from inside its automatic triage process tree: stopping the service would cancel this repair. Use read-only diagnosis or safe offline artifact repair followed by an atomic `openclaw gateway restart`, or run stop-requiring maintenance from a shell outside automatic triage. Report this blocker if repair cannot proceed safely.";
+  }
+  return gatewayAncestryBlockMessage(state.runtime?.pid);
 }
 
 function serviceControlStdoutForMode(jsonMode: boolean): NodeJS.WritableStream {
@@ -536,9 +570,9 @@ export async function maybeStopManagedServiceBeforeMutableUpdate(params: {
       ...(windowsTaskAutoStartRecovery ? { windowsTaskAutoStartRecovery } : {}),
     };
   }
-  const blockMessage = gatewayAncestryBlockMessage(serviceState.runtime?.pid);
+  const blockMessage = gatewayMaintenanceBlockMessage(serviceState, params.root);
   if (blockMessage) {
-    return { ...inspected, running: true, blockMessage };
+    return { ...inspected, blockMessage };
   }
 
   if (!params.jsonMode) {
@@ -566,7 +600,7 @@ export async function maybeStopManagedServiceBeforeMutableUpdate(params: {
             : serviceUpdateVerdict,
       },
     });
-    const currentBlockMessage = gatewayAncestryBlockMessage(currentState.runtime?.pid);
+    const currentBlockMessage = gatewayMaintenanceBlockMessage(currentState, params.root);
     if (currentBlockMessage) {
       throw new UpdatePreMutationError("managed-service-preflight", currentBlockMessage);
     }
