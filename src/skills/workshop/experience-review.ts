@@ -15,7 +15,6 @@ import { clearAgentRunContext, registerAgentRunContext } from "../../infra/agent
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { runWithGatewayIndependentRootWorkAdmission } from "../../process/gateway-work-admission.js";
 import type { RunSkillUsage } from "../runtime/run-usage.js";
-import { applyAutonomousSkillProposal } from "./autonomous-apply.js";
 import { recordSkillExperienceReviewOutcome } from "./collection-review-state.js";
 import { resolveSkillWorkshopConfig } from "./config.js";
 import {
@@ -25,6 +24,7 @@ import {
 } from "./experience-review-prompt.js";
 import { assertSkillReviewRunSucceeded } from "./review-outcome.js";
 import { runSkillWorkshopReview } from "./review-run.js";
+import { applySkillProposal, inspectSkillProposal } from "./service.js";
 import type { SkillWorkshopProposalMutationBudget } from "./types.js";
 
 const EXPERIENCE_REVIEW_MIN_MODEL_ITERATIONS = 10;
@@ -437,11 +437,8 @@ async function runSkillExperienceReviewInner(
     const detachedSession = SessionManager.openModelContext(foregroundSessionTarget, {
       cwd: workspaceDir,
     });
-    const { listWritableWorkspaceSkillSummaries } = await import("./workspace-skill-read.js");
-    const existingSkills = listWritableWorkspaceSkillSummaries(workspaceDir, {
-      config,
-      agentId: foregroundPromptContext.agentId,
-    });
+    const { listWritableWorkshopSkillSummaries } = await import("./workspace-skill-read.js");
+    const existingSkills = listWritableWorkshopSkillSummaries();
     const run = () =>
       runSkillWorkshopReview({
         reviewKind: "experience",
@@ -490,10 +487,8 @@ async function runSkillExperienceReviewInner(
       ? await deps.getCurrentConfig()
       : (await import("../../config/config.js")).getRuntimeConfig();
     if (resolveSkillWorkshopConfig(currentConfig).autonomous.mode === "auto") {
-      const { inspectSkillProposal } = await import("./service.js");
       for (const mutatedProposalId of proposalIds) {
         const proposal = await inspectSkillProposal(mutatedProposalId, {
-          workspaceDir,
           agentId: foregroundPromptContext.agentId,
         });
         if (
@@ -503,16 +498,15 @@ async function runSkillExperienceReviewInner(
         ) {
           continue;
         }
-        const autonomous = await applyAutonomousSkillProposal({
+        await applySkillProposal({
           workspaceDir,
           agentId: foregroundPromptContext.agentId,
           config: currentConfig,
-          proposal,
+          proposalId: proposal.record.id,
+          expectedRevisionHash: proposal.revisionHash,
           reason: "Autonomous self-learning capture",
         });
-        if (autonomous.status === "applied") {
-          outcome = "applied";
-        }
+        outcome = "applied";
       }
     }
     const agentUsage = embeddedResult.meta?.agentMeta?.usage;
