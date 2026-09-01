@@ -416,7 +416,7 @@ export function renderSettingsStatus(props: {
             ? "oc-status-info"
             : "";
   return html`
-    <span class="settings-status${modifier} ${props.carapace ? `oc-status ${carapaceKind}` : ""}">
+    <span class="settings-status${modifier}${props.carapace ? ` oc-status ${carapaceKind}` : ""}">
       ${props.dot === false
         ? nothing
         : html`<span
