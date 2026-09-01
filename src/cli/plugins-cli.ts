@@ -2,6 +2,7 @@
 import type { Command } from "commander";
 import { formatDocsLink } from "../../packages/terminal-core/src/links.js";
 import { theme } from "../../packages/terminal-core/src/theme.js";
+import { createLazyRuntimeModule as createModuleLoader } from "../shared/lazy-runtime.js";
 import type { PluginInspectOptions } from "./plugins-inspect-command.js";
 import type { PluginsListOptions } from "./plugins-list-command.js";
 import { parseStrictPositiveIntOption } from "./program/helpers.js";
@@ -72,12 +73,6 @@ type PluginAuthoringInitOptions = {
   force?: boolean;
   type?: string;
 };
-
-function createModuleLoader<T>(load: () => Promise<T>): () => Promise<T> {
-  // Plugin runtime modules are heavy; load each command surface once on first use.
-  let promise: Promise<T> | undefined;
-  return () => (promise ??= load());
-}
 
 const loadPluginsRuntime = createModuleLoader(() => import("./plugins-cli.runtime.js"));
 const loadPluginsAuthoringCommands = createModuleLoader(

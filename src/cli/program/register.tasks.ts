@@ -2,6 +2,7 @@
 import { parseStrictPositiveInteger } from "@openclaw/normalization-core/number-coercion";
 import type { Command } from "commander";
 import { defaultRuntime } from "../../runtime.js";
+import { createLazyRuntimeModule as createModuleLoader } from "../../shared/lazy-runtime.js";
 import { TASK_FLOW_STATUSES } from "../../tasks/task-flow-registry.types.js";
 import {
   TASK_RUNTIMES,
@@ -33,11 +34,6 @@ const TASKS_LEAF_OPTION_SUPPORT = {
   "flow cancel": [],
 } satisfies Record<string, readonly TasksParentOption[]>;
 type TasksLeaf = keyof typeof TASKS_LEAF_OPTION_SUPPORT;
-
-function createModuleLoader<T>(load: () => Promise<T>): () => Promise<T> {
-  let promise: Promise<T> | undefined;
-  return () => (promise ??= load());
-}
 
 const loadTasksCommands = createModuleLoader(() => import("../../commands/tasks.js"));
 const loadFlowsCommands = createModuleLoader(() => import("../../commands/flows.js"));
