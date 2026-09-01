@@ -35,7 +35,7 @@ function createState(result: ChatHistoryResult): TestState {
     requestHandlers: { "chat.history": result },
     sessionKey: "main",
   });
-  const sessions: TestSessions = { refreshReplacement: vi.fn(async () => undefined) };
+  const sessions: TestSessions = { refreshReplacement: vi.fn(async () => null) };
   return {
     ...host,
     chatToolMessages: host.chatToolMessages ?? [],
@@ -109,7 +109,7 @@ describe("syncSelectedSessionMessageSubscription", () => {
     state.chatSessionMessageSubscriptionRequestedKey = "agent:main:previous";
     state.chatSessionMessageSubscription = { key: "agent:main:previous", agentId: null };
     state.sessions = {
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
       subscribeMessages,
       unsubscribeMessages,
     };
@@ -153,7 +153,7 @@ describe("syncSelectedSessionMessageSubscription", () => {
     state.chatSessionMessageSubscription = previous;
     state.sessionsError = null;
     state.sessions = {
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
       subscribeMessages,
       unsubscribeMessages,
     };
@@ -186,7 +186,7 @@ describe("syncSelectedSessionMessageSubscription", () => {
     state.chatSessionMessageSubscription = previous;
     state.sessionsError = null;
     state.sessions = {
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
       subscribeMessages,
       unsubscribeMessages,
     };
@@ -226,7 +226,7 @@ describe("syncSelectedSessionMessageSubscription", () => {
     state.chatSessionMessageSubscriptionRequestedKey = null;
     state.chatSessionMessageSubscription = null;
     state.sessions = {
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
       subscribeMessages,
       unsubscribeMessages,
     };
@@ -279,7 +279,7 @@ describe("rewindChatHistory", () => {
           { mimeType: "image/png", data: "A" },
         ],
       }),
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
     };
     cacheChatSessionSnapshot(
       state.chatMessagesBySession,
@@ -343,7 +343,7 @@ describe("rewindChatHistory", () => {
         state.sessionKey = "agent:main:new-selection";
         return { editorText: "source draft" };
       }),
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
     };
     cacheChatSessionSnapshot(
       state.chatMessagesBySession,
@@ -383,7 +383,7 @@ describe("rewindChatHistory", () => {
     });
     state.sessions = {
       rewind: vi.fn(() => rewind),
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
     };
 
     const pending = rewindChatHistory(state as never, "user-entry");
@@ -432,7 +432,7 @@ describe("switchChatHistoryBranch", () => {
         },
       ]),
       switchBranch: vi.fn().mockResolvedValue({}),
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
     };
     cacheChatSessionSnapshot(
       state.chatMessagesBySession,
@@ -469,7 +469,7 @@ describe("switchChatHistoryBranch", () => {
     state.chatBranchesConnectionEpoch = state.connectionEpoch - 1;
     state.sessions = {
       listBranches: vi.fn().mockResolvedValue([]),
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
     };
 
     await loadChatHistory(state);
@@ -489,7 +489,7 @@ describe("switchChatHistoryBranch", () => {
         .mockResolvedValue([
           { leafEntryId: "tip", headline: "tip", messageCount: 1, active: true },
         ]),
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
     };
 
     await loadChatHistory(state);
@@ -511,7 +511,7 @@ describe("switchChatHistoryBranch", () => {
     state.chatBranchesConnectionEpoch = state.connectionEpoch;
     state.sessions = {
       listBranches: vi.fn().mockResolvedValue([]),
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
     };
 
     await loadChatHistory(state);
@@ -543,7 +543,7 @@ describe("switchChatHistoryBranch", () => {
     state.sessions = {
       listBranches: vi.fn().mockResolvedValue([]),
       switchBranch: vi.fn().mockResolvedValue({}),
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
     };
 
     const staleHistory = loadChatHistory(state);
@@ -577,7 +577,7 @@ describe("switchChatHistoryBranch", () => {
     state.sessions = {
       listBranches: vi.fn().mockResolvedValue([]),
       switchBranch: vi.fn(() => switched),
-      refreshReplacement: vi.fn(async () => undefined),
+      refreshReplacement: vi.fn(async () => null),
     };
 
     const pending = switchChatHistoryBranch(state as never, "stale-leaf");

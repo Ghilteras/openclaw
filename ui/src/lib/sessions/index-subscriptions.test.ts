@@ -299,7 +299,7 @@ describe("createSessionCapability message subscriptions", () => {
         isCurrent: () => current,
       },
       agentId: () => null,
-      refreshReplacement: async () => undefined,
+      refreshReplacement: async () => null,
     });
     const failure = operations.subscribeMessages("main").catch((error: unknown) => error);
 

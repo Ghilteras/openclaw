@@ -365,6 +365,7 @@ function serializeDiff(lines: readonly { kind: string; text: string }[]): string
 export type ToolRenderOptions = {
   messageKey: string;
   sessionKey?: string;
+  agentId?: string;
   presented?: boolean;
   runActive?: boolean;
   onOpenSidebar?: (content: SidebarContent) => void;

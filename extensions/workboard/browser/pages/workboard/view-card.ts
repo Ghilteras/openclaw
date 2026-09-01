@@ -187,10 +187,10 @@ function renderDependencyBadges(dependencies: WorkboardDependencyState) {
 
 function renderLifecycle(
   card: WorkboardCard,
-  props: Pick<WorkboardProps, "sessions">,
+  props: Pick<WorkboardProps, "sessions" | "sessionResolution">,
   task?: WorkboardTaskSummary,
 ) {
-  const lifecycle = getWorkboardLifecycle(card, props.sessions, task);
+  const lifecycle = getWorkboardLifecycle(card, props.sessions, task, props.sessionResolution);
   const formatted = formatLifecycle(lifecycle);
   const stale = lifecycle.state === "stale";
   const taskIsAuthoritative = task ? taskMatchesLifecycle(task, lifecycle) : false;
@@ -224,6 +224,7 @@ function renderCard(props: WorkboardProps, card: WorkboardCard, surface: Workboa
     activeTask,
     live,
     linkedSessionKey,
+    sessionTarget,
     writable,
     showStartControls,
     archived,
@@ -266,7 +267,7 @@ function renderCard(props: WorkboardProps, card: WorkboardCard, surface: Workboa
       `;
   const sessionAction = widget
     ? nothing
-    : renderOpenSessionCardAction(props, linkedSessionKey, { iconOnly: true });
+    : renderOpenSessionCardAction(props, sessionTarget, { iconOnly: true });
   const stopAction =
     !widget && writable && (linkedSessionKey ? live : activeTask)
       ? renderStopCardAction(props, card, busy, { iconOnly: true })

@@ -343,7 +343,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: canonical user-turn operational metadata restoration for native harnesses.
       // +44: feature operation/client and native Control UI contribution/host contracts.
       // +1: explicit native page history and query preservation options.
-      4416,
+      // +4: observed session query, result, snapshot, and subscription contracts.
+      4420,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
