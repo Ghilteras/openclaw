@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
 import { runDoctorRepairSequence } from "./repair-sequencing.js";
+import { registerSharedRuntimeReaderDoctorTests } from "./repair-sequencing.shared-runtime.test-support.js";
 
 const mocks = vi.hoisted(() => ({
   applyPluginAutoEnable: vi.fn(),
@@ -231,13 +232,6 @@ vi.mock("./shared/exec-safe-bins.js", () => ({
   }),
 }));
 
-vi.mock("./shared/plugin-dependency-cleanup.js", () => ({
-  cleanupLegacyPluginDependencyState: async () => ({
-    changes: [],
-    warnings: [],
-  }),
-}));
-
 describe("doctor repair sequencing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -321,6 +315,8 @@ describe("doctor repair sequencing", () => {
       changes: [],
     }));
   });
+
+  registerSharedRuntimeReaderDoctorTests();
 
   it("runs the doctor-only Tailscale profile identity migration", async () => {
     const env = { OPENCLAW_STATE_DIR: "/tmp/openclaw-doctor-test" };
