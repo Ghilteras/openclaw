@@ -1,4 +1,5 @@
 import { redactSensitiveUrlLikeString } from "@openclaw/net-policy/redact-sensitive-url";
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -20,7 +21,10 @@ import { inspectPortUsage } from "../../infra/ports-inspect.js";
 import { LOOPBACK_PORT_PROBE_HOSTS } from "../../infra/ports-probe.js";
 import type { PortUsage } from "../../infra/ports-types.js";
 import { sleep } from "../../utils.js";
-import type { GatewayPortHealthSnapshot } from "./restart-health.types.js";
+import type {
+  GatewayPortHealthSnapshot,
+  UnavailablePluginHealthSummary,
+} from "./restart-health.types.js";
 import { allListenersOwnedByRuntimePid } from "./restart-port-ownership.js";
 
 export type GatewayRestartProbeAuth = {
@@ -33,6 +37,7 @@ export type GatewayReachability = {
   gatewayVersion: string | null;
   gatewayBuildId: string | null | undefined;
   activatedPluginErrors: PluginHealthErrorSummary[];
+  unavailablePlugins: UnavailablePluginHealthSummary[];
   channelProbeErrors: Array<{ id: string; error: string }>;
   probeError?: string;
 };
@@ -211,6 +216,37 @@ function readChannelProbeErrors(health: unknown): Array<{ id: string; error: str
   return errors;
 }
 
+function readUnavailablePlugins(health: unknown): UnavailablePluginHealthSummary[] {
+  const unavailable = asOptionalRecord(asOptionalRecord(health)?.plugins)?.unavailable;
+  if (!Array.isArray(unavailable)) {
+    return [];
+  }
+  return unavailable.flatMap((entry) => {
+    const candidate = asOptionalRecord(entry);
+    const diagnostic = asOptionalRecord(candidate?.diagnostic);
+    if (
+      typeof candidate?.id !== "string" ||
+      candidate.state !== "configured-unavailable" ||
+      diagnostic?.kind !== "plugin-verification" ||
+      typeof diagnostic.reason !== "string" ||
+      typeof diagnostic.detail !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: candidate.id,
+        state: "configured-unavailable" as const,
+        diagnostic: {
+          kind: "plugin-verification" as const,
+          reason: diagnostic.reason,
+          detail: diagnostic.detail,
+        },
+      },
+    ];
+  });
+}
+
 export async function confirmGatewayReachable(params: {
   port: number;
   includeHealthDetails?: boolean;
@@ -234,6 +270,7 @@ export async function confirmGatewayReachable(params: {
         gatewayVersion: null,
         gatewayBuildId: null,
         activatedPluginErrors: [],
+        unavailablePlugins: [],
         channelProbeErrors: [],
         probeError: "gateway TLS certificate unavailable",
       };
@@ -266,6 +303,7 @@ export async function confirmGatewayReachable(params: {
           ? null
           : undefined),
       activatedPluginErrors: readActivatedPluginErrors(probe.health),
+      unavailablePlugins: readUnavailablePlugins(probe.health),
       channelProbeErrors: readChannelProbeErrors(probe.health),
       ...(!reachedGateway && probe.error
         ? { probeError: formatGatewayRestartProbeError(probe.error) }
@@ -277,6 +315,7 @@ export async function confirmGatewayReachable(params: {
       gatewayVersion: null,
       gatewayBuildId: undefined,
       activatedPluginErrors: [],
+      unavailablePlugins: [],
       channelProbeErrors: [],
       probeError: formatGatewayRestartProbeError(error),
     };
@@ -317,6 +356,7 @@ export async function inspectGatewayPortHealth(params: {
   config?: OpenClawConfig;
   configuredProbe?: ConfiguredGatewayLocalProbe;
   expectedListenerPid?: number;
+  includePluginHealth?: boolean;
 }): Promise<GatewayPortHealthSnapshot> {
   let portUsage: PortUsage;
   try {
@@ -340,13 +380,27 @@ export async function inspectGatewayPortHealth(params: {
   const listenerOwnershipVerified =
     expectedListenerPid !== undefined &&
     allListenersOwnedByRuntimePid(portUsage.listeners, expectedListenerPid);
-  const { reachable, probeError } = await confirmGatewayReachable({
+  const reachability = await confirmGatewayReachable({
     port: params.port,
     auth: params.auth,
     ...(params.config ? { config: params.config } : {}),
     ...(params.configuredProbe ? { configuredProbe: params.configuredProbe } : {}),
     env: process.env,
     allowDeviceIdentityRequired: listenerOwnershipVerified,
+    includeHealthDetails: params.includePluginHealth === true,
   });
-  return { portUsage, healthy: reachable, ...(probeError ? { probeError } : {}) };
+  const pluginUnavailable =
+    params.includePluginHealth === true &&
+    (reachability.activatedPluginErrors.length > 0 || reachability.unavailablePlugins.length > 0);
+  return {
+    portUsage,
+    healthy: reachability.reachable && !pluginUnavailable,
+    ...(reachability.probeError ? { probeError: reachability.probeError } : {}),
+    ...(params.includePluginHealth === true && reachability.activatedPluginErrors.length > 0
+      ? { activatedPluginErrors: reachability.activatedPluginErrors }
+      : {}),
+    ...(params.includePluginHealth === true && reachability.unavailablePlugins.length > 0
+      ? { unavailablePlugins: reachability.unavailablePlugins }
+      : {}),
+  };
 }

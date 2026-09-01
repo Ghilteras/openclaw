@@ -17,11 +17,33 @@ describe("restart health", () => {
   afterEach(restoreRestartHealthMocks);
 
   it("waits for the managed service when running service proof is required", async () => {
-    probeGateway.mockResolvedValue({
-      ok: true,
-      close: null,
-      server: { version: "2026.4.24", connId: "new" },
-    });
+    probeGateway
+      .mockResolvedValueOnce({
+        ok: true,
+        close: null,
+        server: { version: "2026.4.24", connId: "old" },
+        health: {
+          plugins: {
+            errors: [],
+            unavailable: [
+              {
+                id: "discord",
+                state: "configured-unavailable",
+                diagnostic: {
+                  kind: "plugin-verification",
+                  reason: "missing-openclaw-peer-link",
+                  detail: "stale owner plugin failure",
+                },
+              },
+            ],
+          },
+        },
+      })
+      .mockResolvedValue({
+        ok: true,
+        close: null,
+        server: { version: "2026.4.24", connId: "new" },
+      });
     inspectPortUsage.mockResolvedValue({
       port: 18789,
       status: "busy",
@@ -38,6 +60,7 @@ describe("restart health", () => {
       service: { readRuntime, readCommand: vi.fn(async () => null) } as unknown as GatewayService,
       port: 18789,
       expectedVersion: "2026.4.24",
+      includePluginHealth: true,
       requireRunningService: true,
       attempts: 3,
       delayMs: 1,
@@ -77,6 +100,50 @@ describe("restart health", () => {
     expect(snapshot.runtime.status).toBe("stopped");
     expect(snapshot.waitOutcome).toBe("timeout");
     expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports identity mismatch before plugin unavailability", async () => {
+    probeGateway.mockResolvedValue({
+      ok: true,
+      close: null,
+      server: { version: "2026.4.23", connId: "old" },
+      health: {
+        plugins: {
+          errors: [],
+          unavailable: [
+            {
+              id: "discord",
+              state: "configured-unavailable",
+              diagnostic: {
+                kind: "plugin-verification",
+                reason: "missing-openclaw-peer-link",
+                detail: "stale owner plugin failure",
+              },
+            },
+          ],
+        },
+      },
+    });
+    inspectPortUsage.mockResolvedValue({
+      port: 18789,
+      status: "busy",
+      listeners: [{ pid: 8000, commandLine: "openclaw-gateway" }],
+      hints: [],
+    });
+
+    const { waitForGatewayHealthyRestart } = await import("./restart-health.js");
+    const snapshot = await waitForGatewayHealthyRestart({
+      service: makeGatewayService({ status: "running", pid: 8000 }),
+      port: 18789,
+      expectedVersion: "2026.4.24",
+      includePluginHealth: true,
+      requireRunningService: true,
+      attempts: 1,
+      delayMs: 1,
+    });
+
+    expect(snapshot.waitOutcome).toBe("version-mismatch");
+    expect(snapshot.versionMismatch).toEqual({ expected: "2026.4.24", actual: "2026.4.23" });
   });
 
   it("waits through a healthy long-running startup migration", async () => {

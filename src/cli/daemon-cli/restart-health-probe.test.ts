@@ -405,9 +405,11 @@ describe("restart health", () => {
     expect((firstCallArg(probeGateway) as { includeDetails?: boolean }).includeDetails).toBe(true);
 
     const { renderRestartDiagnostics } = await import("./restart-health.js");
-    expect(renderRestartDiagnostics(snapshot).join("\n")).toContain(
+    const diagnostics = renderRestartDiagnostics(snapshot);
+    expect(diagnostics.join("\n")).toContain(
       "Activated plugin load errors:\n- telegram: failed to load plugin dependency: ENOSPC",
     );
+    expect(diagnostics.filter((line) => line === "Activated plugin load errors:")).toHaveLength(1);
   });
 
   it("stops waiting once the expected-version gateway reports activated plugin errors", async () => {
@@ -450,7 +452,99 @@ describe("restart health", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("stops waiting once the expected-version gateway reports channel probe errors", async () => {
+  it("rejects configured-unavailable plugins without treating channel probes as lifecycle failures", async () => {
+    probeGateway.mockResolvedValue({
+      ok: true,
+      close: null,
+      server: { version: "2026.4.24", connId: "new" },
+      health: {
+        ok: true,
+        plugins: {
+          errors: [],
+          unavailable: [
+            {
+              id: "telegram",
+              state: "configured-unavailable",
+              diagnostic: {
+                kind: "plugin-verification",
+                reason: "missing-openclaw-peer-link",
+                detail: "plugin was built for another OpenClaw release",
+              },
+            },
+          ],
+        },
+        channels: {
+          discord: {
+            configured: true,
+            probe: { ok: false, error: "upstream timeout" },
+          },
+        },
+      },
+    });
+    inspectPortUsage.mockResolvedValue({
+      port: 18789,
+      status: "busy",
+      listeners: [{ pid: 8000, commandLine: "openclaw-gateway" }],
+      hints: [],
+    });
+
+    const { waitForGatewayHealthyRestart } = await import("./restart-health.js");
+    const snapshot = await waitForGatewayHealthyRestart({
+      service: makeGatewayService({ status: "running", pid: 8000 }),
+      port: 18789,
+      includePluginHealth: true,
+    });
+
+    expect(snapshot.healthy).toBe(false);
+    expect(snapshot.waitOutcome).toBe("plugin-unavailable");
+    expect(snapshot.unavailablePlugins?.[0]?.id).toBe("telegram");
+    expect(snapshot.channelProbeErrors).toEqual([{ id: "discord", error: "upstream timeout" }]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("keeps update identity verification independent of configured-unavailable plugins", async () => {
+    probeGateway.mockResolvedValue({
+      ok: true,
+      close: null,
+      server: { version: "2026.4.24", connId: "updated" },
+      health: {
+        ok: true,
+        plugins: {
+          errors: [],
+          unavailable: [
+            {
+              id: "telegram",
+              state: "configured-unavailable",
+              diagnostic: {
+                kind: "plugin-verification",
+                reason: "missing-openclaw-peer-link",
+                detail: "plugin was built for another OpenClaw release",
+              },
+            },
+          ],
+        },
+      },
+    });
+    inspectPortUsage.mockResolvedValue({
+      port: 18789,
+      status: "busy",
+      listeners: [{ pid: 8000, commandLine: "openclaw-gateway" }],
+      hints: [],
+    });
+
+    const { waitForGatewayHealthyRestart } = await import("./restart-health.js");
+    const snapshot = await waitForGatewayHealthyRestart({
+      service: makeGatewayService({ status: "running", pid: 8000 }),
+      port: 18789,
+      expectedVersion: "2026.4.24",
+    });
+
+    expect(snapshot.healthy).toBe(true);
+    expect(snapshot.waitOutcome).toBe("healthy");
+    expect(snapshot.unavailablePlugins).toBeUndefined();
+  });
+
+  it("accepts the expected-version gateway despite channel probe errors", async () => {
     probeGateway.mockResolvedValue({
       ok: true,
       close: null,
@@ -479,8 +573,8 @@ describe("restart health", () => {
       expectedVersion: "2026.4.24",
     });
 
-    expect(snapshot.healthy).toBe(false);
-    expect(snapshot.waitOutcome).toBe("channel-errors");
+    expect(snapshot.healthy).toBe(true);
+    expect(snapshot.waitOutcome).toBe("healthy");
     expect(snapshot.elapsedMs).toBe(0);
     expect(snapshot.channelProbeErrors).toEqual([
       { id: "telegram", error: "This operation was aborted" },

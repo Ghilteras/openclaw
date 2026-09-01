@@ -3,6 +3,10 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { GatewayService } from "../../daemon/service.js";
 import { formatCliCommand } from "../command-format.js";
 import {
+  failGatewayPluginReadiness,
+  hasGatewayPluginReadinessFailure,
+} from "./lifecycle-health.js";
+import {
   DEFAULT_RESTART_HEALTH_DELAY_MS,
   renderRestartDiagnostics,
   waitForGatewayHttpReadiness,
@@ -12,6 +16,7 @@ import {
 export async function verifyGatewayStartReadiness(params: {
   expectedPort?: number;
   fail: (message: string, hints?: string[]) => void;
+  json: boolean;
   resolveContext: () => Promise<{ config?: OpenClawConfig; env: NodeJS.ProcessEnv; port: number }>;
   service: GatewayService;
   warnings: string[];
@@ -29,6 +34,8 @@ export async function verifyGatewayStartReadiness(params: {
       delayMs: DEFAULT_RESTART_HEALTH_DELAY_MS,
       env: context.env,
       includeUnknownListenersAsStale: process.platform === "win32",
+      includePluginHealth: true,
+      requireRunningService: true,
       supervisorKeepsAlive: process.platform === "darwin",
     }),
     waitForGatewayHttpReadiness({
@@ -39,6 +46,15 @@ export async function verifyGatewayStartReadiness(params: {
       delayMs: DEFAULT_RESTART_HEALTH_DELAY_MS,
     }),
   ]);
+  if (hasGatewayPluginReadinessFailure(health)) {
+    failGatewayPluginReadiness({
+      action: "start",
+      health,
+      json: params.json,
+      warnings: params.warnings,
+      fail: params.fail,
+    });
+  }
   if (health.healthy && readiness.healthz === 200 && readiness.readyz === 200) {
     return;
   }

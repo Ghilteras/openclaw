@@ -8,6 +8,7 @@ const resolveGatewayStartupTiming = vi.hoisted(() => vi.fn(() => ({ deadlineMs: 
 const waitForGatewayHealthyRestart = vi.hoisted(() => vi.fn());
 const waitForGatewayHttpReadiness = vi.hoisted(() => vi.fn());
 const renderRestartDiagnostics = vi.hoisted(() => vi.fn(() => ["runtime diagnostics"]));
+const renderGatewayPortHealthDiagnostics = vi.hoisted(() => vi.fn(() => []));
 const readServiceConfig = vi.hoisted(() => vi.fn());
 
 vi.mock("../../commands/gateway-startup-timing.js", () => ({ resolveGatewayStartupTiming }));
@@ -36,7 +37,7 @@ vi.mock("./restart-health.js", () => ({
   DEFAULT_RESTART_HEALTH_ATTEMPTS: 120,
   DEFAULT_RESTART_HEALTH_DELAY_MS: 500,
   formatGatewayRestartFailure,
-  renderGatewayPortHealthDiagnostics: vi.fn(),
+  renderGatewayPortHealthDiagnostics,
   renderRestartDiagnostics,
   terminateStaleGatewayPids: vi.fn(),
   waitForGatewayHealthyListener: vi.fn(),
@@ -80,6 +81,7 @@ describe("Gateway service start readiness", () => {
     waitForGatewayHealthyRestart.mockReset().mockResolvedValue({ healthy: true });
     waitForGatewayHttpReadiness.mockReset().mockResolvedValue({ healthz: 200, readyz: 200 });
     renderRestartDiagnostics.mockClear();
+    renderGatewayPortHealthDiagnostics.mockClear();
   });
 
   it("proves Gateway health and readiness before start reports success", async () => {
@@ -90,7 +92,14 @@ describe("Gateway service start readiness", () => {
     await runDaemonStart({ json: true });
 
     expect(waitForGatewayHealthyRestart).toHaveBeenCalledWith(
-      expect.objectContaining({ service, port: 18_789, attempts: 90, delayMs: 500 }),
+      expect.objectContaining({
+        service,
+        port: 18_789,
+        attempts: 90,
+        delayMs: 500,
+        includePluginHealth: true,
+        requireRunningService: true,
+      }),
     );
     expect(waitForGatewayHttpReadiness).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -111,5 +120,31 @@ describe("Gateway service start readiness", () => {
       "waiting for /healthz and /readyz",
     );
     expect(renderRestartDiagnostics).toHaveBeenCalledOnce();
+  });
+
+  it("fails start when a configured plugin is unavailable", async () => {
+    waitForGatewayHealthyRestart.mockResolvedValue({
+      healthy: false,
+      portUsage: { port: 18_789, status: "busy", listeners: [], hints: [] },
+      unavailablePlugins: [
+        {
+          id: "discord",
+          state: "configured-unavailable",
+          diagnostic: {
+            kind: "plugin-verification",
+            reason: "missing-openclaw-peer-link",
+            detail: "plugin was built for another OpenClaw release",
+          },
+        },
+      ],
+    });
+    invokeStartPostCheck();
+
+    await expect(runDaemonStart({ json: true })).rejects.toThrow(
+      "Gateway remains running in degraded mode",
+    );
+    expect(waitForGatewayHealthyRestart).toHaveBeenCalledWith(
+      expect.objectContaining({ includePluginHealth: true }),
+    );
   });
 });

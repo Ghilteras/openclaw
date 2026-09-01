@@ -115,8 +115,8 @@ function applyActivatedPluginErrors(snapshot: GatewayRestartSnapshot): GatewayRe
   return { ...snapshot, healthy: false };
 }
 
-function applyChannelProbeErrors(snapshot: GatewayRestartSnapshot): GatewayRestartSnapshot {
-  if (!snapshot.channelProbeErrors?.length) {
+function applyUnavailablePlugins(snapshot: GatewayRestartSnapshot): GatewayRestartSnapshot {
+  if (!snapshot.unavailablePlugins?.length) {
     return snapshot;
   }
   return { ...snapshot, healthy: false };
@@ -131,6 +131,7 @@ export async function inspectGatewayRestart(params: {
   includeUnknownListenersAsStale?: boolean;
   probeAuth?: GatewayRestartProbeAuth;
   configuredProbe?: ConfiguredGatewayLocalProbe;
+  includePluginHealth?: boolean;
   probeHosts?: readonly string[];
 }): Promise<GatewayRestartSnapshot> {
   const env = params.env ?? process.env;
@@ -142,10 +143,12 @@ export async function inspectGatewayRestart(params: {
     }));
   const expectedVersion = normalizeOptionalString(params.expectedVersion);
   const expectedBuildId = normalizeOptionalString(params.expectedBuildId);
-  const requiresGatewayProbe = Boolean(expectedVersion || expectedBuildId);
+  const requiresIdentityProbe = Boolean(expectedVersion || expectedBuildId);
+  const requiresGatewayProbe = requiresIdentityProbe || params.includePluginHealth === true;
   let reachability: GatewayReachability | null = null;
   let probeError: string | undefined;
   let activatedPluginErrors: PluginHealthErrorSummary[] = [];
+  let unavailablePlugins: GatewayReachability["unavailablePlugins"] = [];
   let channelProbeErrors: Array<{ id: string; error: string }> = [];
   const loadReachability = async () => {
     if (!reachability) {
@@ -158,6 +161,8 @@ export async function inspectGatewayRestart(params: {
       });
       probeError = reachability.probeError;
       activatedPluginErrors = reachability.activatedPluginErrors;
+      unavailablePlugins =
+        params.includePluginHealth === true ? reachability.unavailablePlugins : [];
       channelProbeErrors = reachability.channelProbeErrors;
     }
     return reachability;
@@ -187,7 +192,7 @@ export async function inspectGatewayRestart(params: {
   if (portUsage.status === "busy" && runtime.status !== "running") {
     const reachable = await loadReachability();
     if (reachable.reachable) {
-      return applyChannelProbeErrors(
+      const snapshot = applyUnavailablePlugins(
         applyActivatedPluginErrors(
           applyExpectedGatewayIdentity(
             {
@@ -200,6 +205,9 @@ export async function inspectGatewayRestart(params: {
               ...(reachable.activatedPluginErrors.length > 0
                 ? { activatedPluginErrors: reachable.activatedPluginErrors }
                 : {}),
+              ...(params.includePluginHealth === true && reachable.unavailablePlugins.length > 0
+                ? { unavailablePlugins: reachable.unavailablePlugins }
+                : {}),
               ...(reachable.channelProbeErrors.length > 0
                 ? { channelProbeErrors: reachable.channelProbeErrors }
                 : {}),
@@ -209,6 +217,7 @@ export async function inspectGatewayRestart(params: {
           ),
         ),
       );
+      return snapshot;
     }
   }
 
@@ -248,7 +257,7 @@ export async function inspectGatewayRestart(params: {
     if (reachable.activatedPluginErrors.length > 0) {
       healthy = false;
     }
-    if (reachable.channelProbeErrors.length > 0) {
+    if (params.includePluginHealth === true && reachable.unavailablePlugins.length > 0) {
       healthy = false;
     }
   }
@@ -278,7 +287,7 @@ export async function inspectGatewayRestart(params: {
     ]),
   );
 
-  return applyChannelProbeErrors(
+  const snapshot = applyUnavailablePlugins(
     applyActivatedPluginErrors(
       applyExpectedGatewayIdentity(
         {
@@ -290,6 +299,7 @@ export async function inspectGatewayRestart(params: {
           ...(gatewayBuildId !== undefined ? { gatewayBuildId } : {}),
           ...(probeError ? { probeError } : {}),
           ...(activatedPluginErrors.length ? { activatedPluginErrors } : {}),
+          ...(unavailablePlugins.length ? { unavailablePlugins } : {}),
           ...(channelProbeErrors.length ? { channelProbeErrors } : {}),
         },
         expectedVersion,
@@ -297,6 +307,7 @@ export async function inspectGatewayRestart(params: {
       ),
     ),
   );
+  return snapshot;
 }
 
 function shouldEarlyExitStoppedFree(
@@ -337,6 +348,7 @@ export async function waitForGatewayHealthyRestart(params: {
   requireRunningService?: boolean;
   supervisorKeepsAlive?: boolean;
   isStartupMigrationActive?: typeof hasActiveStartupMigrationLease;
+  includePluginHealth?: boolean;
   probeHosts?: readonly string[];
 }): Promise<GatewayRestartSnapshot> {
   const startedAtMs = performance.now();
@@ -362,6 +374,7 @@ export async function waitForGatewayHealthyRestart(params: {
     expectedVersion: params.expectedVersion,
     expectedBuildId: params.expectedBuildId,
     includeUnknownListenersAsStale: params.includeUnknownListenersAsStale,
+    includePluginHealth: params.includePluginHealth === true,
     probeAuth: probeContext.auth,
     configuredProbe,
     probeHosts,
@@ -382,22 +395,23 @@ export async function waitForGatewayHealthyRestart(params: {
     // Health probes and state-DB reads are part of the operator-visible wait. A monotonic clock
     // keeps both the normal deadline and migration watchdog bounded when those operations stall.
     const elapsedMs = Math.max(0, performance.now() - startedAtMs);
-    const healthy =
-      snapshot.healthy && (!params.requireRunningService || snapshot.runtime.status === "running");
+    const serviceRuntimeReady =
+      !params.requireRunningService || snapshot.runtime.status === "running";
+    const healthy = snapshot.healthy && serviceRuntimeReady;
     if (healthy) {
       return withWaitContext(snapshot, "healthy", elapsedMs);
-    }
-    if (snapshot.activatedPluginErrors?.length) {
-      return withWaitContext(snapshot, "plugin-errors", elapsedMs);
-    }
-    if (snapshot.channelProbeErrors?.length) {
-      return withWaitContext(snapshot, "channel-errors", elapsedMs);
     }
     if (snapshot.versionMismatch) {
       return withWaitContext(snapshot, "version-mismatch", elapsedMs);
     }
     if (snapshot.buildIdMismatch) {
       return withWaitContext(snapshot, "build-id-mismatch", elapsedMs);
+    }
+    if (serviceRuntimeReady && snapshot.activatedPluginErrors?.length) {
+      return withWaitContext(snapshot, "plugin-errors", elapsedMs);
+    }
+    if (serviceRuntimeReady && snapshot.unavailablePlugins?.length) {
+      return withWaitContext(snapshot, "plugin-unavailable", elapsedMs);
     }
     if (snapshot.staleGatewayPids.length > 0 && snapshot.runtime.status !== "running") {
       return withWaitContext(snapshot, "stale-pids", elapsedMs);
@@ -455,6 +469,7 @@ export async function waitForGatewayHealthyRestart(params: {
       expectedVersion: params.expectedVersion,
       expectedBuildId: params.expectedBuildId,
       includeUnknownListenersAsStale: params.includeUnknownListenersAsStale,
+      includePluginHealth: params.includePluginHealth === true,
       probeAuth: probeContext.auth,
       configuredProbe,
       probeHosts,
