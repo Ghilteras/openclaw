@@ -496,9 +496,10 @@ describe("update failure report", () => {
       status: "fallback",
     });
     expect(oldResult).toMatchObject({
-      fallbackUrl: replacementPrepared.url,
+      message: expect.stringContaining("different reviewed preview"),
       status: "duplicate",
     });
+    expect(oldResult).not.toHaveProperty("fallbackUrl");
     expect(oldCreateIssue).not.toHaveBeenCalled();
     expect(await fs.readFile(replacementPrepared.savedReportPath, "utf8")).toBe(
       replacementPrepared.body,
@@ -809,6 +810,57 @@ describe("update failure report", () => {
     await expect(fs.stat(recoveryPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("suppresses recovered fallback details when reconciliation discovers a replacement owner", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-fallback-reconciliation-owner-change", result: failedUpdate() },
+      { stateDir },
+    );
+    const createIssue = mockFallbackIssue(prepared.url);
+    let nowMs = 1_800_000_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+
+    await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      finalizeReceipt: () => false,
+      stateDir,
+    });
+    nowMs += 10 * 60_000;
+
+    let replacementInstalled = false;
+    const refreshPreparation = vi.fn(
+      (attemptId: string, _reservationId: string, env: NodeJS.ProcessEnv) => {
+        if (!replacementInstalled) {
+          expect(
+            reserveUpdateFailureReportReceipt(attemptId, "replacement-owner", env),
+          ).toMatchObject({ reserved: true });
+          replacementInstalled = true;
+        }
+        return false;
+      },
+    );
+    const recovered = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      finalizeReceipt: () => false,
+      refreshPreparation,
+      stateDir,
+    });
+    now.mockRestore();
+
+    expect(recovered).toMatchObject({ status: "retryable" });
+    expect(recovered).not.toHaveProperty("fallbackUrl");
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(refreshPreparation).toHaveBeenCalled();
+    expect(
+      readUpdateFailureReportReceipt(prepared.attemptId, {
+        OPENCLAW_STATE_DIR: stateDir,
+      }),
+    ).toMatchObject({ reservationId: "replacement-owner", status: "preparing" });
+    await expect(fs.stat(`${prepared.savedReportPath}.result.json`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("suppresses a fallback when recovery publication outlives receipt ownership", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(
@@ -1064,6 +1116,48 @@ describe("update failure report", () => {
         OPENCLAW_STATE_DIR: stateDir,
       }),
     ).toMatchObject({ fallbackUrl: prepared.url, status: "fallback" });
+  });
+
+  it("does not expose a finalized fallback for a changed preview with the same attempt id", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const firstPrepared = await prepareUpdateFailureReport(
+      {
+        attemptId: "attempt-fallback-preview-changed",
+        result: failedUpdate(),
+        target: "origin/first",
+      },
+      { stateDir },
+    );
+    const firstCreateIssue = mockFallbackIssue(firstPrepared.url);
+    await submitUpdateFailureReport(firstPrepared, firstPrepared.previewDigest, {
+      createIssue: firstCreateIssue,
+      stateDir,
+    });
+    const changedPrepared = await prepareUpdateFailureReport(
+      {
+        attemptId: firstPrepared.attemptId,
+        result: failedUpdate({ reason: "install-failed" }),
+        target: "origin/changed",
+      },
+      { stateDir },
+    );
+    const changedCreateIssue = mockFallbackIssue(changedPrepared.url);
+
+    expect(changedPrepared.url).not.toBe(firstPrepared.url);
+    const duplicate = await submitUpdateFailureReport(
+      changedPrepared,
+      changedPrepared.previewDigest,
+      { createIssue: changedCreateIssue, stateDir },
+    );
+
+    expect(duplicate).toMatchObject({
+      message: expect.stringContaining("different reviewed preview"),
+      status: "duplicate",
+    });
+    expect(duplicate).not.toHaveProperty("fallbackUrl");
+    expect(duplicate).not.toHaveProperty("url");
+    expect(firstCreateIssue).toHaveBeenCalledOnce();
+    expect(changedCreateIssue).not.toHaveBeenCalled();
   });
 
   it("allows an immediate retry when issue creation explicitly did not start", async () => {

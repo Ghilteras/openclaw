@@ -395,6 +395,7 @@ async function savePreparedUpdateFailureReport(
 function resultFromExistingReceipt(
   receipt: UpdateFailureReportReceipt | null,
   savedReportPath: string,
+  expectedFallbackUrl: string,
 ): UpdateFailureReportSubmitResult {
   if (receipt?.status === "pending") {
     return {
@@ -417,14 +418,21 @@ function resultFromExistingReceipt(
       status: "retryable",
     };
   }
+  const matchingFallbackUrl =
+    receipt?.status === "fallback" && receipt.fallbackUrl === expectedFallbackUrl
+      ? receipt.fallbackUrl
+      : undefined;
   return {
     status: "duplicate",
     savedReportPath,
     ...(receipt?.url ? { url: receipt.url } : {}),
-    ...(receipt?.fallbackUrl ? { fallbackUrl: receipt.fallbackUrl } : {}),
-    message: receipt
-      ? "This update attempt was already reported."
-      : "This update attempt already has a report reservation.",
+    ...(matchingFallbackUrl ? { fallbackUrl: matchingFallbackUrl } : {}),
+    message:
+      receipt?.status === "fallback" && !matchingFallbackUrl
+        ? "This update attempt has a report handoff for a different reviewed preview."
+        : receipt
+          ? "This update attempt was already reported."
+          : "This update attempt already has a report reservation.",
   };
 }
 
@@ -475,7 +483,7 @@ export async function submitUpdateFailureReport(
     }
     if (currentReceipt && currentReceipt.reservationId !== recovered.reservationId) {
       await discardUpdateFailureReportRecoveryBestEffort(prepared.savedReportPath);
-      return resultFromExistingReceipt(currentReceipt, prepared.savedReportPath);
+      return resultFromExistingReceipt(currentReceipt, prepared.savedReportPath, prepared.url);
     }
     const finalized = retryUpdateReportStateWrite(() =>
       finalizeReceipt(prepared.attemptId, recovered, stateEnv),
@@ -487,6 +495,17 @@ export async function submitUpdateFailureReport(
       );
     if (recoveryMatched) {
       await discardUpdateFailureReportRecoveryBestEffort(prepared.savedReportPath);
+    } else {
+      try {
+        currentReceipt = readReceipt(prepared.attemptId, stateEnv);
+        receiptReadSucceeded = true;
+      } catch {
+        // Keep the durable record private when current ownership cannot be rechecked.
+      }
+      if (currentReceipt && currentReceipt.reservationId !== recovered.reservationId) {
+        await discardUpdateFailureReportRecoveryBestEffort(prepared.savedReportPath);
+        return resultFromExistingReceipt(currentReceipt, prepared.savedReportPath, prepared.url);
+      }
     }
     if (recovered.status === "retryable") {
       if (!recoveryMatched && receiptReadSucceeded && currentReceipt === null) {
@@ -499,6 +518,27 @@ export async function submitUpdateFailureReport(
         };
       }
     } else if (recovered.status === "fallback") {
+      if (!recoveryMatched) {
+        const recoveryStillOwned = retryUpdateReportStateWrite(() =>
+          (options.refreshPreparation ?? refreshUpdateFailureReportReceiptPreparation)(
+            prepared.attemptId,
+            recovered.reservationId,
+            stateEnv,
+          ),
+        );
+        if (!recoveryStillOwned) {
+          let replacement: UpdateFailureReportReceipt | null = null;
+          try {
+            replacement = readReceipt(prepared.attemptId, stateEnv);
+          } catch {
+            // The fallback stays private unless its reservation can be fenced immediately.
+          }
+          if (replacement && replacement.reservationId !== recovered.reservationId) {
+            await discardUpdateFailureReportRecoveryBestEffort(prepared.savedReportPath);
+          }
+          return resultFromExistingReceipt(replacement, prepared.savedReportPath, prepared.url);
+        }
+      }
       return {
         fallbackUrl: recovered.fallbackUrl,
         message: "A saved prefilled browser report is ready.",
@@ -531,7 +571,7 @@ export async function submitUpdateFailureReport(
         true,
       );
     }
-    return resultFromExistingReceipt(existingReceipt, prepared.savedReportPath);
+    return resultFromExistingReceipt(existingReceipt, prepared.savedReportPath, prepared.url);
   }
   if (options.validateCurrentAttempt && !(await options.validateCurrentAttempt())) {
     return {
@@ -555,7 +595,7 @@ export async function submitUpdateFailureReport(
         true,
       );
     }
-    return resultFromExistingReceipt(reservation.receipt, prepared.savedReportPath);
+    return resultFromExistingReceipt(reservation.receipt, prepared.savedReportPath, prepared.url);
   }
 
   const saved: SavedUpdateFailureReport = { reportCreated: false, reportDirCreated: false };
@@ -575,6 +615,7 @@ export async function submitUpdateFailureReport(
         return resultFromExistingReceipt(
           readReceipt(prepared.attemptId, stateEnv),
           prepared.savedReportPath,
+          prepared.url,
         );
       }
       return {
@@ -622,12 +663,14 @@ export async function submitUpdateFailureReport(
       return resultFromExistingReceipt(
         readReceipt(prepared.attemptId, stateEnv),
         prepared.savedReportPath,
+        prepared.url,
       );
     }
     if (!cleanupOwnedPreparation()) {
       return resultFromExistingReceipt(
         readReceipt(prepared.attemptId, stateEnv),
         prepared.savedReportPath,
+        prepared.url,
       );
     }
     if (error.reason === "stale") {
@@ -721,7 +764,7 @@ export async function submitUpdateFailureReport(
     } catch {
       // Without an authoritative owner, a browser link must not be published or persisted.
     }
-    return resultFromExistingReceipt(replacement, prepared.savedReportPath);
+    return resultFromExistingReceipt(replacement, prepared.savedReportPath, prepared.url);
   }
   const receipt: UpdateFailureReportRecovery = {
     fallbackUrl: created.fallbackUrl,
@@ -761,7 +804,7 @@ export async function submitUpdateFailureReport(
       } catch {
         // The recovery cannot be exposed without current receipt ownership.
       }
-      return resultFromExistingReceipt(replacement, prepared.savedReportPath);
+      return resultFromExistingReceipt(replacement, prepared.savedReportPath, prepared.url);
     }
   }
   return {
