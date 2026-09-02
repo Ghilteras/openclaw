@@ -950,10 +950,10 @@ describe("gateway server chat", () => {
           mode: GATEWAY_CLIENT_MODES.WEBCHAT,
         },
       });
+      // An ordinary read projects the configured model without awaiting discovery.
       const catalogRes = await rpcReq(webchatWs, "models.list", {
         agentId: "main",
         view: "configured",
-        refresh: true,
       });
       expect(catalogRes.ok).toBe(true);
 
