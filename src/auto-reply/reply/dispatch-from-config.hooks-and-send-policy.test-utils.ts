@@ -9,7 +9,7 @@ import { setReplyPayloadMetadata } from "../reply-payload.js";
 import type { MsgContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import {
-  NO_VISIBLE_REPLY_FALLBACK_TEXT,
+  buildNoVisibleReplyFallbackText,
   QUEUE_CAP_REJECTION_TEXT,
 } from "./dispatch-from-config.payloads.js";
 import {
@@ -41,6 +41,8 @@ import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
 import { resolveReplyOperationRunState } from "./reply-operation-run-state.js";
 import { buildTestCtx } from "./test-ctx.js";
+
+const NO_VISIBLE_REPLY_FALLBACK_TEXT = buildNoVisibleReplyFallbackText();
 
 beforeAll(globalBeforeAll0);
 
@@ -643,6 +645,7 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
 
     expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: NO_VISIBLE_REPLY_FALLBACK_TEXT,
+      isError: true,
     });
     expect(result).toEqual({
       queuedFinal: true,
@@ -650,6 +653,26 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
       noVisibleReplyFallbackDelivered: true,
     });
     expect(result.noVisibleReplyFallbackEligible).toBeUndefined();
+  });
+
+  it("marks an unattributed no-visible-reply fallback and includes its run reference", async () => {
+    setNoAbort();
+    const dispatcher = createDispatcher();
+    const replyResolver = vi.fn(async () => undefined);
+    const runId = "run-no-visible-reply";
+
+    await dispatchReplyFromConfig({
+      ctx: buildTestCtx({ ChatType: "direct" }),
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver,
+      replyOptions: { runId },
+    });
+
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: `${NO_VISIBLE_REPLY_FALLBACK_TEXT} Reference: ${runId}.`,
+      isError: true,
+    });
   });
 
   it("keeps ambient group turns silent even when silence policy is disallow", async () => {
@@ -813,6 +836,7 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
 
     expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: NO_VISIBLE_REPLY_FALLBACK_TEXT,
+      isError: true,
     });
     expect(result.noVisibleReplyFallbackDelivered).toBe(true);
   });
@@ -1288,6 +1312,7 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
 
     expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({
       text: NO_VISIBLE_REPLY_FALLBACK_TEXT,
+      isError: true,
     });
     expect(result.queuedFinal).toBe(false);
     expect(result.noVisibleReplyFallbackDelivered).toBeUndefined();
