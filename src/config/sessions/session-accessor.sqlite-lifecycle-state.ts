@@ -184,6 +184,26 @@ export function readReferencedSessionIds(
       sessionIds.add(sessionId);
     }
   }
+  // A retained logical owner protects all its history, even generations omitted from
+  // entry references. Explicit reset/delete excludes its target owner; automatic deletion
+  // rechecks this relation inside its commit after archive materialization has awaited.
+  for (const row of iterateSqliteQuerySync(
+    database.db,
+    db
+      .selectFrom("session_windows")
+      .innerJoin("session_nodes", "session_nodes.session_key", "session_windows.session_key")
+      .select(["session_windows.session_id", "session_nodes.session_key"])
+      .where((eb) =>
+        eb.or([
+          eb("session_nodes.archived_at", "is not", null),
+          eb("session_nodes.pinned_at", "is not", null),
+        ]),
+      ),
+  )) {
+    if (!excludedSessionKeys.has(row.session_key)) {
+      sessionIds.add(row.session_id);
+    }
+  }
   return sessionIds;
 }
 

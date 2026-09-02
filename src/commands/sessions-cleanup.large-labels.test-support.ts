@@ -51,7 +51,7 @@ mock.module(new URL("../config/sessions.ts", import.meta.url), {
             beforeStore,
             missingKeys: new Set(),
             modelRunPrunedKeys: new Set(),
-            archivedKeys: new Set(),
+            archivedKeys: new Map(),
             staleKeys: new Set(),
             cappedKeys: new Set(),
             dmScopeRetiredKeys: new Set(),

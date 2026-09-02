@@ -424,6 +424,13 @@ async function deleteSqliteSessionEntryLifecycleLocked(
     resolved,
     prepared.targetSnapshot,
     async (assertCurrent) => {
+      // Explicit deletion owns all generations; automatic retention must still protect
+      // other archived/pinned owners at each final deletion check.
+      const excludedSessionKeys = new Set([
+        params.target.canonicalKey,
+        ...params.target.storeKeys,
+        ...prepared.targetSnapshot.map((row) => row.sessionKey),
+      ]);
       const historicalArchivedTranscripts: SessionLifecycleArchivedTranscript[] = [];
       for (const sessionId of prepared.historicalGenerationIds) {
         const plan = await runExclusiveSqliteSessionWrite(resolved, async () => {
@@ -496,7 +503,7 @@ async function deleteSqliteSessionEntryLifecycleLocked(
               transactionDb,
               materializedGeneration,
               undefined,
-              undefined,
+              excludedSessionKeys,
               () => recordCommit(transactionDb),
             );
           }, toDatabaseOptions(resolved));
@@ -532,11 +539,7 @@ async function deleteSqliteSessionEntryLifecycleLocked(
               transactionDb,
               materializedPlans,
               undefined,
-              new Set([
-                params.target.canonicalKey,
-                ...params.target.storeKeys,
-                ...transactionSnapshot.map((row) => row.sessionKey),
-              ]),
+              excludedSessionKeys,
             );
             deleteLifecycleTargetRows(transactionDb, params.target);
             recordCommit(transactionDb);

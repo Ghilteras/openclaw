@@ -33,7 +33,7 @@ export async function runByteLimitedArchiveCleanupFixture(storePath: string): Pr
   const sessionIds = ["worker-byte-session-0", "worker-byte-session-1"];
   const largeContent = "x".repeat(33 * 1024 * 1024);
   for (const [index, sessionId] of sessionIds.entries()) {
-    const sessionKey = `agent:main:worker-byte-${index}`;
+    const sessionKey = `agent:main:hook:worker-byte-${index}`;
     await replaceSessionEntry({ sessionKey, storePath }, { sessionId, updatedAt: index });
     await replaceTranscriptEvents({ sessionId, sessionKey, storePath }, [
       { content: `${index}:${largeContent}`, id: sessionId, type: "session" },

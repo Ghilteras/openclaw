@@ -54,6 +54,8 @@ describe("archiveStaleDashboardEntries", () => {
     const store: Record<string, SessionEntry> = {
       "agent:main:dashboard:pinned": entry(1, { pinnedAt: 2 }),
       "agent:main:dashboard:archived": entry(1, { archivedAt }),
+      "agent:main:dashboard:running": entry(1, { status: "running" }),
+      "agent:main:dashboard:locked": entry(1, { modelSelectionLocked: true }),
       "agent:main:main": entry(1),
       "agent:main:slack:channel:C1": entry(1),
       "agent:main:subagent:child": entry(1),
