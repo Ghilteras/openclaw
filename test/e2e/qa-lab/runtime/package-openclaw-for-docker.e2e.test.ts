@@ -1540,7 +1540,7 @@ describe("package-openclaw-for-docker", () => {
   });
 
   it("packs the staged AI runtime with pnpm from an isolated workspace", async () => {
-    const { sourceDir, outputDir, packageJson } = createSelectedPluginPackageFixture();
+    const { sourceDir, outputDir, files, packageJson } = createSelectedPluginPackageFixture();
     const { packageManager } = JSON.parse(fs.readFileSync("package.json", "utf8")) as {
       packageManager: string;
     };
@@ -1564,6 +1564,7 @@ describe("package-openclaw-for-docker", () => {
         devDependencies: { "@openclaw/source-only": "workspace:*" },
       }),
       "packages/ai/dist/index.js": "export const runtime = true;\n",
+      "packages/ai/source-only-marker": "workspace source\n",
     };
     for (const [relativePath, contents] of Object.entries(sourceFiles)) {
       const target = path.join(sourceDir, relativePath);
@@ -1592,9 +1593,13 @@ describe("package-openclaw-for-docker", () => {
       await tar.x({ file: tarball, cwd: extracted });
       const packedRoot = path.join(extracted, "package");
       const bundledAi = path.join(packedRoot, "node_modules/@openclaw/ai");
+      expect(fs.readFileSync(path.join(packedRoot, "dist/shared-runtime.js"), "utf8")).toBe(
+        files["dist/shared-runtime.js"],
+      );
       expect(fs.readFileSync(path.join(bundledAi, "dist/index.js"), "utf8")).toBe(
         sourceFiles["packages/ai/dist/index.js"],
       );
+      expect(fs.existsSync(path.join(bundledAi, "source-only-marker"))).toBe(false);
       expect(JSON.parse(fs.readFileSync(path.join(bundledAi, "package.json"), "utf8"))).toEqual({
         name: "@openclaw/ai",
         version: packageJson.version,
@@ -1615,6 +1620,9 @@ describe("package-openclaw-for-docker", () => {
         expect(fs.readFileSync(path.join(sourceDir, relativePath), "utf8")).toBe(contents);
       }
       expect(fs.readlinkSync(aiLink)).toBe(originalAiTarget);
+      expect(fs.readFileSync(path.join(aiLink, "source-only-marker"), "utf8")).toBe(
+        sourceFiles["packages/ai/source-only-marker"],
+      );
       expect(fs.readdirSync(path.dirname(aiLink))).toEqual(["ai"]);
       expect(fs.existsSync(path.join(sourceDir, ".openclaw-lifecycle-pending"))).toBe(false);
     }

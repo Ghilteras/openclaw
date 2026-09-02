@@ -80,6 +80,8 @@ describe("detectChangedScope Windows routing", () => {
     "src/infra/git-exec.test.ts",
     "src/agents/worktrees/git.ts",
     "src/agents/worktrees/git.test.ts",
+    "src/gateway/worker-environments/workspace-result-git.ts",
+    "src/gateway/worker-environments/workspace-result-git.test.ts",
     "src/gateway/worker-environments/workspace-result-staging.ts",
     "src/gateway/worker-environments/workspace-result-ref-mutation.test.ts",
     "src/node-host/node-worker-transfer-client.ts",
