@@ -26,7 +26,9 @@ function setup(action: "triage" | "report" | "dismiss", confirmed: boolean) {
     url: "https://github.com/openclaw/openclaw/issues/new",
   };
   const prepare = vi.fn(async () => prepared);
-  const submit = vi.fn(async () => ({
+  const submit = vi.fn<
+    typeof import("../../infra/update-failure-report.js").submitUpdateFailureReport
+  >(async () => ({
     savedReportPath: prepared.savedReportPath,
     status: "created" as const,
     url: "https://github.com/openclaw/openclaw/issues/123",

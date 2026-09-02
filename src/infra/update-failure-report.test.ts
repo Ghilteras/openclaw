@@ -829,7 +829,7 @@ describe("update failure report", () => {
 
     let replacementInstalled = false;
     const refreshPreparation = vi.fn(
-      (attemptId: string, _reservationId: string, env: NodeJS.ProcessEnv) => {
+      (attemptId: string, _reservationId: string, env: NodeJS.ProcessEnv = process.env) => {
         if (!replacementInstalled) {
           expect(
             reserveUpdateFailureReportReceipt(attemptId, "replacement-owner", env),

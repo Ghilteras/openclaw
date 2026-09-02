@@ -11,7 +11,11 @@ import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { UpdateCommandFailure } from "./update-command-result.js";
 import { withUpdateFailureTriage, type UpdateTriageTarget } from "./update-command-triage.js";
 
-const runInteractiveUpdateFailureAction = vi.hoisted(() => vi.fn(async () => "triage" as const));
+const runInteractiveUpdateFailureAction = vi.hoisted(() =>
+  vi.fn<typeof import("./update-command-report.js").runInteractiveUpdateFailureAction>(
+    async () => "triage" as const,
+  ),
+);
 
 vi.mock("./update-command-report.js", () => ({ runInteractiveUpdateFailureAction }));
 
