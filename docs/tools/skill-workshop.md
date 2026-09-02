@@ -108,16 +108,18 @@ Only a `pending` proposal can be revised, applied, rejected, or quarantined.
 In `auto` mode, the Gateway runs one system-owned cron job per agent each week.
 Each job appears in `openclaw cron list` and runs every 7 days. Cron owns the
 cadence; the job is enabled only when
-`skills.workshop.autonomous.mode` is `auto`. The review can only read skills
-and submit one atomic collection reconciliation listing only changes. It keeps distinct useful skills,
-rewrites weak ones, consolidates overlap, and drops junk or stale fragments.
+`skills.workshop.autonomous.mode` is `auto`. Each turn uses the normal agent
+tools and its agent's full Workshop directory as its working directory,
+file-tool root, and session root. It keeps distinct useful skills, rewrites
+weak ones, consolidates overlap, and drops junk or stale fragments.
 Choosing `auto` intentionally authorizes those rewrites and drops without a
 second approval **for Workshop-owned paths only**; `propose` and `off` do not
 run collection review.
 
-Each reviewer reads only its agent's Workshop directory. It reads each skill it
-intends to change. Unlisted skills stay
-untouched. Every skill in the Workshop directory may receive `write` or `drop`.
+Each reviewer reads only its agent's Workshop directory. The turn edits files
+directly. A full-tree snapshot is created before the turn; every changed or
+added file is scanned after it, and a failing file is restored from the
+snapshot while other safe changes stay. Unlisted skills stay untouched.
 Collection review records its changes in review history and the backup manifest;
 it does not create proposal rows.
 
@@ -127,8 +129,9 @@ recorded use alone never justifies removing it.
 
 OpenClaw validates and scans every write before changing the Workshop directory,
 serializes each agent's collection edits with an agent-scoped lease, and retains
-one backup under that agent directory. The changed collection appears in new
-agent runs;
+one backup under that agent directory. File tools use the Workshop directory as
+their containment root. Shell commands use it as `cwd`, but normal host shell
+authority still applies. The changed collection appears in new agent runs;
 running sessions keep their existing skill snapshot.
 
 To undo the last completed cleanup, ask the agent to restore the skill
