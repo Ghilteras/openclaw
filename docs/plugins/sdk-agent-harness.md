@@ -496,8 +496,19 @@ immediately before the resolve request is sent. A refused input releases only
 its own reservation: the question remains pending and its prompt and later
 valid input remain usable. Persistence and a local reservation are not an
 answered transition. Closure after dispatch does not make an accepted answer
-replayable; issued requests retain committed-answer recovery when the response
-is lost. Backing-run abort, timeout, and error cleanup retain independent authority.
+replayable. Plain-text submissions carry a fresh, bounded `resolutionId` on
+`question.resolve`; the question owner records it only when that submission commits.
+Host waiters request `includeResolutionId: true` on `question.waitAnswer` and use
+that receipt to recover a lost response. Another actor's answer, even identical
+text, does not establish consumption of this input. Backing-run abort, timeout,
+and error cleanup retain independent authority.
+
+Custom transports must preserve these request and response fields for lost-response
+recovery. `resolutionId` is an opaque 1–128-character correlation value, not permission
+to resolve a question or reuse closed-source authority. Ordinary waiters omit
+`includeResolutionId` (default `false`) and receive the existing response shape;
+question records, lookup results, and broadcast events never gain the receipt.
+The receipt is transient question-lifecycle state, not a durable record or migration.
 
 The shipped `AgentHarnessQuestionGatewayCall` function type is unchanged.
 Legacy function overrides remain valid for ordinary, unscoped input, including

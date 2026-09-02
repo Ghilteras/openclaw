@@ -362,7 +362,7 @@ describe("ask_user execution", () => {
       2,
       "question.waitAnswer",
       { timeoutMs: 910_000 },
-      { id: questionId, timeoutMs: 900_000 },
+      { id: questionId, timeoutMs: 900_000, includeResolutionId: true },
       undefined,
     );
   });
@@ -811,6 +811,7 @@ describe("ask_user execution", () => {
         id: questionId,
         answers: { answers: { deploy_target: ["A custom destination"] } },
         resolvedBy: "plain-text",
+        resolutionId: expect.stringMatching(/^[a-f0-9]{32}$/),
       },
     );
     await expect(pending).resolves.toMatchObject({ details: { status: "answered" } });
@@ -890,22 +891,27 @@ describe("ask_user execution", () => {
 
   it("confirms a committed plain-text answer after its resolve response is lost", async () => {
     let finishWait: ((value: unknown) => void) | undefined;
-    let committedAnswers: unknown;
+    let committedAnswer: unknown;
     const gateway = gatewayStub(async (method, _opts, params) => {
       if (method === "question.request") {
         return { id: params.id };
       }
       if (method === "question.waitAnswer") {
-        if (committedAnswers) {
-          return { status: "answered", answers: committedAnswers };
+        expect(params.includeResolutionId).toBe(true);
+        if (committedAnswer) {
+          return committedAnswer;
         }
         return await new Promise((resolve) => {
           finishWait = resolve;
         });
       }
       if (method === "question.resolve") {
-        committedAnswers = params.answers;
-        finishWait?.({ status: "answered", answers: committedAnswers });
+        committedAnswer = {
+          status: "answered",
+          answers: params.answers,
+          resolutionId: params.resolutionId,
+        };
+        finishWait?.(committedAnswer);
         throw new Error("response lost after commit");
       }
       throw new Error(`unexpected method ${method}`);

@@ -89,11 +89,11 @@ function isTerminalAgentQuestionError(error: unknown): boolean {
   return reason !== undefined && TERMINAL_QUESTION_ERROR_REASONS.has(reason);
 }
 
-async function observeCommittedAnswer(
+async function observeQuestionAnswer(
   answer: Promise<QuestionWaitAnswerResult> | undefined,
-): Promise<boolean> {
+): Promise<Extract<QuestionWaitAnswerResult, { status: "answered" }> | undefined> {
   if (!answer) {
-    return false;
+    return undefined;
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -104,9 +104,9 @@ async function observeCommittedAnswer(
         timer.unref?.();
       }),
     ]);
-    return result?.status === "answered";
+    return result?.status === "answered" ? result : undefined;
   } catch {
-    return false;
+    return undefined;
   } finally {
     if (timer) {
       clearTimeout(timer);
@@ -287,11 +287,12 @@ export async function claimPendingAgentQuestionAnswer(params: {
         Object.entries(parsed.answers).map(([id, answer]) => [id, answer.answers]),
       ),
     };
+    const resolutionId = randomBytes(16).toString("hex");
     try {
       await state.gatewayCall(
         "question.resolve",
         {},
-        { id: state.questionId, answers, resolvedBy: "plain-text" },
+        { id: state.questionId, answers, resolvedBy: "plain-text", resolutionId },
         ...(reservation.extra ? ([reservation.extra] as const) : []),
       );
       consumed = true;
@@ -303,11 +304,14 @@ export async function claimPendingAgentQuestionAnswer(params: {
         terminal = true;
         return false;
       }
-      // An issued request can commit even when its response is lost.
-      consumed = await observeCommittedAnswer(state.answer);
-      if (!consumed) {
+      // The shared waiter can be answered by another actor, even with identical
+      // text. Only this submission's owner-stamped receipt prevents lost-ACK replay.
+      const answer = await observeQuestionAnswer(state.answer);
+      if (!answer) {
         throw error;
       }
+      terminal = true;
+      consumed = answer.resolutionId === resolutionId;
     }
     return consumed;
   } finally {
@@ -545,7 +549,7 @@ export async function runAgentHarnessGatewayQuestion(
     const answer = gatewayCall(
       "question.waitAnswer",
       { timeoutMs: params.timeoutMs + QUESTION_RPC_GRACE_MS },
-      { id: questionId, timeoutMs: params.timeoutMs },
+      { id: questionId, timeoutMs: params.timeoutMs, includeResolutionId: true },
       params.signal ? { signal: params.signal } : undefined,
     ) as Promise<QuestionWaitAnswerResult>;
     claim.setAnswer(answer);
@@ -554,10 +558,14 @@ export async function runAgentHarnessGatewayQuestion(
       (error: unknown) => ({ kind: "answer-error" as const, error }),
     );
     const finishAnswer = async (result: QuestionWaitAnswerResult) => {
-      if (result.status !== "pending") {
-        return result;
-      }
-      return (await cancel("wait-timeout")) ?? ({ status: "cancelled" } as const);
+      const terminal =
+        result.status === "pending"
+          ? ((await cancel("wait-timeout")) ?? ({ status: "cancelled" } as const))
+          : result;
+      // The receipt belongs to the input claim, not the harness/model answer.
+      return terminal.status === "answered"
+        ? { status: terminal.status, answers: terminal.answers }
+        : terminal;
     };
     const beforeDelivery = await Promise.race([
       answerOutcome,

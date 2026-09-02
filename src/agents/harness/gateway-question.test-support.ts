@@ -4,6 +4,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import type {
   QuestionRequestParams,
   QuestionResolveParams,
+  QuestionWaitAnswerParams,
   RequestFrame,
 } from "../../../packages/gateway-protocol/src/index.js";
 import {
@@ -24,8 +25,9 @@ export async function withQuestionGateway(
     backingRun: AbortController;
     requests: RequestFrame[];
     waitStarted: Promise<void>;
-    holdNextHello: () => { entered: Promise<void>; release: () => void };
+    holdNextHello: () => { entered: Promise<void>; release: () => void; fail: () => void };
     onResolved: (callback: () => void) => void;
+    dropNextResolveResponse: () => void;
     holdRegistration: () => { entered: Promise<void>; release: () => void };
   }) => Promise<void>,
 ) {
@@ -54,8 +56,9 @@ export async function withQuestionGateway(
       const backingRun = new AbortController();
       const requests: RequestFrame[] = [];
       const waitStarted = deferred();
-      let nextHello: { entered: Deferred; release: Deferred } | undefined;
+      let nextHello: { entered: Deferred; release: Deferred<"allow" | "close"> } | undefined;
       let onResolved = () => {};
+      let dropResolveResponse = false;
       let registrationHold: { entered: Deferred; release: Deferred } | undefined;
       server.on("connection", (socket) => {
         socket.send(
@@ -76,9 +79,13 @@ export async function withQuestionGateway(
             const hold = nextHello;
             nextHello = undefined;
             hold?.entered.resolve();
-            void (hold?.release.promise ?? Promise.resolve()).then(() =>
-              respond({ type: "hello-ok" }),
-            );
+            void (hold?.release.promise ?? Promise.resolve("allow")).then((outcome) => {
+              if (outcome === "close") {
+                socket.terminate();
+              } else {
+                respond({ type: "hello-ok" });
+              }
+            });
             return;
           }
           requests.push(frame);
@@ -94,8 +101,10 @@ export async function withQuestionGateway(
               respond(record),
             );
           } else if (frame.method === "question.waitAnswer") {
-            const request = frame.params as { id: string };
-            void manager.waitAnswer(request.id).then(respond);
+            const request = frame.params as QuestionWaitAnswerParams;
+            void manager
+              .waitAnswer(request.id, undefined, request.includeResolutionId)
+              .then(respond);
             waitStarted.resolve();
           } else if (frame.method === "question.resolve") {
             const request = frame.params as QuestionResolveParams;
@@ -103,9 +112,16 @@ export async function withQuestionGateway(
               const result =
                 "cancel" in request
                   ? manager.cancel(request.id, request.resolvedBy)
-                  : manager.resolve(request.id, request.answers, request.resolvedBy);
+                  : manager.resolve(request.id, request.answers, request.resolvedBy, {
+                      resolutionId: request.resolutionId,
+                    });
               onResolved();
-              respond(result);
+              if (dropResolveResponse) {
+                dropResolveResponse = false;
+                socket.terminate();
+              } else {
+                respond(result);
+              }
             } catch (error) {
               if (!(error instanceof QuestionManagerError)) {
                 throw error;
@@ -137,9 +153,13 @@ export async function withQuestionGateway(
           requests,
           waitStarted: waitStarted.promise,
           holdNextHello: () => {
-            const hold = { entered: deferred(), release: deferred() };
+            const hold = { entered: deferred(), release: deferred<"allow" | "close">() };
             nextHello = hold;
-            return { entered: hold.entered.promise, release: () => hold.release.resolve() };
+            return {
+              entered: hold.entered.promise,
+              release: () => hold.release.resolve("allow"),
+              fail: () => hold.release.resolve("close"),
+            };
           },
           holdRegistration: () => {
             const hold = { entered: deferred(), release: deferred() };
@@ -148,6 +168,9 @@ export async function withQuestionGateway(
           },
           onResolved: (callback) => {
             onResolved = callback;
+          },
+          dropNextResolveResponse: () => {
+            dropResolveResponse = true;
           },
         });
       } finally {

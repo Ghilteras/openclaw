@@ -317,6 +317,85 @@ describe("question dispatch ownership", () => {
     });
   });
 
+  it.each([
+    ["harness", undefined],
+    ["harness", "other-resolver"],
+    ["ask_user", undefined],
+    ["ask_user", "other-resolver"],
+  ] as const)(
+    "does not consume a failed %s input when another resolver submits identical text (receipt=%s)",
+    async (owner, resolutionId) => {
+      await withQuestionGateway(async (fixture) => {
+        const question = startQuestion(fixture, owner);
+        const { source, authority } = currentSource(fixture);
+        await Promise.all([fixture.waitStarted, question.showPrompt()]);
+        const hello = fixture.holdNextHello();
+        const attempt = claimPendingAgentQuestionAnswer({
+          sessionKey,
+          text: "same answer",
+          authority,
+        });
+        const outcome = attempt.catch((error: unknown) => error);
+        try {
+          await hello.entered;
+          const pending = fixture.manager.list()[0]!;
+          fixture.manager.resolve(pending.id, { answers: { answer: ["same answer"] } }, "other", {
+            resolutionId,
+          });
+          expect(await question.run).toMatchObject({
+            status: "answered",
+            answers: { answers: { answer: ["same answer"] } },
+          });
+          hello.fail();
+          expect(await outcome).toBe(false);
+          expect(source.signal.aborted).toBe(false);
+          expect(fixture.backingRun.signal.aborted).toBe(false);
+          expect(fixture.requests.filter((frame) => frame.method === "question.resolve")).toEqual(
+            [],
+          );
+        } finally {
+          hello.fail();
+          fixture.backingRun.abort();
+          await Promise.all([outcome, question.run.catch(() => undefined)]);
+        }
+      });
+    },
+  );
+
+  it.each(["harness", "ask_user"] as const)(
+    "recovers the %s receipt after commit, source closure, and a lost response",
+    async (owner) => {
+      await withQuestionGateway(async (fixture) => {
+        const question = startQuestion(fixture, owner);
+        const { source, authority } = currentSource(fixture);
+        const persist = vi.fn(async () => {});
+        try {
+          await Promise.all([fixture.waitStarted, question.showPrompt()]);
+          fixture.dropNextResolveResponse();
+          fixture.onResolved(() => source.abort());
+          await expect(
+            claimPendingAgentQuestionAnswer({ sessionKey, text: "committed", authority, persist }),
+          ).resolves.toBe(true);
+          expect(await question.run).toMatchObject({
+            status: "answered",
+            answers: { answers: { answer: ["committed"] } },
+          });
+          const resolves = fixture.requests.filter((frame) => frame.method === "question.resolve");
+          expect(resolves).toHaveLength(1);
+          expect(resolves[0]?.params).toMatchObject({
+            resolutionId: expect.stringMatching(/^[a-f0-9]{32}$/),
+          });
+          expect(persist).toHaveBeenCalledOnce();
+          expect(source.signal.aborted).toBe(true);
+          expect(fixture.backingRun.signal.aborted).toBe(false);
+        } finally {
+          fixture.backingRun.abort();
+          await question.run.catch(() => undefined);
+        }
+      });
+    },
+  );
+
   it("fences a replaced reservation even when its session and question IDs are unchanged", async () => {
     await withQuestionGateway(async (fixture) => {
       const questionId = "ask_77777777777777777777777777777777";

@@ -639,7 +639,7 @@ export function createAskUserTool(params: {
         const answerPromise = gatewayCall(
           "question.waitAnswer",
           { timeoutMs: timeoutMs + ASK_USER_RPC_GRACE_MS },
-          { id: questionId, timeoutMs },
+          { id: questionId, timeoutMs, includeResolutionId: true },
           signal ? { signal } : undefined,
         ) as Promise<QuestionWaitAnswerResult>;
         state.answer = answerPromise;
