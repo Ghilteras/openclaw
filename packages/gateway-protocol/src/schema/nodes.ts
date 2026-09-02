@@ -29,7 +29,9 @@ const NodePendingWorkPrioritySchema = Type.String({
 });
 
 /** Reasons a node can report itself alive without implying an operator action. */
-export const NodePresenceAliveReasonSchema = Type.Enum(NODE_PRESENCE_ALIVE_REASONS);
+export const NodePresenceAliveReasonSchema = Type.Enum(NODE_PRESENCE_ALIVE_REASONS, {
+  type: "string",
+});
 
 /** Presence heartbeat payload sent by remote nodes to refresh gateway state. */
 export const NodePresenceAlivePayloadSchema = closedObject({
