@@ -14,17 +14,14 @@ import {
   runOpenClawStateWriteTransaction,
   type OpenClawStateDatabaseOptions,
 } from "../../state/openclaw-state-db.js";
-import { withOpenClawStateLease } from "../../state/openclaw-state-lease.js";
 import {
   databaseOptions,
   ensureSkillWorkshopSchema,
   type SkillWorkshopStoreOptions,
 } from "./store-sqlite-schema.js";
 
-const REVIEW_CLAIM_MS = 11 * 60_000;
-const REVIEW_CLAIM_WAIT_MS = 5_000;
-// The Workshop owns one global skill collection, so its review lease, status entry, and
-// history all live under this single key. Experience reviews stay per workspace.
+// The Workshop owns one global skill collection, so its status entry and history live under
+// this single key. Experience reviews stay per workspace.
 const COLLECTION_REVIEW_KEY = "workshop";
 // Bound history so unattended weekly maintenance cannot grow state forever.
 const SKILL_COLLECTION_REVIEW_RETENTION_COUNT = 90;
@@ -68,26 +65,6 @@ export type SkillExperienceReviewStatus = {
 
 function workspaceKey(workspaceDir: string): string {
   return sha256Hex(path.resolve(workspaceDir));
-}
-
-export async function withSkillCollectionReviewClaim<T>(
-  run: (
-    lease: import("../../state/openclaw-state-lease.js").OpenClawStateLeaseContext,
-  ) => Promise<T>,
-  options: OpenClawStateDatabaseOptions = {},
-): Promise<T> {
-  return await withOpenClawStateLease(
-    {
-      scope: "skill-collection",
-      key: COLLECTION_REVIEW_KEY,
-      database: { scope: "shared", options },
-      leaseMs: REVIEW_CLAIM_MS,
-      waitMs: REVIEW_CLAIM_WAIT_MS,
-      leaseLabel: "skill collection review claim",
-      operationLabel: "skill-collection.review",
-    },
-    async (lease) => await run(lease),
-  );
 }
 
 function reviewMap<T>(state: Record<string, unknown>, field: string): Record<string, T> {
