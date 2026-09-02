@@ -52,7 +52,11 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
     beginDrain,
     beginDestroy,
     finishProvenDestroy,
-  } = createWorkerProviderOwnerLifecycle(options);
+    retireAbandonedNodeEnvironment,
+  } = createWorkerProviderOwnerLifecycle({
+    ...options,
+    finishDestroy: (record) => finishDestroy(record),
+  });
 
   function requireWorkerProfile(value: unknown): WorkerProfile {
     const error = validateCloudWorkerProfileSettings(value);
@@ -723,6 +727,7 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
   return {
     createWithProfile,
     destroy,
+    retireAbandonedNodeEnvironment,
     identityResolverFor,
     listMachineOptions,
     providerFor,

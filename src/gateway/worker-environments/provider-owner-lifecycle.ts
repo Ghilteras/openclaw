@@ -3,7 +3,10 @@ import type { WorkerProvider } from "../../plugins/types.js";
 import type { WorkerProviderLifecycleOptions } from "./provider-lifecycle.types.js";
 import { requireProviderOperationTimeoutMs } from "./service-validation.js";
 import type { WorkerEnvironmentRecord } from "./store.js";
-import type { WorkerTunnelStopReason } from "./tunnel-contract.js";
+import {
+  WorkerTunnelOwnerDisconnectedError,
+  type WorkerTunnelStopReason,
+} from "./tunnel-contract.js";
 
 export function createWorkerProviderOwnerLifecycle(
   options: Pick<
@@ -17,9 +20,12 @@ export function createWorkerProviderOwnerLifecycle(
     | "move"
     | "inState"
     | "retireNodeEnrollment"
-  >,
+    | "isStopping"
+    | "withLock"
+    | "saveError"
+  > & { finishDestroy: (record: WorkerEnvironmentRecord) => Promise<WorkerEnvironmentRecord> },
 ) {
-  const { store, serviceError, move, inState } = options;
+  const { store, serviceError, move, inState, withLock, saveError, finishDestroy } = options;
   const tunnels = options.tunnelManager;
 
   const requireCurrentOwner = (record: WorkerEnvironmentRecord): WorkerEnvironmentRecord => {
@@ -128,7 +134,59 @@ export function createWorkerProviderOwnerLifecycle(
     });
   };
 
+  const retireAbandonedNodeEnvironment = async (
+    binding: { environmentId: string; sessionId: string; ownerEpoch: number },
+    authorize?: () => void,
+  ): Promise<{ status: "destroyed" } | { status: "cleanup-pending" }> => {
+    if (options.isStopping()) {
+      throw serviceError("invalid_state", "Worker environment service is stopping");
+    }
+    return withLock(binding.environmentId, async () => {
+      authorize?.();
+      let record = store.get(binding.environmentId);
+      if (
+        !record ||
+        record.state === "destroyed" ||
+        (record.state === "failed" && !record.leaseId)
+      ) {
+        return { status: "destroyed" };
+      }
+      if (
+        record.ownerEpoch !== binding.ownerEpoch ||
+        !record.nodeDeviceId ||
+        record.sharedHost !== true ||
+        record.attachedSessionIds.length !== 1 ||
+        record.attachedSessionIds[0] !== binding.sessionId
+      ) {
+        throw serviceError(
+          "invalid_state",
+          "Abandoned device worker owner changed before retirement",
+        );
+      }
+      record = store.requestDestroy({ environmentId: record.environmentId, state: record.state });
+      try {
+        await finishDestroy(record);
+        authorize?.();
+        return { status: "destroyed" };
+      } catch (error) {
+        if (!(error instanceof WorkerTunnelOwnerDisconnectedError)) {
+          throw error;
+        }
+        authorize?.();
+        const current = requireCurrentOwner(record);
+        if (current.destroyRequestedAtMs === null || store.getCredential(current.environmentId)) {
+          throw serviceError("invalid_state", "Abandoned device worker authority is not fenced");
+        }
+        // All local stops have joined. Keep the old attachment until reconnect can prove
+        // physical cleanup; explicit abandonment releases only the session's local owner.
+        saveError(current, error);
+        return { status: "cleanup-pending" };
+      }
+    });
+  };
+
   return {
+    retireAbandonedNodeEnvironment,
     requireCurrentOwner,
     stopOwner,
     destroyLease,

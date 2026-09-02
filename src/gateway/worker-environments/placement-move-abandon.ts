@@ -15,7 +15,6 @@ import type {
   WorkerPlacementMoveRequest,
   WorkerPlacementReclaimRequest,
 } from "./service-contract.js";
-import { isFailedWorkerPlacementEnvironmentGone } from "./session-placement-lifecycle.js";
 import type { WorkerWorkspaceOperationCoordinator } from "./workspace-operation-coordinator.js";
 
 export function createWorkerPlacementMoveAbandonment(options: {
@@ -97,21 +96,25 @@ export function createWorkerPlacementMoveAbandonment(options: {
     ) {
       throw new Error(`Session ${request.sessionKey} abandonment source changed before teardown`);
     }
-    await forceDestroyEnvironment(intent.source.environmentId);
+    await options.workspaceOperations.run(intent.source.environmentId, async () => {
+      await forceAbandonWorkerEnvironment({
+        placements,
+        environmentId: intent.source.environmentId,
+        resolveWorkspacePath: options.resolveWorkspacePath,
+      });
+      await environments.retireAbandonedNodeEnvironment(
+        {
+          environmentId: intent.source.environmentId,
+          sessionId: intent.sessionId,
+          ownerEpoch: intent.source.ownerEpoch,
+        },
+        authorize,
+      );
+    });
     authorize?.();
     const failed = placements.get(request.sessionId);
     if (failed?.state !== "failed") {
       throw new Error(`Session ${request.sessionKey} abandonment did not fence its remote owner`);
-    }
-    if (
-      !isFailedWorkerPlacementEnvironmentGone({
-        environmentService: environments,
-        placement: failed,
-      })
-    ) {
-      throw new Error(
-        `Session ${request.sessionKey} device teardown is still pending; retry Continue on Gateway`,
-      );
     }
     const local = placements.completeAbandonedPlacementMoveSourceToLocal({
       operationId: intent.operationId,

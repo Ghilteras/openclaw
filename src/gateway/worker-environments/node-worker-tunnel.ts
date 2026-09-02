@@ -45,6 +45,7 @@ import type { NodeWorkspaceTransferService } from "./node-workspace-transfer-ser
 import type { WorkerSessionTurnClaim } from "./placement-record.js";
 import type { WorkerEnvironmentRecord } from "./store.js";
 import {
+  joinWorkerTunnelStops,
   WorkerTunnelOwnerDisconnectedError,
   type WorkerTunnelStopReason,
   type WorkerTunnelStatus,
@@ -485,11 +486,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
         }
       }
     }
-    const outcomes = await Promise.allSettled(operations);
-    const failure = outcomes.find((outcome) => outcome.status === "rejected");
-    if (failure) {
-      throw failure.reason;
-    }
+    await joinWorkerTunnelStops(operations);
   }
 
   return {

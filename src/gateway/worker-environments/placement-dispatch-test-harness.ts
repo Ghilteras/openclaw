@@ -385,6 +385,10 @@ export function createHarness(
       await options.afterDestroy?.();
       return destroyed;
     }),
+    retireAbandonedNodeEnvironment: vi.fn(async (binding) => {
+      await environments.destroy(binding.environmentId);
+      return { status: "destroyed" as const };
+    }),
     reconcileOnce: vi.fn(async () => {
       log.push("environment:reconcile");
     }),

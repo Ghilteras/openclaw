@@ -39,7 +39,7 @@ import type {
   WorkerEnvironmentRecord,
   WorkerEnvironmentTransitionPatch as TransitionPatch,
 } from "./store.js";
-import type { WorkerTunnelStopReason } from "./tunnel-contract.js";
+import { joinWorkerTunnelStops, type WorkerTunnelStopReason } from "./tunnel-contract.js";
 import type { WorkerTunnelManager } from "./tunnel.js";
 import { boundedWorkerError as boundedError } from "./worker-error.js";
 import { createWorkerTurnRpc } from "./worker-turn-rpc.js";
@@ -165,7 +165,7 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
             ownerEpoch?: number,
             reason?: WorkerTunnelStopReason,
           ) => {
-            await Promise.all([
+            await joinWorkerTunnelStops([
               options.tunnelManager?.stop(environmentId, ownerEpoch),
               options.nodeTunnelManager?.stop(environmentId, ownerEpoch, reason),
               options.nodeDesktopCarrier?.stop(environmentId, ownerEpoch),
@@ -659,6 +659,7 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     },
     destroy: async (environmentId: string) =>
       environmentAccess.project(await providerLifecycle.destroy(environmentId)),
+    retireAbandonedNodeEnvironment: providerLifecycle.retireAbandonedNodeEnvironment,
     destroyUnattached: async (environmentId: string) =>
       environmentAccess.project(
         await providerLifecycle.destroy(environmentId, { requireUnattached: true }),

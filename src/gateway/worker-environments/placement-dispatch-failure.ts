@@ -77,6 +77,7 @@ export type WorkerDispatchEnvironmentService = Pick<
   | "create"
   | "createFromProfileSnapshot"
   | "destroy"
+  | "retireAbandonedNodeEnvironment"
   | "get"
   | "reconcileEnvironment"
   | "reconcileOnce"
