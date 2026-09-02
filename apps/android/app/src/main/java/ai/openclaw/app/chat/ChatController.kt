@@ -5811,9 +5811,7 @@ class ChatController internal constructor(
               currentSessionActionSnapshot(_sessionKey.value)
                 ?.takeIf { it.outboxScope() == branchScope }
                 ?: continue
-            // Share the current load so branch history can finish reconnect recovery.
-            // Request sequencing still rejects older responses within this generation.
-            val generation = historyLoadGeneration.get()
+            val generation = historyLoadGeneration.incrementAndGet()
             val history = refreshHistoryForSessionAction(snapshot, generation, mutationReconciliationState) ?: continue
             savedState = history.branchState ?: continue
             _messages.value.mapNotNullTo(mutableSetOf()) { it.entryId }
