@@ -168,232 +168,74 @@ describe("scheduled tool policy provenance", () => {
       clearTimeout(state.timer);
     }
   });
-
-  it("stores final-surface provenance privately and never synthesizes it from the default marker", async () => {
+  it("does not capture tool inventories on create or declarative updates", async () => {
     const { storePath } = await makeStorePath();
     const state = createOkIsolatedCronState({ storePath, now: Date.now() });
-    const base = {
-      enabled: true,
-      schedule: { kind: "every" as const, everyMs: 60_000 },
-      sessionTarget: "isolated" as const,
-      wakeMode: "now" as const,
-    };
-    const proven = await add(
-      state,
-      {
-        ...base,
-        name: "proven",
-        payload: {
-          kind: "agentTurn" as const,
-          message: "run",
-          toolsAllow: ["notes__read"],
-          toolsAllowIsDefault: true,
-        },
-      },
-      {
-        toolsAllowProvenance: { version: 1, source: "final-executable-surface" },
-      },
-    );
-    expect(proven.toolsAllowProvenance).toEqual({
-      version: 1,
-      source: "final-executable-surface",
-    });
-
-    const legacy = await add(state, {
-      ...base,
-      name: "legacy-default",
-      payload: {
-        kind: "agentTurn",
-        message: "run",
-        toolsAllow: ["notes__read"],
-        toolsAllowIsDefault: true,
-      },
-    });
-    expect(legacy.toolsAllowProvenance).toBeUndefined();
-
-    const routine = await update(state, proven.id, { description: "keep" });
-    expect(routine.toolsAllowProvenance).toEqual(proven.toolsAllowProvenance);
-    const explicit = await update(state, proven.id, {
-      payload: { kind: "agentTurn", toolsAllow: ["read"] },
-    });
-    expect(explicit.toolsAllowProvenance).toBeUndefined();
-    if (state.timer) {
-      clearTimeout(state.timer);
-    }
-  });
-
-  it("stamps, preserves, replaces, and clears private runtime authority at mutation ownership", async () => {
-    const { storePath } = await makeStorePath();
-    const state = createOkIsolatedCronState({
-      storePath,
-      now: Date.now(),
-      triggersEnabled: true,
-    });
-    const baseAuthority = {
-      version: 1 as const,
-      runtimeId: "codex",
-      namespace: "codex.apps",
-      payload: { apps: [{ id: "calendar" }] },
-    };
-    const job = await add(
-      state,
-      {
-        name: "runtime-capped",
-        enabled: true,
-        schedule: { kind: "every", everyMs: 60_000 },
-        sessionTarget: "isolated",
-        wakeMode: "now",
-        payload: { kind: "agentTurn", message: "run", toolsAllow: ["*"] },
-      },
-      { captureRuntimeAuthority: () => baseAuthority },
-    );
-    expect(job.runtimeAuthority).toEqual(baseAuthority);
-
-    const routine = await update(state, job.id, { description: "preserve" });
-    expect(routine.runtimeAuthority).toEqual(baseAuthority);
-
-    const commitGuard = vi.fn();
-    const validated = await update(
-      state,
-      job.id,
-      { description: "preserve after validation" },
-      { commitGuard },
-    );
-    expect(commitGuard).toHaveBeenCalledOnce();
-    expect(validated.runtimeAuthority).toEqual(baseAuthority);
-
-    const explicit = await update(state, job.id, {
-      payload: { kind: "agentTurn", toolsAllow: ["read"] },
-    });
-    expect(explicit.runtimeAuthority).toBeUndefined();
-    expect(explicit.runtimeAuthorityRecoveryRequired).toBe(true);
-    const persistedExplicit = (await loadCronStore(storePath)).jobs.find(
-      (entry) => entry.id === job.id,
-    );
-    expect(persistedExplicit?.runtimeAuthority).toBeUndefined();
-    expect(persistedExplicit?.runtimeAuthorityRecoveryRequired).toBe(true);
-
-    const replacement = { ...baseAuthority, payload: { apps: [{ id: "mail" }] } };
-    const replaced = await update(
-      state,
-      job.id,
-      { description: "recaptured" },
-      { captureRuntimeAuthority: () => replacement },
-    );
-    expect(replaced.runtimeAuthority).toEqual(replacement);
-    expect(replaced.runtimeAuthorityRecoveryRequired).toBeUndefined();
-    const persistedReplacement = (await loadCronStore(storePath)).jobs.find(
-      (entry) => entry.id === job.id,
-    );
-    expect(persistedReplacement?.runtimeAuthority).toEqual(replacement);
-    expect(persistedReplacement?.runtimeAuthorityRecoveryRequired).toBeUndefined();
-
-    const freshEmptyCapture = await update(
-      state,
-      job.id,
-      { description: "recaptured without runtime authority" },
-      { captureRuntimeAuthority: () => undefined },
-    );
-    expect(freshEmptyCapture.runtimeAuthority).toBeUndefined();
-    expect(freshEmptyCapture.runtimeAuthorityRecoveryRequired).toBeUndefined();
-
-    const triggeredTransport = await add(
-      state,
-      {
-        name: "trigger-capped",
-        enabled: true,
-        schedule: { kind: "every", everyMs: 60_000 },
-        sessionTarget: "isolated",
-        wakeMode: "now",
-        trigger: { script: "return true" },
-        payload: { kind: "command", argv: ["true"] },
-      },
-      { captureRuntimeAuthority: () => baseAuthority },
-    );
-    expect(triggeredTransport.runtimeAuthority).toEqual(baseAuthority);
-    const nonToolRuntime = await update(state, triggeredTransport.id, { trigger: null });
-    expect(nonToolRuntime.runtimeAuthority).toBeUndefined();
-    expect(nonToolRuntime.runtimeAuthorityRecoveryRequired).toBeUndefined();
-    const persistedNonToolRuntime = (await loadCronStore(storePath)).jobs.find(
-      (entry) => entry.id === triggeredTransport.id,
-    );
-    expect(persistedNonToolRuntime?.runtimeAuthority).toBeUndefined();
-    expect(persistedNonToolRuntime?.runtimeAuthorityRecoveryRequired).toBeUndefined();
-    const persistedAuthorityRow = runOpenClawStateWriteTransaction(({ db }) =>
-      db
-        .prepare("SELECT job_id FROM cron_job_runtime_authorities WHERE job_id = ?")
-        .get(triggeredTransport.id),
-    );
-    expect(persistedAuthorityRow).toBeUndefined();
-    if (state.timer) {
-      clearTimeout(state.timer);
-    }
-  });
-
-  it("keeps declarative runtime authority across validation and replaces it only on capture", async () => {
-    const { storePath } = await makeStorePath();
-    const state = createOkIsolatedCronState({ storePath, now: Date.now() });
-    const baseAuthority = {
-      version: 1 as const,
-      runtimeId: "codex",
-      namespace: "codex.apps",
-      payload: { apps: [{ id: "calendar" }] },
-    };
     const input = {
-      declarationKey: "plugin:test:runtime-authority",
-      name: "declarative runtime authority",
+      declarationKey: "plugin:test:current-agent-policy",
+      name: "current agent permissions",
       enabled: true,
       schedule: { kind: "every" as const, everyMs: 60_000 },
       sessionTarget: "isolated" as const,
       wakeMode: "now" as const,
-      payload: { kind: "agentTurn" as const, message: "run", toolsAllow: ["*"] },
+      payload: { kind: "agentTurn" as const, message: "run" },
     };
-    const created = requireDeclarativeAddResult(
-      await add(state, input, {
-        captureRuntimeAuthority: () => baseAuthority,
-      }),
-    );
-    expect(created.job.runtimeAuthority).toEqual(baseAuthority);
-
+    const created = requireDeclarativeAddResult(await add(state, input));
     const commitGuard = vi.fn();
-    const validated = requireDeclarativeAddResult(
+    const updated = requireDeclarativeAddResult(
       await add(
         state,
         {
           ...input,
-          description: "validated",
-          payload: { kind: "agentTurn", message: "run" },
+          description: "updated",
         },
         { commitGuard },
       ),
     );
     expect(commitGuard).toHaveBeenCalledOnce();
-    expect(validated.job.runtimeAuthority).toEqual(baseAuthority);
+    expect(updated.job.id).toBe(created.job.id);
+    expect(updated.job.scheduledToolPolicy).toEqual({ version: 1, mode: "trusted" });
+    for (const job of [created.job, updated.job, ...(await loadCronStore(storePath)).jobs]) {
+      expect(job.runtimeAuthority).toBeUndefined();
+      expect(job.runtimeAuthorityRecoveryRequired).toBeUndefined();
+      expect(job.toolsAllowProvenance).toBeUndefined();
+      expect("toolsAllow" in job.payload).toBe(false);
+    }
+    if (state.timer) {
+      clearTimeout(state.timer);
+    }
+  });
 
-    const cleared = requireDeclarativeAddResult(
-      await add(state, {
-        ...input,
-        description: "new tool cap",
-        payload: { ...input.payload, toolsAllow: ["read"] },
-      }),
-    );
-    expect(cleared.job.runtimeAuthority).toBeUndefined();
-    expect(cleared.job.runtimeAuthorityRecoveryRequired).toBe(true);
-
-    const replacement = { ...baseAuthority, payload: { apps: [{ id: "mail" }] } };
-    const recaptured = requireDeclarativeAddResult(
-      await add(
-        state,
-        {
-          ...input,
-          description: "recaptured",
-          payload: { ...input.payload, toolsAllow: ["read"] },
-        },
-        { captureRuntimeAuthority: () => replacement },
-      ),
-    );
-    expect(recaptured.job.runtimeAuthority).toEqual(replacement);
-    expect(recaptured.job.runtimeAuthorityRecoveryRequired).toBeUndefined();
+  it("keeps legacy snapshot data inert and durable during an ordinary edit", async () => {
+    const { storePath } = await makeStorePath();
+    const now = Date.now();
+    const oldJob = {
+      id: "legacy-snapshot",
+      name: "legacy snapshot",
+      enabled: false,
+      createdAtMs: now,
+      updatedAtMs: now,
+      schedule: { kind: "every" as const, everyMs: 60_000 },
+      sessionTarget: "isolated" as const,
+      wakeMode: "now" as const,
+      payload: { kind: "agentTurn" as const, message: "run", toolsAllow: ["read"] },
+      runtimeAuthority: {
+        version: 1 as const,
+        runtimeId: "codex",
+        namespace: "codex.apps",
+        payload: { apps: [] },
+      },
+      state: {},
+    };
+    // Upgrading must not rewrite jobs just to make them runnable. The execution
+    // test covers ignoring the old snapshot; this covers preserving stored data.
+    await writeCronStoreSnapshot({ storePath, jobs: [oldJob] });
+    const state = createOkIsolatedCronState({ storePath, now });
+    const updated = await update(state, oldJob.id, { description: "edited" });
+    expect(updated.runtimeAuthority).toEqual(oldJob.runtimeAuthority);
+    const persisted = (await loadCronStore(storePath)).jobs.find((job) => job.id === oldJob.id);
+    expect(persisted?.runtimeAuthority).toEqual(oldJob.runtimeAuthority);
+    expect(persisted?.payload).toEqual(oldJob.payload);
     if (state.timer) {
       clearTimeout(state.timer);
     }
@@ -445,7 +287,7 @@ describe("scheduled tool policy provenance", () => {
     }
   });
 
-  it("keeps routine legacy edits restrictive and adopts authority on an explicit tool edit", async () => {
+  it("does not synthesize an account owner for legacy jobs and accepts a verified owner on edit", async () => {
     const { storePath } = await makeStorePath();
     const now = Date.parse("2026-07-23T12:00:00.000Z");
     const state = createOkIsolatedCronState({ storePath, now });
@@ -470,7 +312,7 @@ describe("scheduled tool policy provenance", () => {
     const reauthorized = await update(
       state,
       created.id,
-      { payload: { kind: "agentTurn", toolsAllow: ["write"] } },
+      { payload: { kind: "agentTurn", message: "updated task" } },
       {
         scheduledToolPolicy: {
           version: 1,

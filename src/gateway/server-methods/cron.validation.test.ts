@@ -18,12 +18,6 @@ import {
   createChannelTestPluginBase,
   createTestRegistry,
 } from "../../test-utils/channel-plugins.js";
-import {
-  createCronCreatorAuthorityRunScope,
-  mintCronCreatorAuthorityGrant,
-  revokeCronCreatorAuthorityRunScope,
-  type CronCreatorAuthorityGrant,
-} from "../cron-creator-authority-grant.js";
 import { getGatewayProcessInstanceId } from "../process-instance.js";
 import type { GatewayClient, GatewayRequestContext } from "./types.js";
 
@@ -405,13 +399,6 @@ function callerClient(
       },
     },
   };
-}
-
-function callerClientWithCronCreatorAuthority(grant: CronCreatorAuthorityGrant): GatewayClient {
-  const client = callerClient("ops");
-  client.internal!.agentRuntimeIdentity!.cronToolsAllowCapture = "final-executable-surface";
-  client.internal!.agentRuntimeIdentity!.cronCreatorAuthorityGrant = grant;
-  return client;
 }
 
 function telegramDeliveryWithSlackFailure(overrides: Partial<CronDelivery> = {}): CronDelivery {
@@ -1028,7 +1015,7 @@ describe("cron method validation", () => {
     expectCronSuccess(respond);
   });
 
-  it("rejects agent-runtime tool jobs without an explicit toolsAllow cap", async () => {
+  it("allows agent-runtime jobs without a tool snapshot and stamps their owner", async () => {
     const { context, respond } = await invokeCronAdd(
       agentTurnCronParams({
         payload: { kind: "agentTurn", message: "hello" },
@@ -1036,11 +1023,9 @@ describe("cron method validation", () => {
       { client: callerClient("ops") },
     );
 
-    expect(context.cron.add).not.toHaveBeenCalled();
-    expectResponseError(respond, {
-      code: "INVALID_REQUEST",
-      messageIncludes: "explicit payload.toolsAllow cap",
-    });
+    expect(requireCronAddPayload(context).payload).toEqual({ kind: "agentTurn", message: "hello" });
+    expect(requireCronAddPayload(context).agentId).toBe("ops");
+    expectCronSuccess(respond);
   });
 
   it("allows agent-runtime transport-only jobs without a toolsAllow cap", async () => {
@@ -1432,48 +1417,6 @@ describe("cron method validation", () => {
     expectResponseError(respond, { code: "INVALID_REQUEST" });
   });
 
-  it("consumes an exact live configured-MCP grant once at cron.add commit", async () => {
-    const scope = createCronCreatorAuthorityRunScope("run-add");
-    const grant = mintCronCreatorAuthorityGrant(scope);
-    const context = createCronContext();
-    const client = callerClientWithCronCreatorAuthority(grant);
-
-    const first = await invokeCron("cron.add", agentTurnCronParams(), { context, client });
-    expectCronSuccess(first.respond);
-    expect(context.committedAdds).toHaveLength(1);
-
-    const replay = await invokeCron("cron.add", agentTurnCronParams(), { context, client });
-    expectResponseError(replay.respond, {
-      code: "INVALID_REQUEST",
-      messageIncludes: "Configured MCP cron authority is no longer active",
-    });
-    expect(context.committedAdds).toHaveLength(1);
-    revokeCronCreatorAuthorityRunScope(scope);
-  });
-
-  it("preserves creator runtime authority while revalidating delegated authority at commit", async () => {
-    const runtimeAuthority = {
-      version: 1 as const,
-      runtimeId: "codex",
-      namespace: "codex.apps",
-      payload: { apps: [{ id: "calendar" }] },
-    };
-    const scope = createCronCreatorAuthorityRunScope("run-add-authority");
-    const grant = mintCronCreatorAuthorityGrant(scope, undefined, runtimeAuthority);
-    const context = createCronContext();
-    context.validateAgentRuntimeApprovalAuthority = () => true;
-
-    const result = await invokeCron("cron.add", agentTurnCronParams(), {
-      context,
-      client: callerClientWithCronCreatorAuthority(grant),
-    });
-
-    expectCronSuccess(result.respond);
-    expect(context.committedRuntimeAuthorityCaptures).toEqual([true]);
-    expect(context.committedRuntimeAuthorities).toEqual([runtimeAuthority]);
-    revokeCronCreatorAuthorityRunScope(scope);
-  });
-
   it("keeps delegated liveness validation separate from runtime authority capture", async () => {
     const currentJob = createCronJob({
       agentId: "ops",
@@ -1491,48 +1434,6 @@ describe("cron method validation", () => {
     expectCronSuccess(result.respond);
     expect(context.committedRuntimeAuthorityCaptures).toEqual([false]);
     expect(context.committedRuntimeAuthorities).toEqual([undefined]);
-  });
-
-  it("rejects a mismatched cron.add runId without consuming the exact grant", async () => {
-    const scope = createCronCreatorAuthorityRunScope("run-add");
-    const grant = mintCronCreatorAuthorityGrant(scope);
-    const context = createCronContext();
-
-    const mismatch = await invokeCron("cron.add", agentTurnCronParams(), {
-      context,
-      client: callerClientWithCronCreatorAuthority({ ...grant, runId: "run-other" }),
-    });
-    expectResponseError(mismatch.respond, {
-      code: "INVALID_REQUEST",
-      messageIncludes: "Configured MCP cron authority is no longer active",
-    });
-    expect(context.committedAdds).toHaveLength(0);
-
-    const exact = await invokeCron("cron.add", agentTurnCronParams(), {
-      context,
-      client: callerClientWithCronCreatorAuthority(grant),
-    });
-    expectCronSuccess(exact.respond);
-    expect(context.committedAdds).toHaveLength(1);
-    revokeCronCreatorAuthorityRunScope(scope);
-  });
-
-  it("keeps cron.add mutation at zero after the admitted run revokes its grant", async () => {
-    const scope = createCronCreatorAuthorityRunScope("run-add-revoked");
-    const grant = mintCronCreatorAuthorityGrant(scope);
-    revokeCronCreatorAuthorityRunScope(scope);
-    const context = createCronContext();
-
-    const result = await invokeCron("cron.add", agentTurnCronParams(), {
-      context,
-      client: callerClientWithCronCreatorAuthority(grant),
-    });
-
-    expectResponseError(result.respond, {
-      code: "INVALID_REQUEST",
-      messageIncludes: "Configured MCP cron authority is no longer active",
-    });
-    expect(context.committedAdds).toHaveLength(0);
   });
 
   it("keeps cron.add mutation at zero when delegated runtime authority closes before commit", async () => {
@@ -1830,76 +1731,6 @@ describe("cron method validation", () => {
       code: "INVALID_REQUEST",
       messageIncludes: `unknown cron job id: ${job.id}`,
     });
-  });
-
-  it("keeps cron.update mutation at zero after resolution outlives its run", async () => {
-    const scope = createCronCreatorAuthorityRunScope("run-update-revoked");
-    const grant = mintCronCreatorAuthorityGrant(scope);
-    revokeCronCreatorAuthorityRunScope(scope);
-    const currentJob = createCronJob({
-      agentId: "ops",
-      owner: { agentId: "ops", sessionKey: "agent:ops:main", accountId: "default" },
-      scheduledToolPolicy: {
-        version: 1,
-        mode: "account",
-        ownerSessionKey: "agent:ops:main",
-        ownerAccountId: "default",
-      },
-    });
-    const context = createCronContext(currentJob);
-
-    const result = await invokeCron(
-      "cron.update",
-      {
-        jobId: currentJob.id,
-        patch: {
-          payload: { kind: "agentTurn", message: "updated", toolsAllow: ["read"] },
-        },
-      },
-      { context, client: callerClientWithCronCreatorAuthority(grant) },
-    );
-
-    expectResponseError(result.respond, {
-      code: "INVALID_REQUEST",
-      messageIncludes: "Configured MCP cron authority is no longer active",
-    });
-    expect(context.committedUpdates).toHaveLength(0);
-  });
-
-  it("consumes an exact live configured-MCP grant once at cron.update commit", async () => {
-    const scope = createCronCreatorAuthorityRunScope("run-update");
-    const grant = mintCronCreatorAuthorityGrant(scope);
-    const currentJob = createCronJob({
-      agentId: "ops",
-      owner: { agentId: "ops", sessionKey: "agent:ops:main", accountId: "default" },
-      scheduledToolPolicy: {
-        version: 1,
-        mode: "account",
-        ownerSessionKey: "agent:ops:main",
-        ownerAccountId: "default",
-      },
-    });
-    const context = createCronContext(currentJob);
-    const client = callerClientWithCronCreatorAuthority(grant);
-    const params = {
-      jobId: currentJob.id,
-      patch: {
-        payload: { kind: "agentTurn", message: "updated", toolsAllow: ["read"] },
-      },
-    };
-
-    const first = await invokeCron("cron.update", params, { context, client });
-    expectCronSuccess(first.respond);
-    expect(context.committedUpdates).toHaveLength(1);
-    expect(context.committedRuntimeAuthorityCaptures).toEqual([true]);
-
-    const replay = await invokeCron("cron.update", params, { context, client });
-    expectResponseError(replay.respond, {
-      code: "INVALID_REQUEST",
-      messageIncludes: "Configured MCP cron authority is no longer active",
-    });
-    expect(context.committedUpdates).toHaveLength(1);
-    revokeCronCreatorAuthorityRunScope(scope);
   });
 
   it("keeps scoped read access with the stamped owner after operator retargeting", async () => {
@@ -2511,7 +2342,7 @@ describe("cron method validation", () => {
     expectCronSuccess(respond);
   });
 
-  it("rejects agent-runtime edits that leave a tool-runtime job capless", async () => {
+  it("allows the owner to edit an existing job without reauthorizing its plugins", async () => {
     const { context, respond } = await invokeCronUpdate(
       {
         id: "cron-1",
@@ -2524,11 +2355,11 @@ describe("cron method validation", () => {
       { client: callerClient("ops") },
     );
 
-    expect(context.cron.update).not.toHaveBeenCalled();
-    expectResponseError(respond, {
-      code: "INVALID_REQUEST",
-      messageIncludes: "explicit payload.toolsAllow cap",
+    expect(requireCronUpdatePatch(context).payload).toEqual({
+      kind: "agentTurn",
+      message: "updated",
     });
+    expectCronSuccess(respond);
   });
 
   it("allows agent-runtime non-policy edits to legacy capless jobs", async () => {

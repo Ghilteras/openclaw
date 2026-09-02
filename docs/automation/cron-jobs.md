@@ -261,16 +261,9 @@ Skill collection review runs every 7 days. It is enabled when `skills.workshop.a
 <ParamField path="--light-context" type="boolean">
   Skip workspace bootstrap file injection.
 </ParamField>
-<ParamField path="--tools" type="string">
-  Restrict which tools the job can use, for example `--tools exec,read`.
-</ParamField>
+Scheduled jobs use their owning agent's current tools, connected accounts, and execution environment. They do not capture a separate per-job tool list or app permission snapshot. Existing saved tool lists are ignored; there is no need to recreate a job after a plugin or runtime update.
 
-New jobs that can run tools always store an explicit tool policy. Jobs created by an agent
-are capped to the tools available to that creating turn, and the agent cannot widen the
-stored list. Jobs created by an authenticated operator without `--tools` store an
-unrestricted `*` policy; `automations edit --clear-tools` restores that explicit unrestricted
-policy. Existing jobs that predate an explicit tool policy retain their current behavior
-until their tool policy is explicitly edited or the job is recreated.
+The agent's current global, provider, channel, and sandbox policies still apply. To restrict scheduled work, restrict the owning agent. A schedule cannot establish access to another agent or account.
 
 `--model` sets the job's primary model; it does not replace a session `/model` override, so configured fallback chains still apply on top of it. An unresolved or disallowed model fails the run with an explicit validation error rather than silently falling back to the default. If a job has `--model` but no explicit or configured fallback list, OpenClaw passes an empty fallback override instead of silently appending the agent primary as a hidden retry target.
 
@@ -346,15 +339,9 @@ Throws, timeouts, exhausted tool budgets, invalid results, and `nextCheck` witho
 
 ### Codex apps in scheduled automations
 
-Codex-created automations can retain the app IDs and permission ceiling
-available to the authenticated creator thread. At execution, OpenClaw requires
-the same prepared Codex profile and account, then narrows the stored cap against
-current app policy. Revoked apps, account/runtime changes, and interactive
-approval requirements fail closed with a recovery message; they never fall
-back to broader or different credentials. Older jobs without a captured app
-envelope continue their ordinary non-app behavior; recreate or reauthorize one
-only when it needs Codex app access. See
-[Native Codex plugins](/plugins/codex-native-plugins#scheduled-automations).
+Codex automations use the same current plugin discovery, authenticated account, native MCP configuration, and execution environment as the owning agent's ordinary turns. They do not replay app grants or credentials from the turn that created the schedule.
+
+Normal tool approval and account policy still apply. A disconnected or revoked app must be reconnected on the owning agent; updating a schedule is not an authentication step. See [Native Codex plugins](/plugins/codex-native-plugins#scheduled-automations).
 
 | Style           | `--session` value   | Runs in                                              | Best for                        |
 | --------------- | ------------------- | ---------------------------------------------------- | ------------------------------- |

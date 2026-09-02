@@ -22,10 +22,7 @@ import {
   type CodeModeFailureCode,
   type CodeModeHeadlessResult,
 } from "../agents/code-mode.js";
-import {
-  applyEmbeddedAttemptToolsAllow,
-  resolveEmbeddedAttemptToolConstructionPlan,
-} from "../agents/embedded-agent-runner/run/attempt-tool-construction-plan.js";
+import { resolveEmbeddedAttemptToolConstructionPlan } from "../agents/embedded-agent-runner/run/attempt-tool-construction-plan.js";
 import type { loadPreparedInboundPluginRegistry } from "../agents/prepared-model-runtime.inbound-registry.js";
 import { loadAgentRuntimePluginRegistryHandle } from "../agents/runtime-plugins.js";
 import { resolveSandboxContext } from "../agents/sandbox.js";
@@ -46,7 +43,6 @@ import { formatErrorMessageWithCode } from "../infra/errors.js";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import type { PluginRegistry } from "../plugins/registry-types.js";
 import { withPluginRuntimeRegistryScope } from "../plugins/runtime/gateway-request-scope.js";
-import { getPluginToolMeta } from "../plugins/tool-metadata.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import {
   resolveCronActiveRuntimeConfig,
@@ -171,7 +167,6 @@ async function prepareTriggerRuntime(
       sandbox?.enabled && sandbox.workspaceAccess !== "rw" ? sandbox.workspaceDir : workspaceDir;
     const toolPlan = resolveEmbeddedAttemptToolConstructionPlan({
       toolsEnabled: true,
-      toolsAllow: params.toolsAllow,
     });
     // Bundle MCP tools are source:"mcp", which the headless bridge excludes.
     // LSP runtimes are session-scoped and intentionally outside trigger v1.
@@ -200,9 +195,7 @@ async function prepareTriggerRuntime(
           toolConstructionPlan: toolPlan.codingToolConstructionPlan,
         })
       : [];
-    const tools = applyEmbeddedAttemptToolsAllow(allTools, params.toolsAllow, {
-      toolMeta: (tool) => getPluginToolMeta(tool),
-    });
+    const tools = allTools;
     const hookContext: HookContext = {
       agentId,
       config,

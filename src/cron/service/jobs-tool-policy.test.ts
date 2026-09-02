@@ -1,106 +1,64 @@
 import { describe, expect, it } from "vitest";
+import { makeCronJob } from "../delivery.test-helpers.js";
 import type { CronStoredJob } from "../types.js";
-import { reconcileToolsAllowAuthority } from "./jobs-tool-policy.js";
+import { reconcileScheduledJobOwnerPolicy } from "./jobs-tool-policy.js";
 
-function toolJob(toolsAllow: string[] | undefined): CronStoredJob {
+const owner = { agentId: "main", sessionKey: "agent:main:chat:group:team", accountId: "work" };
+const policy = {
+  version: 1 as const,
+  mode: "account" as const,
+  ownerSessionKey: owner.sessionKey,
+  ownerAccountId: owner.accountId,
+  ownerOrigin: { kind: "external" as const, channel: "chat" },
+};
+function toolJob(): CronStoredJob {
   return {
-    id: "job-1",
-    name: "job",
-    enabled: true,
-    createdAtMs: 1,
-    updatedAtMs: 1,
-    schedule: { kind: "every", everyMs: 60_000 },
-    payload: {
-      kind: "script",
-      script: "return {}",
-      ...(toolsAllow ? { toolsAllow } : {}),
-    },
-    state: {},
-  } as unknown as CronStoredJob;
+    ...makeCronJob({ payload: { kind: "agentTurn", message: "Read project notes" } }),
+    owner,
+  };
 }
 
-describe("reconcileToolsAllowAuthority exec pin", () => {
-  it("stamps the restrict-only pin only for exec-granting caps with the server fact", () => {
-    const job = toolJob(["exec", "read"]);
-    reconcileToolsAllowAuthority({
+describe("scheduled job owner policy", () => {
+  it("retains the authenticated account and origin without a per-job cap", () => {
+    const job = toolJob();
+    reconcileScheduledJobOwnerPolicy({
       job,
-      previouslyUsedToolRuntime: true,
-      explicitlyMutatesToolsAllow: true,
-      toolsAllowExecTarget: { version: 1, host: "gateway", ask: "always" },
+      previouslyUsedToolRuntime: false,
+      scheduledToolPolicy: policy,
     });
-    expect(job.toolsAllowExecTarget).toEqual({ version: 1, host: "gateway", ask: "always" });
-    expect(job.toolsAllowExecTargetRequirement).toEqual({
-      version: 1,
-      target: { version: 1, host: "gateway", ask: "always" },
-      grantIndex: 0,
-    });
+    expect(job.scheduledToolPolicy).toEqual(policy);
+    expect(job.payload.toolsAllow).toBeUndefined();
+    expect(job.runtimeAuthority).toBeUndefined();
   });
 
-  it("never stamps a pin onto a cap that does not grant exec", () => {
-    const job = toolJob(["read"]);
-    reconcileToolsAllowAuthority({
-      job,
-      previouslyUsedToolRuntime: true,
-      explicitlyMutatesToolsAllow: true,
-      toolsAllowExecTarget: { version: 1, host: "gateway" },
-    });
-    expect(job.toolsAllowExecTarget).toBeUndefined();
-    expect(job.toolsAllowExecTargetRequirement).toBeUndefined();
+  it("cannot stamp another account's policy onto a job", () => {
+    const job = toolJob();
+    expect(() =>
+      reconcileScheduledJobOwnerPolicy({
+        job,
+        previouslyUsedToolRuntime: false,
+        scheduledToolPolicy: { ...policy, ownerAccountId: "other" },
+      }),
+    ).toThrow("scheduled account policy must match the persisted job owner");
   });
 
-  it("clears the pin when the cap is explicitly rewritten without the server fact", () => {
-    const job = toolJob(["exec"]);
-    job.toolsAllowExecTarget = { version: 1, host: "gateway", ask: "always" };
-    job.toolsAllowExecTargetRequirement = {
-      version: 1,
-      target: { version: 1, host: "gateway", ask: "always" },
-      grantIndex: 0,
+  it("does not replace an existing owner with the operator editing the schedule", () => {
+    const job = { ...toolJob(), scheduledToolPolicy: policy };
+    reconcileScheduledJobOwnerPolicy({
+      job,
+      previouslyUsedToolRuntime: true,
+      scheduledToolPolicy: { version: 1, mode: "trusted" },
+    });
+    expect(job.scheduledToolPolicy).toEqual(policy);
+  });
+
+  it("drops scheduled tool context when the payload becomes transport-only", () => {
+    const job: CronStoredJob = {
+      ...toolJob(),
+      scheduledToolPolicy: policy,
+      payload: { kind: "systemEvent", text: "wake" },
     };
-    reconcileToolsAllowAuthority({
-      job,
-      previouslyUsedToolRuntime: true,
-      explicitlyMutatesToolsAllow: true,
-    });
-    expect(job.toolsAllowExecTarget).toBeUndefined();
-    expect(job.toolsAllowExecTargetRequirement).toBeUndefined();
-  });
-
-  it("keeps the pin across edits that do not touch the cap", () => {
-    const job = toolJob(["exec"]);
-    job.toolsAllowExecTarget = { version: 1, host: "gateway", ask: "always" };
-    job.toolsAllowExecTargetRequirement = {
-      version: 1,
-      target: { version: 1, host: "gateway", ask: "always" },
-      grantIndex: 0,
-    };
-    reconcileToolsAllowAuthority({
-      job,
-      previouslyUsedToolRuntime: true,
-      explicitlyMutatesToolsAllow: false,
-    });
-    expect(job.toolsAllowExecTarget).toEqual({ version: 1, host: "gateway", ask: "always" });
-    expect(job.toolsAllowExecTargetRequirement).toEqual({
-      version: 1,
-      target: { version: 1, host: "gateway", ask: "always" },
-      grantIndex: 0,
-    });
-  });
-
-  it("drops the pin when the job stops using a tool runtime cap", () => {
-    const job = toolJob(undefined);
-    job.toolsAllowExecTarget = { version: 1, host: "gateway" };
-    job.toolsAllowExecTargetRequirement = {
-      version: 1,
-      target: { version: 1, host: "gateway" },
-      grantIndex: 0,
-    };
-    reconcileToolsAllowAuthority({
-      job,
-      previouslyUsedToolRuntime: true,
-      explicitlyMutatesToolsAllow: false,
-      toolsAllowExecTarget: { version: 1, host: "gateway" },
-    });
-    expect(job.toolsAllowExecTarget).toBeUndefined();
-    expect(job.toolsAllowExecTargetRequirement).toBeUndefined();
+    reconcileScheduledJobOwnerPolicy({ job, previouslyUsedToolRuntime: true });
+    expect(job.scheduledToolPolicy).toBeUndefined();
   });
 });

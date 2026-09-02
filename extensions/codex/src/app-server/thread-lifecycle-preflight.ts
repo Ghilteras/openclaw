@@ -14,7 +14,6 @@ import { assertCodexNativeHookRelayAllowed } from "./native-hook-relay.js";
 import { resolveCodexNativeSkillIsolation } from "./native-skill-isolation.js";
 import { isCodexAppServerProfilerEnabled } from "./profiler-flag.js";
 import { flattenCodexDynamicToolFunctions } from "./protocol.js";
-import { readScheduledCodexAppManagedRequirementsFingerprint } from "./scheduled-app-authority.js";
 import { hashCodexAppServerBindingFingerprint } from "./session-binding.js";
 import { buildContextEngineBinding } from "./thread-context-engine.js";
 import {
@@ -123,8 +122,7 @@ export async function prepareCodexThreadLifecyclePreflight(params: CodexStartOrR
   const allowConfiguredManagedHooks =
     params.params.pluginHarnessToolPolicyRestricted === true &&
     !ringZeroActive &&
-    !messageOnlySourceReply &&
-    params.params.scheduledRuntimeAuthority === undefined;
+    !messageOnlySourceReply;
   const imageGenerationDenied =
     params.params.pluginHarnessToolPolicySafeDeniedTools?.includes("image_generate") === true;
   if (restrictedToolSurface && params.nativeCodeModeEnabled !== false) {
@@ -142,10 +140,6 @@ export async function prepareCodexThreadLifecyclePreflight(params: CodexStartOrR
         {
           restrictedToolSurface,
           additionalDeniedFeatures: imageGenerationDenied ? ["image_generation"] : undefined,
-          allowedManagedRequirementsFingerprint:
-            readScheduledCodexAppManagedRequirementsFingerprint(
-              params.params.scheduledRuntimeAuthority,
-            ),
           // Plugin policy restricts model-visible tools, while configured hooks are
           // administrator policy. Stricter and detached surfaces remain fail closed.
           allowConfiguredManagedHooks,

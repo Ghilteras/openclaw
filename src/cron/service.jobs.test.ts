@@ -336,11 +336,11 @@ describe("applyJobPatch", () => {
       expected: { message: "do it later", toolsAllow: ["exec", "read"], toolsAllowIsDefault: true },
     },
     {
-      name: "stores an explicit wildcard when a patch clears agentTurn payload.toolsAllow",
+      name: "does not regenerate a tool snapshot when a legacy cap is cleared",
       id: "job-tools-clear",
       initial: { toolsAllow: ["exec", "read"], toolsAllowIsDefault: true },
       patch: { toolsAllow: null },
-      expected: { toolsAllow: ["*"], toolsAllowIsDefault: undefined },
+      expected: { toolsAllow: undefined, toolsAllowIsDefault: undefined },
     },
     {
       name: "clears agentTurn payload.model when patch requests null",
@@ -702,10 +702,10 @@ describe("announce delivery channel validation", () => {
   });
 });
 
-describe("cron tool authority defaults", () => {
+describe("cron jobs do not capture new tool lists", () => {
   const now = Date.parse("2026-07-21T12:00:00.000Z");
 
-  it("stores an explicit wildcard for newly created tool-runtime jobs", () => {
+  it("creates agent turns and triggers without a saved tool list", () => {
     const agentTurn = createJob(createMockState(now), {
       name: "agent turn",
       enabled: true,
@@ -724,8 +724,8 @@ describe("cron tool authority defaults", () => {
       trigger: { script: "return true" },
     });
 
-    expect(agentTurn.payload.toolsAllow).toEqual(["*"]);
-    expect(triggeredEvent.payload.toolsAllow).toEqual(["*"]);
+    expect(agentTurn.payload.toolsAllow).toBeUndefined();
+    expect(triggeredEvent.payload.toolsAllow).toBeUndefined();
   });
 
   it("preserves explicit empty caps and leaves transport-only jobs capless", () => {
@@ -750,7 +750,7 @@ describe("cron tool authority defaults", () => {
     expect(transportOnly.payload.toolsAllow).toBeUndefined();
   });
 
-  it("preserves legacy and explicit state during declarative convergence", () => {
+  it("does not restore an obsolete cap during declarative convergence", () => {
     const base = {
       id: "declared-job",
       name: "declared job",
@@ -797,10 +797,8 @@ describe("cron tool authority defaults", () => {
     });
 
     expect(legacy.payload.toolsAllow).toBeUndefined();
-    expect(explicit.payload).toMatchObject({
-      toolsAllow: ["read", "cron"],
-      toolsAllowIsDefault: true,
-    });
+    expect(explicit.payload.toolsAllow).toBeUndefined();
+    expect(explicit.payload.toolsAllowIsDefault).toBeUndefined();
   });
 
   it("repairs a missing anchor when converging an unchanged every schedule", () => {
@@ -832,7 +830,7 @@ describe("cron tool authority defaults", () => {
     expect(job.schedule).toEqual({ kind: "every", everyMs: 60_000, anchorMs: createdAtMs });
   });
 
-  it("adopts explicit authority when a declaration becomes tool-bearing", () => {
+  it("keeps a newly tool-bearing declaration on the current agent policy", () => {
     const job: CronJob = {
       id: "declared-trigger",
       name: "declared trigger",
@@ -864,7 +862,8 @@ describe("cron tool authority defaults", () => {
       },
     );
 
-    expect(job.payload.toolsAllow).toEqual(["*"]);
+    expect(job.payload.toolsAllow).toBeUndefined();
+    expect(job.scheduledToolPolicy).toEqual({ version: 1, mode: "trusted" });
   });
 });
 

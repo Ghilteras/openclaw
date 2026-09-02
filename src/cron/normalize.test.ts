@@ -492,7 +492,7 @@ describe("normalizeCronJobPatch", () => {
     expect(payload.kind).toBe("agentTurn");
     expect(payload.fallbacks).toStrictEqual([]);
   });
-  it("preserves empty toolsAllow lists so patches can disable all tools", () => {
+  it("preserves empty legacy toolsAllow lists as data, not executable policy", () => {
     const { normalized, payload } = patchAgent({ toolsAllow: [] });
     expect(payload.kind).toBe("agentTurn");
     expect(payload.toolsAllow).toStrictEqual([]);

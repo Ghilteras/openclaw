@@ -183,7 +183,6 @@ function createCronPayloadSchema(params: { triggersEnabled: boolean }): TSchema 
           Type.Boolean({ description: "Allow untrusted external content in prompt" }),
         ),
         fallbacks: nullableStringArraySchema("Fallback models, or null to clear"),
-        toolsAllow: nullableStringArraySchema("Allowed tool ids, or null to clear"),
       },
       { additionalProperties: true },
     ),

@@ -43,7 +43,6 @@ export async function cleanupCodexAttempt(
   const { activeTurnId, abortListener, handle, freezeRunTerminalOutcome } = activeTurn;
   // Exact-thread cron authority exists only while this creator turn owns the
   // live client/thread. Retained model callbacks must fail after cleanup begins.
-  prompt.context.attemptTools.scheduledAppAuthoritySourceRef.current = undefined;
   // Finalization can throw before freezing. Close cancellation admission before
   // any teardown await so it cannot replace the cleanup promise being joined.
   freezeRunTerminalOutcome();
@@ -180,9 +179,6 @@ export async function cleanupCodexAttempt(
     await runCleanupStep("codex-sandbox-release", releaseSandboxExecEnvironment);
     await runCleanupStep("codex-scoped-mcp-dispose", () =>
       prompt.context.attemptTools.scopedMcpTools?.dispose(),
-    );
-    await runCleanupStep("codex-scheduled-mcp-dispose", () =>
-      prompt.context.attemptTools.scheduledConfiguredMcp?.dispose(),
     );
     await runCleanupStep("codex-abort-listener-remove", () => {
       runAbortController.signal.removeEventListener("abort", abortListener);

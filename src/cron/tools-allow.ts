@@ -10,10 +10,3 @@ export function cronJobUsesToolRuntime(job: CronToolRuntimeSpec): boolean {
     Boolean(job.trigger?.script.trim())
   );
 }
-
-/** Stamps an explicit unrestricted cap without changing jobs that already carry one. */
-export function applyDefaultCronToolsAllow(job: CronToolRuntimeSpec): void {
-  if (cronJobUsesToolRuntime(job) && job.payload.toolsAllow === undefined) {
-    job.payload.toolsAllow = ["*"];
-  }
-}

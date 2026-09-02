@@ -50,10 +50,7 @@ export async function startCodexAttemptRuntime(resources: CodexAttemptResources)
     sandboxExecServerEnabled,
   } = runtime;
   const { toolBridge, toolState } = attemptTools;
-  const developerInstructions = joinPresentSections(
-    turnState.promptBuild.developerInstructions,
-    attemptTools.scheduledConfiguredMcp?.diagnosticNotice,
-  );
+  const developerInstructions = joinPresentSections(turnState.promptBuild.developerInstructions);
   const {
     params,
     attemptClientFactory,
@@ -129,7 +126,6 @@ export async function startCodexAttemptRuntime(resources: CodexAttemptResources)
             Boolean(connection.sandboxSessionKey) &&
             loopDetectionEnabled)),
       bundleMcpThreadConfig,
-      configuredMcpOwnershipVersion: attemptTools.configuredMcpOwnershipVersion,
       nativeToolSurfaceEnabled,
       nativeProviderWebSearchSupport,
       sandboxExecServerEnabled,
@@ -229,10 +225,7 @@ export async function startCodexAttemptRuntime(resources: CodexAttemptResources)
     recordCodexTrajectoryContext(trajectoryRecorder, {
       attempt: params,
       cwd: effectiveCwd,
-      developerInstructions: joinPresentSections(
-        buildRenderedCodexDeveloperInstructions(),
-        attemptTools.scheduledConfiguredMcp?.diagnosticNotice,
-      ),
+      developerInstructions: joinPresentSections(buildRenderedCodexDeveloperInstructions()),
       prompt: turnState.codexTurnPromptText,
       tools: toolBridge.availableSpecs,
     });

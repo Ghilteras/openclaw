@@ -143,6 +143,8 @@ export function normalizeCronPayload(payload: UnknownRecord): UnknownRecord {
       delete next.fallbacks;
     }
   }
+  // Keep legacy stored values readable for rollback. Scheduled execution ignores
+  // this retired field; normalizing stored data must not rewrite old job definitions.
   if ("toolsAllow" in next) {
     const toolsAllow = normalizeTrimmedStringArray(next.toolsAllow, { allowNull: true });
     if (toolsAllow !== undefined) {

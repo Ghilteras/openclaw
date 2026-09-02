@@ -24,9 +24,6 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   normalizeCronScheduledToolCallerOrigin,
   normalizeCronScheduledToolPolicy,
-  normalizeCronToolsAllowExecTarget,
-  resolveCronToolsAllowExecTargetRecoveryError,
-  restoreCronPinnedExecGrant,
 } from "../../cron/scheduled-tool-policy.js";
 import { assertAgentRunLifecycleGenerationCurrent } from "../../infra/agent-events.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
@@ -251,25 +248,11 @@ export async function persistAgentSessionPhase(params: {
                   "cron run continuation has no reusable native CLI session";
                 throw new Error(restoredCronContinuationError);
               }
-              restoredCronContinuationError = resolveCronToolsAllowExecTargetRecoveryError({
-                requirement: marker.toolsAllowExecTargetRequirement,
-                execTarget: marker.toolsAllowExecTarget,
-              });
-              if (restoredCronContinuationError) {
-                throw new Error(restoredCronContinuationError);
-              }
-              const restoredToolsAllow = restoreCronPinnedExecGrant({
-                toolsAllow: marker.toolsAllow,
-                requirement: marker.toolsAllowExecTargetRequirement,
-                execTarget: marker.toolsAllowExecTarget,
-              });
               restoredCronContinuation = {
                 ...params.restoredCronContinuationIdentity,
                 provider,
                 model,
                 ...(freshEntry.thinkingLevel ? { thinking: freshEntry.thinkingLevel } : {}),
-                ...(restoredToolsAllow !== undefined ? { toolsAllow: restoredToolsAllow } : {}),
-                ...(marker.toolsAllowIsDefault === true ? { toolsAllowIsDefault: true } : {}),
                 ...(normalizeCronScheduledToolPolicy(marker.scheduledToolPolicy)
                   ? {
                       scheduledToolPolicy: normalizeCronScheduledToolPolicy(
@@ -281,13 +264,6 @@ export async function persistAgentSessionPhase(params: {
                   ? {
                       scheduledToolCallerOrigin: normalizeCronScheduledToolCallerOrigin(
                         marker.scheduledToolCallerOrigin,
-                      ),
-                    }
-                  : {}),
-                ...(normalizeCronToolsAllowExecTarget(marker.toolsAllowExecTarget)
-                  ? {
-                      toolsAllowExecTarget: normalizeCronToolsAllowExecTarget(
-                        marker.toolsAllowExecTarget,
                       ),
                     }
                   : {}),

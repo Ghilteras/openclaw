@@ -3,7 +3,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { normalizeOptionalAccountId } from "../routing/account-id.js";
 import { snapshotOwnCronRecord } from "./own-record.js";
 
-/** Closed, server-authored origin of an account-scoped scheduled tool cap. */
+/** Closed, server-authored origin of an account-scoped scheduled task. */
 export type CronScheduledToolCallerOrigin =
   | { kind: "external"; channel: string }
   | { kind: "local" }
@@ -173,7 +173,7 @@ export function resolveCronToolsAllowExecTargetRecoveryError(params: {
   );
 }
 
-/** Server-authored provenance for a persisted scheduled tool-cap authority envelope. */
+/** Server-authored owner context; execution still resolves the agent's current policy. */
 export type CronScheduledToolPolicy =
   | {
       version: 1;
@@ -186,6 +186,7 @@ export type CronScheduledToolPolicy =
       mode: "account";
       ownerSessionKey: string;
       ownerAccountId: string;
+      ownerOrigin?: CronScheduledToolCallerOrigin;
     };
 
 /** Creates provenance for an authenticated operator or trusted in-process caller. */
@@ -197,13 +198,22 @@ export function createTrustedCronScheduledToolPolicy(): CronScheduledToolPolicy 
 export function createAccountCronScheduledToolPolicy(params: {
   ownerSessionKey: string;
   ownerAccountId: string;
+  ownerOrigin?: CronScheduledToolCallerOrigin;
 }): CronScheduledToolPolicy | undefined {
   const ownerSessionKey = normalizeOptionalString(params.ownerSessionKey);
   const ownerAccountId = normalizeOptionalAccountId(params.ownerAccountId);
   if (!ownerSessionKey || !ownerAccountId) {
     return undefined;
   }
-  return { version: 1, mode: "account", ownerSessionKey, ownerAccountId };
+  return {
+    version: 1,
+    mode: "account",
+    ownerSessionKey,
+    ownerAccountId,
+    ...(params.ownerOrigin
+      ? { ownerOrigin: normalizeCronScheduledToolCallerOrigin(params.ownerOrigin) }
+      : {}),
+  };
 }
 
 /** Accepts only the current closed provenance shape; unknown versions fail closed. */
@@ -225,13 +235,20 @@ export function normalizeCronScheduledToolPolicy(
   const policy = createAccountCronScheduledToolPolicy({
     ownerSessionKey: typeof input.ownerSessionKey === "string" ? input.ownerSessionKey : "",
     ownerAccountId: typeof input.ownerAccountId === "string" ? input.ownerAccountId : "",
+    ...(input.ownerOrigin !== undefined
+      ? { ownerOrigin: normalizeCronScheduledToolCallerOrigin(input.ownerOrigin) }
+      : {}),
   });
   if (!policy) {
     return undefined;
   }
   return Object.keys(input).every(
     (key) =>
-      key === "version" || key === "mode" || key === "ownerSessionKey" || key === "ownerAccountId",
+      key === "version" ||
+      key === "mode" ||
+      key === "ownerSessionKey" ||
+      key === "ownerAccountId" ||
+      key === "ownerOrigin",
   )
     ? policy
     : undefined;
@@ -243,9 +260,6 @@ export function resolveCronScheduledToolPolicy(params: {
   scheduledToolPolicy?: unknown;
   owner?: { sessionKey?: string; accountId?: string };
 }): CronScheduledToolPolicy | undefined {
-  if (params.toolsAllow === undefined) {
-    return undefined;
-  }
   const policy = normalizeCronScheduledToolPolicy(params.scheduledToolPolicy);
   if (!policy || policy.mode === "trusted") {
     return policy;

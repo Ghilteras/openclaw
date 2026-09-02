@@ -1,7 +1,6 @@
 /** Session identity and context preparation for isolated cron runs. */
 import { isDeepStrictEqual } from "node:util";
 import { tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope.js";
-import { findModelInCatalog } from "../../agents/model-catalog-lookup.js";
 import {
   acquireAgentRunPreparedModelRuntime,
   loadPublishedGatewayReplyDispatchRuntime,
@@ -40,11 +39,9 @@ import {
   resolveCronModelSelectionOwner,
   resolveCronThinkingSelection,
 } from "./model-selection.js";
-import { resolveCronCommandPromptPreflight } from "./run-command-preflight.js";
 import { resolveCronActiveRuntimeConfig, resolveCronAgentConfig } from "./run-config.js";
 import { buildCurrentConversationContextBlock } from "./run-current-context.js";
 import {
-  createCronToolsAllowPreflightDiagnostics,
   type ResolvedCronDeliveryTarget,
   resolveCronDeliveryContext,
 } from "./run-delivery-trace.js";
@@ -150,10 +147,6 @@ export async function prepareCronRunContext(params: {
   onLifecycleInterrupt: () => void;
 }): Promise<CronPreparationResult> {
   const { input } = params;
-  const commandPromptPreflight = resolveCronCommandPromptPreflight(input.job);
-  if (commandPromptPreflight) {
-    return { ok: false, result: commandPromptPreflight };
-  }
   const requestedRuntimeCfg = resolveCronActiveRuntimeConfig(input.cfg);
   const requestedAgentId = input.agentId?.trim() || input.job.agentId?.trim();
   const normalizedRequested = requestedAgentId ? normalizeAgentId(requestedAgentId) : undefined;
@@ -482,25 +475,6 @@ export async function prepareCronRunContext(params: {
     // Preserve explicit timeout provenance so the idle watchdog does not reapply 120s when defaults match.
     const runTimeoutOverrideMs = resolveCronRunTimeoutOverrideMs(explicitTimeoutSeconds);
     const agentPayload = input.job.payload.kind === "agentTurn" ? input.job.payload : null;
-    const configuredProvider = cfgWithAgentDefaults.models?.providers?.[provider];
-    const modelApi =
-      findModelInCatalog(thinkingSelection.catalog, provider, model)?.api ??
-      configuredProvider?.models?.find((candidate) => candidate.id === model)?.api ??
-      configuredProvider?.api;
-    const preflightDiagnostics = await createCronToolsAllowPreflightDiagnostics({
-      cfg: cfgWithAgentDefaults,
-      jobId: input.job.id,
-      provider,
-      model,
-      modelApi,
-      agentId: modelOwner.agentId,
-      agentDir: modelOwner.agentDir,
-      workspaceDir,
-      sessionKey: agentSessionKey,
-      agentPayload,
-      agentRuntime: effectiveAgentRuntime,
-      toolsAllowProvenance: input.job.toolsAllowProvenance,
-    });
     const { deliveryPlan, deliveryRequested, resolvedDelivery, sourceDelivery } =
       await resolveCronDeliveryContext({
         cfg: cfgWithAgentDefaults,
@@ -650,16 +624,12 @@ export async function prepareCronRunContext(params: {
           createdActor: input.job.createdActor,
           sandbox,
           thinkingLevel: requestedThinkLevel,
-          toolsAllow: agentPayload?.toolsAllow,
-          toolsAllowIsDefault: agentPayload?.toolsAllowIsDefault,
           scheduledToolPolicy: resolveCronScheduledToolPolicy({
             toolsAllow: agentPayload?.toolsAllow,
             scheduledToolPolicy: input.job.scheduledToolPolicy,
             owner: input.job.owner,
           }),
           scheduledToolCallerOrigin: input.job.toolsAllowProvenance?.callerOrigin,
-          toolsAllowExecTarget: input.job.toolsAllowExecTarget,
-          toolsAllowExecTargetRequirement: input.job.toolsAllowExecTargetRequirement,
           cliSessionBindingFacts: {
             sourceReplyDeliveryMode: sourceDelivery.sourceReplyDeliveryMode,
             requireExplicitMessageTarget: sourceDelivery.messageTool.requireExplicitTarget,
@@ -704,7 +674,6 @@ export async function prepareCronRunContext(params: {
         modelFallbacksOverride,
         thinkingSelection,
         timeoutMs,
-        preflightDiagnostics,
         runTimeoutOverrideMs,
         pluginRegistry: preparedModelRuntimeLease.snapshot.pluginRegistry,
         preparedModelRuntimeLease,

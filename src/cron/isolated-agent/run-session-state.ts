@@ -18,9 +18,6 @@ import type { SkillSnapshot } from "../../skills/types.js";
 import {
   normalizeCronScheduledToolCallerOrigin,
   normalizeCronScheduledToolPolicy,
-  normalizeCronToolsAllowExecTarget,
-  normalizeCronToolsAllowExecTargetRequirement,
-  stripCronPinnedExecGrant,
 } from "../scheduled-tool-policy.js";
 import type {
   CronScheduledToolCallerOrigin,
@@ -266,34 +263,15 @@ export function createCronRunContinuationSession(params: {
   };
   persistSessionEntry: PersistSessionEntry;
 }): CronRunContinuationSession {
-  const scheduledToolPolicy =
-    params.toolsAllow === undefined
-      ? undefined
-      : normalizeCronScheduledToolPolicy(params.scheduledToolPolicy);
+  const scheduledToolPolicy = normalizeCronScheduledToolPolicy(params.scheduledToolPolicy);
   const scheduledToolCallerOrigin = normalizeCronScheduledToolCallerOrigin(
     params.scheduledToolCallerOrigin,
   );
-  const toolsAllowExecTarget =
-    params.toolsAllow === undefined
-      ? undefined
-      : normalizeCronToolsAllowExecTarget(params.toolsAllowExecTarget);
-  const toolsAllowExecTargetRequirement =
-    params.toolsAllow === undefined
-      ? undefined
-      : normalizeCronToolsAllowExecTargetRequirement(params.toolsAllowExecTargetRequirement);
-  const storedToolsAllow = stripCronPinnedExecGrant({
-    toolsAllow: params.toolsAllow,
-    requirement: toolsAllowExecTargetRequirement,
-  });
   const continuation: NonNullable<SessionEntry["cronRunContinuation"]> = {
     lifecycleRevision: params.cronSession.lifecycleRevision,
     phase: "running" as const,
-    ...(storedToolsAllow !== undefined ? { toolsAllow: storedToolsAllow } : {}),
-    ...(params.toolsAllowIsDefault === true ? { toolsAllowIsDefault: true } : {}),
     ...(scheduledToolPolicy ? { scheduledToolPolicy } : {}),
     ...(scheduledToolPolicy?.mode === "account" ? { scheduledToolCallerOrigin } : {}),
-    ...(toolsAllowExecTarget ? { toolsAllowExecTarget } : {}),
-    ...(toolsAllowExecTargetRequirement ? { toolsAllowExecTargetRequirement } : {}),
     ...(params.cliSessionBindingFacts
       ? { cliSessionBindingFacts: { ...params.cliSessionBindingFacts } }
       : {}),
