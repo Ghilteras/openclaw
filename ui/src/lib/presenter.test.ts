@@ -1,7 +1,7 @@
 // Control UI tests cover cron schedule presentation.
 import { describe, expect, it } from "vitest";
 import type { CronJob } from "../api/types.ts";
-import { formatCronSchedule } from "./presenter.ts";
+import { formatCronPayload, formatCronSchedule } from "./presenter.ts";
 
 function job(schedule: CronJob["schedule"]): CronJob {
   return {
@@ -37,5 +37,16 @@ describe("formatCronSchedule", () => {
     expect(formatCronSchedule(job({ kind: "on-exit", command: "./watch.sh", cwd: "/repo" }))).toBe(
       "On exit: ./watch.sh (cwd: /repo)",
     );
+  });
+});
+
+describe("formatCronPayload", () => {
+  it("formats the legacy skill collection review payload", () => {
+    expect(
+      formatCronPayload({
+        ...job({ kind: "every", everyMs: 60_000 }),
+        payload: { kind: "skillCollectionReview" },
+      }),
+    ).toBe("Skill collection review");
   });
 });

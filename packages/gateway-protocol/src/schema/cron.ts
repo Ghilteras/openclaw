@@ -252,7 +252,8 @@ const CronPayloadSchema = Type.Union([
 ]);
 
 /**
- * Reported payloads add the system-owned heartbeat monitor kind.
+ * Reported payloads retain read-only legacy kinds during rolling upgrades.
+ * The legacy review kind is removed at the next protocol transition.
  */
 const CronReportedPayloadSchema = Type.Union([
   CronSystemEventPayloadSchema,
@@ -260,6 +261,7 @@ const CronReportedPayloadSchema = Type.Union([
   CronCommandPayloadSchema,
   CronScriptPayloadSchema,
   closedObject({ kind: Type.Literal("heartbeat") }),
+  closedObject({ kind: Type.Literal("skillCollectionReview") }),
 ]);
 
 /** Partial cron payload for job updates. */

@@ -1187,6 +1187,25 @@ describe("cron controller", () => {
     expect(state.cronForm.timeoutSeconds).toBe("0");
   });
 
+  it("loads legacy skill collection review jobs as locked rows", async () => {
+    const legacyJob = createCronJob({
+      id: "legacy-skill-review",
+      name: "Legacy skill review",
+      payload: { kind: "skillCollectionReview" },
+    });
+    const request = createMethodRequest({
+      "cron.list": cronJobsListResponse([legacyJob]),
+    });
+    const state = createStateWithRequest(request);
+
+    await loadCronJobsPage(state);
+    expect(state.cronJobs).toEqual([legacyJob]);
+
+    startCronEdit(state, legacyJob);
+    expect(state.cronForm.payloadKind).toBe("skillCollectionReview");
+    expect(state.cronForm.payloadLocked).toBe(true);
+  });
+
   it("preserves command payloads when editing Control UI metadata", async () => {
     const job = createCronJob({
       id: "job-command",
