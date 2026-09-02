@@ -1,5 +1,4 @@
-import { HEARTBEAT_TASK_DECLARATION_PREFIX } from "./heartbeat-task.js";
-
+export const HEARTBEAT_TASK_DECLARATION_PREFIX = "heartbeat-task:";
 export const HEARTBEAT_DECLARATION_PREFIX = "heartbeat:";
 export const SKILL_COLLECTION_REVIEW_DECLARATION_PREFIX = "skill-collection-review:";
 
