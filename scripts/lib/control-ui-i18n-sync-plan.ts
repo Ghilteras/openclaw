@@ -256,7 +256,7 @@ export function createControlUiLocaleSyncPlan(input: {
   };
 }
 
-export function compareStringArrays(left: string[], right: string[]): boolean {
+export function compareStringArrays(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 

@@ -12,6 +12,7 @@ import {
 } from "./lib/control-ui-i18n-catalog.ts";
 import { CONTROL_UI_LOCALE_ENTRIES } from "./lib/control-ui-i18n-config.ts";
 import { syncControlUiRawCopyBaseline } from "./lib/control-ui-i18n-raw-copy.ts";
+import { compareStringArrays } from "./lib/control-ui-i18n-sync-plan.ts";
 import { collectSourceFileContents } from "./lib/source-file-scan-cache.mts";
 
 export type CatalogFallbackBaseline = {
@@ -29,9 +30,6 @@ const AUTOMATIONS_FEATURE_KEYS =
   `sessionsView.showCronSessions sessionsView.subagentPrefix sessionsView.automationPrefix agents.cronPanel.schedulerSubtitle agents.cronPanel.agentJobsTitle configForm.sections.cron.label configView.sections.cron subtitles.tasks subtitles.automation memoryPage.dreaming.intro tasksPage.runtime.cron attention.cronFailed attention.cronOverdue palette.items.scheduled`.split(
     " ",
   );
-function compareStringArrays(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
 
 function toRepoPath(filePath: string): string {
   return path.relative(ROOT, filePath).split(path.sep).join("/");
