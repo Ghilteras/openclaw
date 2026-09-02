@@ -541,23 +541,7 @@ describe("package update recovery safety", () => {
           packageName: "openclaw",
           packageRoot,
           runCommand: createRootRunner(globalRoot),
-          runStep: async ({ name, argv }) => {
-            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
-            if (!stagePrefix) {
-              throw new Error("missing stage prefix");
-            }
-            await writePackageRoot(
-              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-              "2.0.0",
-            );
-            return {
-              name,
-              command: argv.join(" "),
-              cwd: stagePrefix,
-              durationMs: 0,
-              exitCode: 0,
-            };
-          },
+          runStep: stageCandidatePackage,
           timeoutMs: 1000,
         });
       } finally {
@@ -763,23 +747,7 @@ describe("package update recovery safety", () => {
             packageName: "openclaw",
             packageRoot,
             runCommand: createRootRunner(globalRoot),
-            runStep: async ({ name, argv }) => {
-              const stagePrefix = argv[argv.indexOf("--prefix") + 1];
-              if (!stagePrefix) {
-                throw new Error("missing stage prefix");
-              }
-              await writePackageRoot(
-                path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-                "2.0.0",
-              );
-              return {
-                name,
-                command: argv.join(" "),
-                cwd: stagePrefix,
-                durationMs: 0,
-                exitCode: 0,
-              };
-            },
+            runStep: stageCandidatePackage,
             postVerifyStep: async (candidateRoot) => {
               expect(candidateRoot).toBe(packageRoot);
               await fs.unlink(externalAlias);
@@ -909,6 +877,116 @@ describe("package update recovery safety", () => {
       });
     },
   );
+
+  it("keeps rollback unverified when filesystem inode identity is unavailable", async () => {
+    await withTestDir({ prefix: "openclaw-package-recovery-no-inode-" }, async (base) => {
+      const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+      const packageRoot = path.join(globalRoot, "openclaw");
+      await writePackageRoot(packageRoot, "1.0.0");
+      const lstat = fs.lstat.bind(fs);
+      const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+        const stat = await lstat(...args);
+        if (
+          typeof stat.ino === "bigint" &&
+          path.basename(String(args[0])).startsWith(".openclaw.package-backup-")
+        ) {
+          Object.assign(stat, { birthtimeNs: 1n, ino: 0n });
+        }
+        return stat;
+      });
+
+      try {
+        const result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: stageCandidatePackage,
+          postVerifyStep: async (candidateRoot) => ({
+            name: "openclaw doctor",
+            command: "openclaw doctor --non-interactive --fix",
+            cwd: candidateRoot,
+            durationMs: 0,
+            exitCode: 1,
+            stderrTail: "doctor rejected candidate",
+          }),
+          timeoutMs: 1000,
+        });
+
+        expect(result.afterVersion).toBe("1.0.0");
+        expect(result.recovery).toMatchObject({
+          serviceRestartSafe: false,
+          packageRollbackVerified: false,
+        });
+        expect(result.failedStep?.stderrTail).toContain(
+          "package backup did not preserve filesystem identity",
+        );
+      } finally {
+        lstatSpy.mockRestore();
+      }
+    });
+  });
+
+  it("keeps rollback unverified when the restored tree changes during fingerprinting", async () => {
+    await withTestDir({ prefix: "openclaw-package-recovery-racy-tree-" }, async (base) => {
+      const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+      const packageRoot = path.join(globalRoot, "openclaw");
+      const earlyEntry = path.join(packageRoot, "dist", "a-early.js");
+      const lateEntry = path.join(packageRoot, "dist", "z-late.js");
+      await writePackageRoot(packageRoot, "1.0.0");
+      await fs.writeFile(earlyEntry, "original early file\n");
+      await fs.writeFile(lateEntry, "original late file\n");
+      let doctorRejected = false;
+      let changedAfterVisit = false;
+      const open = fs.open.bind(fs);
+      const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+        if (doctorRejected && !changedAfterVisit && String(args[0]) === lateEntry) {
+          changedAfterVisit = true;
+          await fs.writeFile(earlyEntry, "changed after fingerprint visit\n");
+        }
+        return await open(...args);
+      });
+
+      try {
+        const result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: stageCandidatePackage,
+          postVerifyStep: async (candidateRoot) => {
+            doctorRejected = true;
+            return {
+              name: "openclaw doctor",
+              command: "openclaw doctor --non-interactive --fix",
+              cwd: candidateRoot,
+              durationMs: 0,
+              exitCode: 1,
+              stderrTail: "doctor rejected candidate",
+            };
+          },
+          timeoutMs: 1000,
+        });
+
+        expect(changedAfterVisit).toBe(true);
+        expect(result.afterVersion).toBe("1.0.0");
+        expect(result.recovery).toMatchObject({
+          serviceRestartSafe: false,
+          packageRollbackVerified: false,
+        });
+        expect(result.failedStep?.stderrTail).toContain(
+          "rollback verification failed: restored package tree does not match backup",
+        );
+        await expect(fs.readFile(earlyEntry, "utf8")).resolves.toBe(
+          "changed after fingerprint visit\n",
+        );
+      } finally {
+        openSpy.mockRestore();
+      }
+    });
+  });
 
   it.runIf(process.platform !== "win32")(
     "keeps rollback unverified for an external package-tree symlink",

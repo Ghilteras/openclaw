@@ -1,5 +1,6 @@
 // Runs package update move, inventory, and cleanup steps.
 import { createHash } from "node:crypto";
+import type { BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -732,19 +733,12 @@ type PackageTreeFingerprint = {
   restored: string;
 };
 
-type PackageRootIdentity =
-  | { kind: "inode"; dev: bigint; ino: bigint }
-  | { kind: "birthtime"; birthtimeNs: bigint; dev: bigint };
+type PackageRootIdentity = { dev: bigint; ino: bigint };
 
 async function readPackageRootIdentity(packageRoot: string): Promise<PackageRootIdentity | null> {
   try {
     const stat = await fs.lstat(packageRoot, { bigint: true });
-    if (stat.ino !== 0n) {
-      return { kind: "inode", dev: stat.dev, ino: stat.ino };
-    }
-    return stat.birthtimeNs > 0n
-      ? { kind: "birthtime", birthtimeNs: stat.birthtimeNs, dev: stat.dev }
-      : null;
+    return stat.ino === 0n ? null : { dev: stat.dev, ino: stat.ino };
   } catch {
     return null;
   }
@@ -754,14 +748,22 @@ function packageRootIdentitiesMatch(
   left: PackageRootIdentity | null,
   right: PackageRootIdentity | null,
 ): boolean {
-  if (!left || !right || left.kind !== right.kind) {
-    return false;
-  }
-  return left.kind === "inode"
-    ? right.kind === "inode" && left.dev === right.dev && left.ino === right.ino
-    : right.kind === "birthtime" &&
-        left.dev === right.dev &&
-        left.birthtimeNs === right.birthtimeNs;
+  return Boolean(left && right && left.dev === right.dev && left.ino === right.ino);
+}
+
+function packageFingerprintStatsMatch(left: BigIntStats, right: BigIntStats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino !== 0n &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.nlink === right.nlink &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
 }
 
 async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeFingerprint | null> {
@@ -770,6 +772,7 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
     restoredFingerprint.update(`${JSON.stringify(value)}\n`);
   };
   const restoredHardlinkOwners = new Map<string, string>();
+  const observedEntries: Array<{ entryPath: string; stat: BigIntStats }> = [];
   const canonicalPackageRoot = path.resolve(packageRoot);
   let bytes = 0;
   let entries = 0;
@@ -785,11 +788,22 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
     if (entries > PACKAGE_FINGERPRINT_MAX_ENTRIES) {
       return false;
     }
-    const stat = await fs.lstat(entryPath);
+    const stat = await fs.lstat(entryPath, { bigint: true });
+    if (stat.ino === 0n) {
+      return false;
+    }
+    observedEntries.push({ entryPath, stat });
     // ctime changes when ownership, ACLs, capabilities, or extended attributes
     // change. The package root is checked separately before its rollback rename.
-    const portableMetadata = [stat.mode & 0o7777, stat.uid, stat.gid];
-    const exactMetadata = [...portableMetadata, relativePath === "" ? null : stat.ctimeMs];
+    const portableMetadata = [
+      Number(stat.mode & 0o7777n),
+      stat.uid.toString(),
+      stat.gid.toString(),
+    ];
+    const exactMetadata = [
+      ...portableMetadata,
+      relativePath === "" ? null : stat.ctimeNs.toString(),
+    ];
     const updateEntryFingerprint = (restored: unknown[]): void => {
       updateRestoredFingerprint(restored);
     };
@@ -806,7 +820,7 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
     }
     if (stat.isFile()) {
       const resolveHardlinkOwner = (owners: Map<string, string>): string | null => {
-        if (stat.nlink <= 1 || stat.ino === 0) {
+        if (stat.nlink <= 1n) {
           return null;
         }
         const hardlinkKey = `${stat.dev}:${stat.ino}`;
@@ -818,6 +832,10 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
       const contents = createHash("sha256");
       const handle = await fs.open(entryPath, "r");
       try {
+        const openedStat = await handle.stat({ bigint: true });
+        if (!packageFingerprintStatsMatch(stat, openedStat)) {
+          return false;
+        }
         const buffer = Buffer.allocUnsafe(64 * 1024);
         let position = 0;
         while (true) {
@@ -838,6 +856,9 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
           bytes += bytesRead;
           position += bytesRead;
         }
+        if (!packageFingerprintStatsMatch(openedStat, await handle.stat({ bigint: true }))) {
+          return false;
+        }
       } finally {
         await handle.close();
       }
@@ -846,8 +867,8 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
         relativePath,
         "file",
         ...exactMetadata,
-        stat.size,
-        stat.nlink,
+        stat.size.toString(),
+        stat.nlink.toString(),
         restoredHardlinkOwner,
         contentsDigest,
       ]);
@@ -881,11 +902,20 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
   };
 
   try {
-    return (await visit(packageRoot, ""))
-      ? {
-          restored: restoredFingerprint.digest("hex"),
-        }
-      : null;
+    if (!(await visit(packageRoot, ""))) {
+      return null;
+    }
+    for (const observed of observedEntries) {
+      if (
+        !packageFingerprintStatsMatch(
+          observed.stat,
+          await fs.lstat(observed.entryPath, { bigint: true }),
+        )
+      ) {
+        return null;
+      }
+    }
+    return { restored: restoredFingerprint.digest("hex") };
   } catch {
     // Fingerprinting must not turn a previously usable package into an update
     // blocker. An incomplete baseline simply prevents a verified rollback claim.
