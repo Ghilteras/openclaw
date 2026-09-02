@@ -836,4 +836,64 @@ describe("package update recovery safety", () => {
       });
     },
   );
+
+  it.runIf(process.platform !== "win32")(
+    "keeps rollback unverified when both package fingerprints exceed the external-tree limit",
+    async () => {
+      await withTestDir({ prefix: "openclaw-package-recovery-bounded-link-" }, async (base) => {
+        const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+        const packageRoot = path.join(globalRoot, "openclaw");
+        const externalRoot = path.join(base, "external-tree");
+        await writePackageRoot(packageRoot, "1.0.0");
+        await fs.mkdir(externalRoot);
+        for (let index = 0; index < 513; index += 1) {
+          await fs.writeFile(path.join(externalRoot, `${index}.txt`), "", "utf8");
+        }
+        await fs.symlink(externalRoot, path.join(packageRoot, "dist", "external-tree"));
+
+        const result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: async ({ name, argv }) => {
+            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
+            if (!stagePrefix) {
+              throw new Error("missing stage prefix");
+            }
+            await writePackageRoot(
+              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
+              "2.0.0",
+            );
+            return {
+              name,
+              command: argv.join(" "),
+              cwd: stagePrefix,
+              durationMs: 0,
+              exitCode: 0,
+            };
+          },
+          postVerifyStep: async (candidateRoot) => ({
+            name: "openclaw doctor",
+            command: "openclaw doctor --non-interactive --fix",
+            cwd: candidateRoot,
+            durationMs: 0,
+            exitCode: 1,
+            stderrTail: "doctor rejected candidate",
+          }),
+          timeoutMs: 1000,
+        });
+
+        expect(result.afterVersion).toBe("1.0.0");
+        expect(result.recovery).toMatchObject({
+          serviceRestartSafe: false,
+          packageRollbackVerified: false,
+        });
+        expect(result.failedStep?.stderrTail).toContain(
+          "rollback verification failed: restored package tree does not match backup",
+        );
+      });
+    },
+  );
 });
