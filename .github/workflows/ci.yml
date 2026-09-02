@@ -4799,7 +4799,7 @@ jobs:
 
       - name: Capture Apple Watch screenshot
         id: watch_screenshot
-        if: matrix.device_family == 'iphone'
+        if: matrix.device_family == 'ipad-13'
         run: |
           source scripts/lib/ios-fastlane.sh
           (
@@ -4838,7 +4838,7 @@ jobs:
             --node-version "$(node --version)"
           )
           node scripts/ios-screenshot-evidence.mjs "${collect_args[@]}"
-          if [[ "$DEVICE_FAMILY" == "iphone" ]]; then
+          if [[ "$DEVICE_FAMILY" == "ipad-13" ]]; then
             collect_args[2]="watch"
             node scripts/ios-screenshot-evidence.mjs "${collect_args[@]}"
           fi
