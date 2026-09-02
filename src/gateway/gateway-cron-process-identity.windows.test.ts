@@ -1,7 +1,10 @@
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { createOpenClawTestInstance } from "../../test/helpers/openclaw-test-instance.js";
+import {
+  createOpenClawTestInstance,
+  writeGatewayProcessDiagnostic,
+} from "../../test/helpers/openclaw-test-instance.js";
 import { connectGatewayClient, disconnectGatewayClient } from "./test-helpers.e2e.js";
 
 describe.skipIf(process.platform !== "win32")("Windows cron process identity", () => {
@@ -17,6 +20,18 @@ describe.skipIf(process.platform !== "win32")("Windows cron process identity", (
           OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
         },
       });
+      const diagnose = (phase: string, error?: unknown) => {
+        const detail = error instanceof Error ? (error.stack ?? error.message) : typeof error;
+        writeGatewayProcessDiagnostic(phase, {
+          pid: instance.child?.pid,
+          error:
+            error === undefined
+              ? undefined
+              : detail
+                  .replaceAll(instance.gatewayToken, "[redacted]")
+                  .replaceAll(instance.hookToken, "[redacted]"),
+        });
+      };
       let jobId: string | undefined;
       let client: Awaited<ReturnType<typeof connectGatewayClient>> | undefined;
       try {
@@ -74,14 +89,30 @@ describe.skipIf(process.platform !== "win32")("Windows cron process identity", (
           ownerStartTime: expect.any(Number),
           finishedAtMs: expect.any(Number),
         });
+        diagnose("cron-primary-passed");
+      } catch (error) {
+        // Record the primary failure before finally can replace it with a teardown error.
+        diagnose("cron-primary-failed", error);
+        throw error;
       } finally {
         if (jobId && client) {
-          await client.request("cron.remove", { id: jobId }).catch(() => undefined);
+          await client.request("cron.remove", { id: jobId }).catch((error: unknown) => {
+            diagnose("cron-remove-failed", error);
+          });
         }
         if (client) {
-          await disconnectGatewayClient(client).catch(() => undefined);
+          await disconnectGatewayClient(client).catch((error: unknown) => {
+            diagnose("cron-disconnect-failed", error);
+          });
         }
-        await instance.cleanup();
+        diagnose("cron-cleanup-start");
+        try {
+          await instance.cleanup();
+          diagnose("cron-cleanup-passed");
+        } catch (error) {
+          diagnose("cron-cleanup-failed", error);
+          throw error;
+        }
       }
     },
   );

@@ -1,5 +1,5 @@
 // OpenClaw test instance helper spawns isolated OpenClaw processes.
-import { type ChildProcessByStdio, spawn } from "node:child_process";
+import { type ChildProcessByStdio, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
@@ -11,6 +11,7 @@ import {
   RUNTIME_POSTBUILD_STAMP_FILE,
 } from "../../scripts/lib/local-build-metadata-paths.mts";
 import { terminateManagedChild } from "../../scripts/lib/managed-child-process.mts";
+import { redactSensitiveText } from "../../src/logging/redact.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
@@ -305,6 +306,31 @@ async function waitForGatewayReady(
   );
 }
 
+export function writeGatewayProcessDiagnostic(
+  phase: string,
+  fields: Record<string, string | number | boolean | null | undefined> = {},
+): void {
+  try {
+    const bounded = Object.fromEntries(
+      Object.entries(fields)
+        .slice(0, 24)
+        .map(([key, value]) => [
+          key,
+          typeof value !== "string"
+            ? value
+            : value.length > 8_192
+              ? "[oversized diagnostic text omitted]"
+              : redactSensitiveText(value, { mode: "tools" }).slice(0, 4_096),
+        ]),
+    );
+    process.stderr.write(
+      `[gateway-process-diagnostic] ${JSON.stringify({ phase, atMs: Date.now(), ...bounded })}\n`,
+    );
+  } catch {
+    // Observational diagnostics must not replace the original test or cleanup outcome.
+  }
+}
+
 function hasGatewayProcessClosed(child: OpenClawTestProcess): boolean {
   return hasChildExited(child) && child.stdout.closed && child.stderr.closed;
 }
@@ -327,6 +353,55 @@ async function stopGatewayProcess(
   options: GatewayProcessStopOptions = {},
 ): Promise<boolean> {
   const platform = options.platform ?? process.platform;
+  const diagnose = (
+    phase: string,
+    fields: Parameters<typeof writeGatewayProcessDiagnostic>[1] = {},
+  ) => {
+    if (platform !== "win32") {
+      return;
+    }
+    writeGatewayProcessDiagnostic(phase, {
+      nativePlatform: process.platform,
+      pid: child.pid,
+      exitCode: child.exitCode,
+      signalCode: child.signalCode,
+      stdoutClosed: child.stdout.closed,
+      stderrClosed: child.stderr.closed,
+      stdoutDestroyed: child.stdout.destroyed,
+      stderrDestroyed: child.stderr.destroyed,
+      remainingMs: deadline - Date.now(),
+      stopTimeoutMs,
+      ...fields,
+    });
+  };
+  const runTaskkill: GatewayProcessStopOptions["runTaskkill"] =
+    options.runTaskkill ??
+    ((command, args, taskkillOptions) => {
+      const startedAt = Date.now();
+      diagnose("taskkill-start", { command, force: args.includes("/F") });
+      // Diagnostic-only: pipe taskkill stdout/stderr instead of ignoring them.
+      // Preserve its timeout/signals and return the native result unchanged.
+      const result = spawnSync(command, args, {
+        ...taskkillOptions,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      diagnose("taskkill-result", {
+        command,
+        force: args.includes("/F"),
+        elapsedMs: Date.now() - startedAt,
+        status: result.status,
+        signal: result.signal,
+        error: result.error?.message,
+        errorCode:
+          isRecord(result.error) && typeof result.error.code === "string"
+            ? result.error.code
+            : undefined,
+        stdout: result.stdout?.toString("utf8"),
+        stderr: result.stderr?.toString("utf8"),
+      });
+      return result;
+    });
+  diagnose("stop-start");
   const waitForClose = (remainingSteps: number) =>
     waitForGatewayClose(
       child,
@@ -336,35 +411,35 @@ async function stopGatewayProcess(
       ),
     );
   const terminate = (signal: NodeJS.Signals) =>
-    terminateManagedChild(
-      child,
-      signal,
-      options.runTaskkill
-        ? { platform, runTaskkill: options.runTaskkill }
-        : {
-            platform,
-          },
-    );
+    terminateManagedChild(child, signal, { platform, runTaskkill });
 
   if (hasGatewayProcessClosed(child)) {
+    diagnose("already-closed");
     return true;
   }
   if (platform === "win32") {
     if (hasChildExited(child) && (await waitForClose(2))) {
+      diagnose("closed-before-taskkill");
       return true;
     }
     if (Date.now() >= deadline) {
+      diagnose("deadline-before-taskkill");
       return false;
     }
     // Taskkill owns its bounded synchronous TERM/force sequence. Node cannot observe
     // exit or pipe closure until it returns, so charge the existing close allowance afterward.
     try {
       const termination = terminate(options.forceWindowsTree ? "SIGKILL" : "SIGTERM");
-      return (
+      diagnose("termination-returned", { processTreeState: termination?.processTreeState });
+      const closed =
         termination?.processTreeState === "terminated" &&
-        (await waitForGatewayClose(child, stopTimeoutMs))
-      );
-    } catch {
+        (await waitForGatewayClose(child, stopTimeoutMs));
+      diagnose("stop-result", { closed, processTreeState: termination?.processTreeState });
+      return closed;
+    } catch (error) {
+      diagnose("stop-threw", {
+        error: error instanceof Error ? error.message : typeof error,
+      });
       return false;
     }
   }
@@ -522,6 +597,22 @@ export async function createOpenClawTestInstance(
       appendLogChunk(stderr, chunk);
       appendLogChunk(attemptStderr, chunk);
     });
+    if (process.platform === "win32") {
+      const observe = (phase: string) => {
+        writeGatewayProcessDiagnostic(phase, {
+          pid: next.pid,
+          exitCode: next.exitCode,
+          signalCode: next.signalCode,
+          stdoutClosed: next.stdout.closed,
+          stderrClosed: next.stderr.closed,
+          stdoutDestroyed: next.stdout.destroyed,
+          stderrDestroyed: next.stderr.destroyed,
+        });
+      };
+      // Observe native delivery even after a failed stop; direct stderr avoids late console RPCs.
+      next.once("exit", () => observe("gateway-child-exit"));
+      next.once("close", () => observe("gateway-child-close"));
+    }
     return next;
   };
   const releaseGatewayChild = async (

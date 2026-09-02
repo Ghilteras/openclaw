@@ -226,7 +226,7 @@ jobs:
         if: ${{ inputs.run_windows_ci }}
         shell: bash
         env:
-          REQUESTED_NODE_VERSION: "22.x"
+          REQUESTED_NODE_VERSION: "22.23.2"
         run: |
           set -euo pipefail
           source .github/actions/setup-pnpm-store-cache/ensure-node.sh
@@ -237,7 +237,7 @@ jobs:
         uses: ./.github/actions/setup-pnpm-store-cache
         with:
           cache-mode: restore
-          node-version: 22.x
+          node-version: 22.23.2
 
       - name: Runtime versions
         if: ${{ inputs.run_windows_ci }}
@@ -277,6 +277,7 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=8192
           OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD: 1
           OPENCLAW_VITEST_MAX_WORKERS: 1
+          OPENCLAW_TEST_PROJECTS_PARALLEL: 2
         run: |
           set -euo pipefail
           export PATH="$NODE_BIN:$PATH"
