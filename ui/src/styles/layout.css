@@ -1462,8 +1462,6 @@ openclaw-settings-save-indicator:empty {
 
 .sidebar-session-group-count {
   flex: 0 0 auto;
-  order: 1;
-  margin-left: auto;
   color: var(--muted);
   font-size: calc(10px * var(--control-ui-text-scale));
   font-variant-numeric: tabular-nums;

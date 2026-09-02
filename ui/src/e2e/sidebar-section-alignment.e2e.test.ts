@@ -12,11 +12,12 @@ const suite = createControlUiE2eSuite({ name: "Sidebar section column alignment"
 
 suite.define(() => {
   it.each([false, true])(
-    "aligns counts and explains unavailable creation (touch: %s)",
+    "keeps counts beside labels and aligns actions (touch: %s)",
     async (hasTouch) => {
       await suite.withPage(
         {
           hasTouch,
+          colorScheme: "dark",
           locale: "en-US",
           serviceWorkers: "block",
           viewport: { width: 1440, height: 1000 },
@@ -29,7 +30,7 @@ suite.define(() => {
             { id: "ungrouped", count: 1 },
             { id: "work", count: 1 },
             { id: "catalog:claude", count: 51 },
-            { id: "catalog:codex", count: 12 },
+            { id: "catalog:codex", count: 11 },
           ];
           const gateway = await installMockGateway(page, {
             sessionKey: "agent:main:main",
@@ -52,7 +53,7 @@ suite.define(() => {
               "sessions.catalog.list": {
                 catalogs: [
                   { id: "claude", label: "Claude Code", count: 51, creatable: false },
-                  { id: "codex", label: "Codex", count: 12, creatable: true },
+                  { id: "codex", label: "Codex", count: 11, creatable: true },
                 ].map(({ id, label, count, creatable }) => ({
                   id,
                   label,
@@ -108,6 +109,13 @@ suite.define(() => {
               animations: "disabled",
               fullPage: true,
             });
+            await page.locator(".sidebar-sessions").screenshot({
+              path: path.join(
+                artifactDir,
+                `sidebar-label-count-${hasTouch ? "touch" : "mouse"}.png`,
+              ),
+              animations: "disabled",
+            });
           }
           const geometry = await page.evaluate(
             (expectedSections) =>
@@ -121,13 +129,14 @@ suite.define(() => {
                     return null;
                   }
                   const rect = element.getBoundingClientRect();
-                  return { right: rect.right, center: rect.left + rect.width / 2 };
+                  return { left: rect.left, right: rect.right, center: rect.left + rect.width / 2 };
                 };
                 return {
                   id,
                   countText: header
                     ?.querySelector(".sidebar-session-group-count")
                     ?.textContent?.trim(),
+                  label: measure(".sidebar-recent-sessions__label-text"),
                   count: measure(".sidebar-session-group-count"),
                   menu: measure('.sidebar-session-group-actions[aria-haspopup="menu"]'),
                   add: measure(".sidebar-new-session, .sidebar-session-catalog-new"),
@@ -138,8 +147,12 @@ suite.define(() => {
           expect(geometry.map((header) => header.countText)).toEqual(
             sections.map(({ count }) => String(count)),
           );
-          const countEdges = geometry.map((header) => header.count?.right ?? Number.NaN);
-          expect(Math.max(...countEdges) - Math.min(...countEdges)).toBeLessThanOrEqual(1);
+          for (const header of geometry) {
+            const countGap =
+              (header.count?.left ?? Number.NaN) - (header.label?.right ?? Number.NaN);
+            expect(countGap, header.id).toBeGreaterThanOrEqual(4);
+            expect(countGap, header.id).toBeLessThanOrEqual(12);
+          }
           for (const control of ["menu", "add"] as const) {
             const centers = geometry.flatMap((header) => {
               const position = header[control];
