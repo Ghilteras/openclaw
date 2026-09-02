@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadSettings, patchSettings } from "../../app/settings.ts";
+import { createStorageMock } from "../../test-helpers/storage.ts";
 import {
   discoverRealtimeTalkCameras,
   discoverRealtimeTalkInputs,
@@ -288,23 +290,76 @@ describe("realtime Talk microphone inputs", () => {
     );
   });
 
-  it("explains a legacy WebKit overconstraint without silently falling back", async () => {
-    const getUserMedia = vi.fn(async () => {
-      throw legacyWebKitOverconstrainedError();
+  it("recovers a legacy WebKit overconstraint through the system default", async () => {
+    const fallback = microphoneFixture();
+    const getUserMedia = vi
+      .fn()
+      .mockRejectedValueOnce(legacyWebKitOverconstrainedError())
+      .mockResolvedValueOnce(fallback.stream);
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+    vi.stubGlobal("location", { host: "localhost", pathname: "/", protocol: "http:" });
+
+    await expect(openMicrophone("selected-mic")).resolves.toBe(fallback.stream);
+    expect(getUserMedia).toHaveBeenNthCalledWith(1, {
+      audio: {
+        autoGainControl: true,
+        echoCancellation: true,
+        noiseSuppression: true,
+        deviceId: { exact: "selected-mic" },
+      },
     });
+    expect(getUserMedia).toHaveBeenNthCalledWith(2, {
+      audio: {
+        autoGainControl: true,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    });
+  });
+
+  it("does not fall back when a standard overconstraint reports a missing microphone", async () => {
+    const getUserMedia = vi
+      .fn()
+      .mockRejectedValue(new DOMException("missing", "OverconstrainedError"));
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
 
     await expect(openMicrophone("missing-mic")).rejects.toThrow(
       "The selected microphone is unavailable",
     );
-    expect(getUserMedia).toHaveBeenCalledWith({
-      audio: {
-        autoGainControl: true,
-        echoCancellation: true,
-        noiseSuppression: true,
-        deviceId: { exact: "missing-mic" },
-      },
+    expect(getUserMedia).toHaveBeenCalledOnce();
+  });
+
+  it("preserves the selected microphone when system-default recovery fails", async () => {
+    vi.stubGlobal("localStorage", createStorageMock());
+    vi.stubGlobal("sessionStorage", createStorageMock());
+    vi.stubGlobal("location", {
+      host: "fallback-failure.local",
+      pathname: "/",
+      protocol: "https:",
     });
+    patchSettings({ realtimeTalkInputDeviceId: "selected-mic" });
+    const getUserMedia = vi
+      .fn()
+      .mockRejectedValueOnce(legacyWebKitOverconstrainedError())
+      .mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+
+    await expect(openMicrophone("selected-mic")).rejects.toThrow("Microphone access is blocked");
+    expect(loadSettings().realtimeTalkInputDeviceId).toBe("selected-mic");
+  });
+
+  it("does not fall back for an Error-backed missing-device constraint", async () => {
+    const error = Object.assign(new Error("missing"), {
+      name: "OverconstrainedError",
+      constraint: "deviceId",
+    });
+    const getUserMedia = vi.fn().mockRejectedValue(error);
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+
+    await expect(openMicrophone("missing-mic")).rejects.toThrow(
+      "The selected microphone is unavailable",
+    );
+    expect(getUserMedia).toHaveBeenCalledOnce();
   });
 
   it("enables voice processing with exact device selection", async () => {

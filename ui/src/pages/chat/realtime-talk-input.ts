@@ -1,3 +1,4 @@
+import { patchSettings } from "../../app/settings.ts";
 import { t } from "../../i18n/index.ts";
 
 export type RealtimeTalkInputDevice = {
@@ -239,6 +240,20 @@ async function openRealtimeTalkInput(
       ),
     };
   } catch (error) {
+    // WebKit can reject a valid selected input with Error instead of DOMException.
+    // Retry only that browser defect without the exact device constraint.
+    if (
+      inputDeviceId?.trim() &&
+      error instanceof Error &&
+      !(error instanceof DOMException) &&
+      error.name === "OverconstrainedError" &&
+      "constraint" in error &&
+      error.constraint === ""
+    ) {
+      const fallback = await openRealtimeTalkInput(undefined, options);
+      patchSettings({ realtimeTalkInputDeviceId: undefined });
+      return fallback;
+    }
     const errorName = mediaDeviceErrorName(error);
     if (!errorName || errorName === "AbortError") {
       throw error;
