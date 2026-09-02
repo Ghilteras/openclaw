@@ -837,11 +837,12 @@ case "$1" in
   *) echo "Unexpected GitHub API endpoint: $1" >&2; exit 64 ;;
 esac
 [[ "$3" == "$query" ]] || exit 64
+# Valid-looking partial output must not authorize a failed request.
+printf '%s\\n' "$value"
 if [[ "$MOCK_API_ERROR" == "$kind" ]]; then
   echo 'gh: Service Unavailable (HTTP 503)' >&2
   exit 1
 fi
-printf '%s\\n' "$value"
 `,
     "utf8",
   );
@@ -1334,8 +1335,8 @@ function runDiffBaseFixture(options: {
       `  'repos/openclaw/openclaw/compare/${parentSha}...${headSha} --jq .merge_base_commit.sha') kind=comparison ;;`,
       "  *) exit 64 ;;",
       "esac",
-      'if [ "$MOCK_API_ERROR" = "$kind" ]; then echo "gh: Service Unavailable (HTTP 503)" >&2; exit 1; fi',
       `printf '%s\\n' '${parentSha}'`,
+      'if [ "$MOCK_API_ERROR" = "$kind" ]; then echo "gh: Service Unavailable (HTTP 503)" >&2; exit 1; fi',
     ]);
     fixtureEnv.PATH = `${bin}${path.delimiter}${process.env.PATH ?? ""}`;
     fixtureEnv.GH_TOKEN = evaluateWorkflowExpression(diffBaseStep.env.GH_TOKEN, {
@@ -3761,7 +3762,12 @@ NODE
     { kind: "historical", ref: "v2026.8.1", apiError: "ref" },
     { kind: "candidate", ref: "release/2026.8.1", apiError: "ref" },
   ] as const)("rejects unavailable authenticated $kind $apiError evidence", (identity) => {
-    const result = runCiReleaseRefValidation({ ...identity, targetSha: "a".repeat(40) });
+    const targetSha = "a".repeat(40);
+    const result = runCiReleaseRefValidation({
+      ...identity,
+      targetSha,
+      resolvedSha: targetSha,
+    });
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("HTTP 503");
     expect(result.outputs).not.toHaveProperty("eligible");
