@@ -4055,6 +4055,46 @@ NODE
     expect(JSON.stringify(npm12Job)).not.toContain("secrets.");
   });
 
+  it("binds npm 12 installation to the supplied prerelease dependency artifact", () => {
+    const job = workflowJob(PACKAGE_ACCEPTANCE_WORKFLOW, "npm_12_install_sh");
+    const validate = workflowStep(job, "Validate prerelease plugin registry artifact identity");
+    const download = workflowStep(job, "Download prerelease plugin registry artifact");
+    const install = workflowStep(job, "Run install.sh with npm 12");
+    const tuple = "needs.resolve_package.outputs.prepublish_plugin_registry_json";
+    const field = (name: string) =>
+      `\${{ fromJSON(${tuple} || '{}').prepublishPluginRegistry${name} || '' }}`;
+
+    expect(validate.if).toBe(`${tuple} != ''`);
+    expect(validate.env).toMatchObject({
+      ARTIFACT_DIGEST: field("ArtifactDigest"),
+      ARTIFACT_ID: field("ArtifactId"),
+      ARTIFACT_NAME: field("ArtifactName"),
+      ARTIFACT_RUN_ATTEMPT: field("ArtifactRunAttempt"),
+      ARTIFACT_RUN_ID: field("ArtifactRunId"),
+    });
+    expect(validate.run).toContain('verify-upload "Prerelease plugin registry"');
+    expect(download.if).toBe(validate.if);
+    expect(download.uses).toBe(DOWNLOAD_ARTIFACT_V8);
+    expect(download.with).toMatchObject({
+      "artifact-ids": field("ArtifactId"),
+      "run-id": field("ArtifactRunId"),
+      path: ".artifacts/prepublish-plugin-registry",
+    });
+    expect(install.env).toMatchObject({
+      OPENCLAW_DOCKER_E2E_SELECTED_SHA: "${{ needs.resolve_package.outputs.package_source_sha }}",
+      OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_CANDIDATE_VERSION:
+        "${{ needs.resolve_package.outputs.package_version }}",
+      OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIR: `\${{ ${tuple} != '' && format('{0}/.artifacts/prepublish-plugin-registry', github.workspace) || '' }}`,
+      OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_MANIFEST_SHA256: field("ManifestSha256"),
+    });
+    expect(install.run).toMatch(
+      /bash scripts\/e2e\/lib\/prepublish-plugin-registry\.sh\s*\\\s*bash scripts\/install\.sh/u,
+    );
+    const steps = job.steps ?? [];
+    expect(steps.indexOf(validate)).toBeLessThan(steps.indexOf(download));
+    expect(steps.indexOf(download)).toBeLessThan(steps.indexOf(install));
+  });
+
   it("keeps ref packaging independent of workflow-checkout dependencies", () => {
     const workflow = readFileSync(PACKAGE_ACCEPTANCE_WORKFLOW, "utf8");
     const resolveJob = workflow.slice(
