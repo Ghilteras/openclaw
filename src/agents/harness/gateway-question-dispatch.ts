@@ -1,5 +1,11 @@
 import type { GatewayQuestionCall } from "../tools/gateway-question-lifecycle.js";
-import type { AgentHarnessQuestionGatewayCall } from "./gateway-question.js";
+
+export type AgentHarnessQuestionGatewayCall = (
+  method: string,
+  opts: { timeoutMs?: number },
+  params?: unknown,
+  extra?: { signal?: AbortSignal },
+) => Promise<unknown>;
 
 type QuestionDispatchAuthority =
   | { kind: "unscoped" }

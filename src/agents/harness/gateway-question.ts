@@ -10,6 +10,7 @@ import type { GatewayQuestionCall } from "../tools/gateway-question-lifecycle.js
 import {
   QuestionDispatchRefusedError,
   resolveAgentQuestionGatewayCall,
+  type AgentHarnessQuestionGatewayCall,
   type AgentQuestionDispatcher,
 } from "./gateway-question-dispatch.js";
 import {
@@ -25,13 +26,6 @@ const TERMINAL_QUESTION_ERROR_REASONS = new Set([
   "QUESTION_ALREADY_TERMINAL",
   "QUESTION_NOT_FOUND",
 ]);
-
-export type AgentHarnessQuestionGatewayCall = (
-  method: string,
-  opts: { timeoutMs?: number },
-  params?: unknown,
-  extra?: { signal?: AbortSignal },
-) => Promise<unknown>;
 
 type PendingAgentGatewayQuestion = {
   kind: "gateway";

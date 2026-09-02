@@ -10,12 +10,10 @@ import { isReplyDispatchDeliveryError } from "../../auto-reply/reply/reply-dispa
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import {
   resolveAgentQuestionGatewayCall,
+  type AgentHarnessQuestionGatewayCall,
   type AgentQuestionDispatcher,
 } from "../harness/gateway-question-dispatch.js";
-import {
-  registerPendingAgentQuestion,
-  type AgentHarnessQuestionGatewayCall,
-} from "../harness/gateway-question.js";
+import { registerPendingAgentQuestion } from "../harness/gateway-question.js";
 import { ASK_USER_TOOL_DISPLAY_SUMMARY, describeAskUserTool } from "../tool-description-presets.js";
 import {
   DEFAULT_ASK_USER_TIMEOUT_SECONDS,

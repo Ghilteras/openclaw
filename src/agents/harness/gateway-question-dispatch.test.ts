@@ -8,12 +8,12 @@ import {
   settleAskUserPromptDelivery,
   waitForAskUserPromptReady,
 } from "../tools/ask-user-tool.js";
+import type { AgentHarnessQuestionGatewayCall } from "./gateway-question-dispatch.js";
 import {
   cancelPendingAgentQuestionForSession,
   claimPendingAgentQuestionAnswer,
   registerPendingAgentQuestion,
   runAgentHarnessGatewayQuestion,
-  type AgentHarnessQuestionGatewayCall,
 } from "./gateway-question.js";
 import { callGatewayTool, withQuestionGateway } from "./gateway-question.test-support.js";
 

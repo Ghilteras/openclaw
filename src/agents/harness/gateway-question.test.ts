@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMessageInjectionAuthority } from "../../auto-reply/reply/message-injection-authority.js";
+import type { AgentHarnessQuestionGatewayCall } from "./gateway-question-dispatch.js";
 import {
   cancelPendingAgentQuestionForSession,
   claimPendingAgentQuestionAnswer,
   registerPendingAgentQuestion,
   runAgentHarnessGatewayQuestion,
-  type AgentHarnessQuestionGatewayCall,
 } from "./gateway-question.js";
 import { withQuestionGateway } from "./gateway-question.test-support.js";
 
