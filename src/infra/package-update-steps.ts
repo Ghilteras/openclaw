@@ -730,10 +730,10 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string> {
   const fingerprint = createHash("sha256");
   const visit = async (entryPath: string, relativePath: string): Promise<void> => {
     const stat = await fs.lstat(entryPath);
-    const mode = stat.mode & 0o777;
+    const metadata = [stat.mode & 0o7777, stat.uid, stat.gid];
     if (stat.isSymbolicLink()) {
       fingerprint.update(
-        `${JSON.stringify([relativePath, "symlink", mode, await fs.readlink(entryPath)])}\n`,
+        `${JSON.stringify([relativePath, "symlink", ...metadata, await fs.readlink(entryPath)])}\n`,
       );
       return;
     }
@@ -755,14 +755,20 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string> {
         await handle.close();
       }
       fingerprint.update(
-        `${JSON.stringify([relativePath, "file", mode, stat.size, contents.digest("hex")])}\n`,
+        `${JSON.stringify([
+          relativePath,
+          "file",
+          ...metadata,
+          stat.size,
+          contents.digest("hex"),
+        ])}\n`,
       );
       return;
     }
     if (!stat.isDirectory()) {
       throw new Error(`unsupported package entry while verifying rollback: ${entryPath}`);
     }
-    fingerprint.update(`${JSON.stringify([relativePath, "directory", mode])}\n`);
+    fingerprint.update(`${JSON.stringify([relativePath, "directory", ...metadata])}\n`);
     const children = (await fs.readdir(entryPath)).toSorted();
     for (const child of children) {
       await visit(path.join(entryPath, child), relativePath ? `${relativePath}/${child}` : child);
@@ -770,6 +776,9 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string> {
   };
 
   await visit(packageRoot, "");
+  if ((await fs.lstat(packageRoot)).isSymbolicLink()) {
+    await visit(await fs.realpath(packageRoot), "<effective-root>");
+  }
   return fingerprint.digest("hex");
 }
 
