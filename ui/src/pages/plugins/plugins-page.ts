@@ -99,7 +99,8 @@ class PluginsPage extends OpenClawLightDomElement {
   } | null = null;
   @state() private iconUrls: Record<string, string> = {};
   @state() private pageNotice: PluginRowMessage | null = null;
-  @state() private configNotice: PluginRowMessage | null = null;
+  private configAutoSaveStatus = this.context?.runtimeConfig.state.configAutoSaveStatus ?? "idle";
+  private pluginConfigEditPending = false;
   private routeDataConsumed = false;
   private preserveMessageKeyOnReconnect: string | null = null;
   private iconAuthCandidates: string[] = [];
@@ -120,7 +121,6 @@ class PluginsPage extends OpenClawLightDomElement {
       this.error = null;
       this.messages = preservedKey && preservedMessage ? { [preservedKey]: preservedMessage } : {};
       this.pageNotice = null;
-      this.configNotice = null;
     },
     invalidateRequests: (change) =>
       this.invalidateRequests(change.snapshot.phase !== "connected" || !change.snapshot.client),
@@ -137,7 +137,6 @@ class PluginsPage extends OpenClawLightDomElement {
     setMessage: (rowKey, message) => this.setMessage(rowKey, message),
     clearPageNotice: () => {
       this.pageNotice = null;
-      this.configNotice = null;
     },
     closeDetails: () => {
       if (this.surface !== "settings") {
@@ -180,7 +179,17 @@ class PluginsPage extends OpenClawLightDomElement {
     (runtimeConfig) => {
       void runtimeConfig.ensureLoaded();
       void runtimeConfig.ensureSchemaLoaded();
-      return runtimeConfig.subscribe(() => this.requestUpdate());
+      this.configAutoSaveStatus = runtimeConfig.state.configAutoSaveStatus;
+      return runtimeConfig.subscribe(() => {
+        const nextStatus = runtimeConfig.state.configAutoSaveStatus;
+        const completedSave = this.configAutoSaveStatus === "saving" && nextStatus === "saved";
+        this.configAutoSaveStatus = nextStatus;
+        this.requestUpdate();
+        if (completedSave && this.pluginConfigEditPending) {
+          this.pluginConfigEditPending = false;
+          void this.refreshCatalog();
+        }
+      });
     },
   );
 
@@ -389,21 +398,6 @@ class PluginsPage extends OpenClawLightDomElement {
     return this.configBlockedReason() === null;
   }
 
-  private async savePluginConfiguration() {
-    this.configNotice = null;
-    const saved = await this.context.runtimeConfig.save();
-    if (saved) {
-      await this.refreshCatalog();
-    }
-    this.configNotice = saved
-      ? { kind: "success", text: t("pluginsPage.configurationSaved") }
-      : {
-          kind: "error",
-          text:
-            this.context.runtimeConfig.state.lastError ?? t("pluginsPage.configurationSaveFailed"),
-        };
-  }
-
   private setBusy(key: string, value: boolean) {
     const next = { ...this.busy };
     if (value) {
@@ -504,8 +498,11 @@ class PluginsPage extends OpenClawLightDomElement {
     const discovery = this.surface === "discovery";
     const configState = this.context.runtimeConfig.state;
     const configAnalysis = analyzeConfigSchema(configState.configSchema);
-    const configBlockedReason = this.configBlockedReason();
     const detailPluginId = this.detail?.pluginId ?? null;
+    const settingsParentRoute =
+      new URLSearchParams(this.routeData?.location.search ?? "").get("from") === "plugins"
+        ? "plugins"
+        : "plugin-settings";
     const settingsShared = {
       connected: this.gateway.connected,
       loading: this.loading,
@@ -513,15 +510,13 @@ class PluginsPage extends OpenClawLightDomElement {
       error: this.error,
       busy: this.busy,
       messages: this.messages,
-      pageNotice: this.configNotice ?? this.pageNotice,
+      pageNotice: this.pageNotice,
       iconUrls: this.iconUrls,
       canMutate: this.canMutate(),
       mutationBlockedReason: blockedReason,
       configBusy: configState.configLoading || configState.configSaving,
-      configDirty: configState.configFormDirty,
       configError: configState.lastError,
       canEditConfig: this.canEditConfig(),
-      configBlockedReason,
       configValue: configState.configForm,
       configHints: configState.configUiHints,
       configSchemaLoading: configState.configSchemaLoading,
@@ -531,16 +526,15 @@ class PluginsPage extends OpenClawLightDomElement {
         void this.updateEnabled(pluginId, enabled, rowKey),
       onUninstall: (pluginId: string, rowKey: string) => void this.uninstall(pluginId, rowKey),
       onConfigPatch: (path: Array<string | number>, value: unknown) => {
-        this.configNotice = null;
+        this.pluginConfigEditPending = true;
         this.context.runtimeConfig.patchForm(path, value);
       },
       onConfigRemove: (path: Array<string | number>) => {
-        this.configNotice = null;
+        this.pluginConfigEditPending = true;
         this.context.runtimeConfig.removeFormValue(path);
       },
-      onConfigSave: () => void this.savePluginConfiguration(),
       onConfigReload: () => {
-        this.configNotice = null;
+        this.pluginConfigEditPending = false;
         void this.context.runtimeConfig.refresh({ discardPendingChanges: true });
       },
       onRefresh: () => void this.refreshCatalog(),
@@ -611,11 +605,13 @@ class PluginsPage extends OpenClawLightDomElement {
                 inspection: this.detail?.inspection ?? null,
                 inspectionError: this.detail?.error ?? null,
                 configSchema: pluginConfigSchema(configAnalysis.schema, detailPluginId),
-                backHref: pathForRoute("plugin-settings", this.context.basePath),
+                backHref: pathForRoute(settingsParentRoute, this.context.basePath),
+                backLabel:
+                  settingsParentRoute === "plugins" ? t("tabs.plugins") : t("nav.settings"),
                 onBack: () => {
                   this.detail = null;
-                  this.context.replace("plugin-settings", {
-                    pathname: pathForRoute("plugin-settings", this.context.basePath),
+                  this.context.navigate(settingsParentRoute, {
+                    pathname: pathForRoute(settingsParentRoute, this.context.basePath),
                   });
                 },
                 onRetryInspection: () => void this.showDetails(detailPluginId),
@@ -627,7 +623,6 @@ class PluginsPage extends OpenClawLightDomElement {
                 advancedSchema: pluginAdvancedSchema(configAnalysis.schema),
                 onTabChange: (tab) => {
                   this.settingsTab = tab;
-                  this.configNotice = null;
                   this.context.replace("plugin-settings", {
                     pathname: pathForRoute("plugin-settings", this.context.basePath),
                     search: tab === "advanced" ? "?tab=advanced" : "",

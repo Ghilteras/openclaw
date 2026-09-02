@@ -290,8 +290,21 @@ suite.define(() => {
 
         await openWorkboard(page, suite.server.baseUrl);
         await page.getByRole("heading", { level: 1, name: "Workboard", exact: true }).waitFor();
-        await page.getByRole("link", { name: "Back to plugins", exact: true }).waitFor();
+        await page.getByRole("link", { name: "Settings", exact: true }).waitFor();
+        expect(await page.getByRole("status").filter({ hasText: "Enabled" }).count()).toBe(0);
         await page.getByRole("heading", { name: "Configuration", exact: true }).waitFor();
+        const refresh = page.getByRole("button", { name: "Reload", exact: true });
+        await refresh.waitFor();
+        expect((await refresh.textContent())?.trim()).toBe("");
+        expect(await refresh.getAttribute("title")).toBeNull();
+        expect(
+          await refresh.evaluate((button) => {
+            const header = button.closest(".settings-section__header")?.getBoundingClientRect();
+            return header
+              ? Math.abs(header.right - button.getBoundingClientRect().right)
+              : Infinity;
+          }),
+        ).toBeLessThanOrEqual(1);
         await page.getByRole("heading", { name: "Access & capabilities", exact: true }).waitFor();
         await page.getByRole("heading", { name: "Lifecycle", exact: true }).waitFor();
         expect(await gateway.getRequests("plugins.inspect")).toHaveLength(1);
@@ -388,8 +401,8 @@ suite.define(() => {
         ).toBe(1);
 
         const workspace = page.getByLabel("Workspace label", { exact: true });
+        const catalogRequests = (await gateway.getRequests("plugins.list")).length;
         await workspace.fill("Release planning");
-        await page.getByRole("button", { name: "Save configuration", exact: true }).click();
         const save = await gateway.waitForRequest("config.set");
         expect(save.params).toMatchObject({ baseHash: "plugins-settings-e2e" });
         const savedConfig = JSON.parse(
@@ -399,7 +412,12 @@ suite.define(() => {
           refreshMinutes: 15,
           workspaceLabel: "Release planning",
         });
-        await page.getByRole("status").filter({ hasText: /saved/iu }).waitFor();
+        await expect
+          .poll(async () => (await gateway.getRequests("plugins.list")).length)
+          .toBe(catalogRequests + 1);
+        expect(
+          await page.getByRole("button", { name: "Save configuration", exact: true }).count(),
+        ).toBe(0);
 
         const uninstallCount = (await gateway.getRequests("plugins.uninstall")).length;
         await page.getByRole("button", { name: /(?:Remove|Uninstall) Workboard/iu }).click();
@@ -453,21 +471,18 @@ suite.define(() => {
           pathname: "/settings/plugins/workboard",
           routeId: "plugin-settings",
         });
-        await page
-          .locator(".callout.info")
-          .filter({ hasText: "Plugin changes require operator.admin access." })
-          .waitFor();
-        const save = page.getByRole("button", { name: "Save configuration", exact: true });
+        expect(await page.locator(".callout.info").count()).toBe(0);
+        expect(
+          await page.getByRole("button", { name: "Save configuration", exact: true }).count(),
+        ).toBe(0);
+        const workspace = page.getByLabel("Workspace label", { exact: true });
         const toggle = page.locator("wa-switch").filter({ hasText: "Enable or disable Workboard" });
         const uninstall = page.getByRole("button", {
           name: /(?:Remove|Uninstall) Workboard/iu,
         });
-        expect(await save.getAttribute("aria-disabled")).toBe("true");
+        expect(await workspace.isDisabled()).toBe(true);
         expect(await toggle.getAttribute("aria-disabled")).toBe("true");
         expect(await uninstall.getAttribute("aria-disabled")).toBe("true");
-        await save.focus();
-        expect(await save.evaluate((element) => element === document.activeElement)).toBe(true);
-        await save.dispatchEvent("click");
         await toggle.dispatchEvent("click");
         await uninstall.dispatchEvent("click");
         expect(await gateway.getRequests("config.set")).toHaveLength(0);

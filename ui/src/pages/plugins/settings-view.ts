@@ -47,10 +47,8 @@ type SharedProps = {
   mutationBlockedReason: string | null;
   configBusy: boolean;
   configSchemaLoading: boolean;
-  configDirty: boolean;
   configError: string | null;
   canEditConfig: boolean;
-  configBlockedReason: string | null;
   configValue: Record<string, unknown> | null;
   configHints: ConfigUiHints;
   configUnsupportedPaths: readonly string[];
@@ -59,7 +57,6 @@ type SharedProps = {
   onUninstall: (pluginId: string, rowKey: string) => void;
   onConfigPatch: (path: Array<string | number>, value: unknown) => void;
   onConfigRemove: (path: Array<string | number>) => void;
-  onConfigSave: () => void;
   onConfigReload: () => void;
   onRefresh: () => void;
 };
@@ -79,6 +76,7 @@ type DetailProps = SharedProps & {
   inspectionError: string | null;
   configSchema: JsonSchema | null;
   backHref: string;
+  backLabel: string;
   onBack: () => void;
   onRetryInspection: () => void;
 };
@@ -149,31 +147,15 @@ function renderRetryError(error: string, onRetry: () => void): TemplateResult {
 }
 
 function renderConfigActions(props: SharedProps) {
-  const button = html`<button
+  return html`<button
     type="button"
-    class="btn primary oc-action oc-action-primary"
-    ?disabled=${!props.configBlockedReason &&
-    (!props.canEditConfig || props.configBusy || !props.configDirty)}
-    aria-disabled=${!props.canEditConfig ? "true" : nothing}
-    @click=${() => {
-      if (props.canEditConfig && !props.configBusy && props.configDirty) {
-        props.onConfigSave();
-      }
-    }}
+    class="btn btn--xs btn--icon oc-action oc-action-icon oc-action-secondary"
+    aria-label=${t("common.reload")}
+    ?disabled=${props.configBusy || props.configSchemaLoading}
+    @click=${props.onConfigReload}
   >
-    ${props.configBusy ? t("common.saving") : t("pluginsPage.saveConfiguration")}
+    ${icons.refresh}
   </button>`;
-  return html`<div class="settings-row__control">
-    ${renderReasonedDisabledControl(props.configBlockedReason, button)}
-    <button
-      type="button"
-      class="btn oc-action oc-action-secondary"
-      ?disabled=${props.configBusy || props.configSchemaLoading}
-      @click=${props.onConfigReload}
-    >
-      ${t("common.reload")}
-    </button>
-  </div>`;
 }
 
 function renderSettingsTabs(props: InventoryProps): TemplateResult {
@@ -339,13 +321,7 @@ export function renderPluginSettingsInventory(props: InventoryProps): TemplateRe
         title: html`<h1 class="plugins-settings-title">${t("tabs.plugins")}</h1>`,
         subtitle: t("pluginsPage.settingsDescription"),
       })}
-      ${props.pageNotice ? renderMessage(props.pageNotice) : nothing}
-      ${props.configBlockedReason
-        ? html`<div class="callout info oc-banner oc-banner-info">
-            ${props.configBlockedReason}
-          </div>`
-        : nothing}
-      ${renderSettingsTabs(props)}
+      ${props.pageNotice ? renderMessage(props.pageNotice) : nothing} ${renderSettingsTabs(props)}
       <wa-tab-panel
         id="plugin-settings-panel"
         name=${props.tab}
@@ -554,7 +530,7 @@ export function renderPluginSettingsDetail(props: DetailProps): TemplateResult {
             props.onBack();
           }}
         >
-          ${icons.chevronLeft} ${t("pluginsPage.backToPlugins")}
+          ${icons.chevronLeft} ${props.backLabel}
         </a>
         ${renderSettingsEmpty(t("pluginsPage.pluginNotFound"), { carapace: true })}
       `,
@@ -562,87 +538,90 @@ export function renderPluginSettingsDetail(props: DetailProps): TemplateResult {
     );
   }
   const key = pluginRowKey(plugin.id);
+  const stateStatus =
+    plugin.state === "needs-setup" || plugin.state === "error"
+      ? renderSettingsStatus({
+          kind: stateKind(plugin),
+          label: stateLabel(plugin),
+          carapace: true,
+        })
+      : nothing;
   return renderSettingsPage(
-    html`<a
-        class="btn btn--sm plugins-settings-back oc-action oc-action-secondary"
-        href=${props.backHref}
-        @click=${(event: Event) => {
-          event.preventDefault();
-          props.onBack();
-        }}
-      >
-        ${icons.chevronLeft} ${t("pluginsPage.backToPlugins")}
-      </a>
-      ${renderSettingsPageHeader({
-        title: html`<h1 class="plugins-settings-title">${plugin.name}</h1>`,
-        subtitle: plugin.description || plugin.id,
-        actions: html`
-          ${renderSettingsStatus({
-            kind: stateKind(plugin),
-            label: stateLabel(plugin),
-            carapace: true,
-          })}
-          ${renderReasonedDisabledControl(
-            props.mutationBlockedReason,
-            renderSettingsToggle({
-              checked: plugin.enabled,
-              disabled:
-                !props.mutationBlockedReason && (!props.canMutate || Boolean(props.busy[key])),
-              ariaDisabled: !props.canMutate,
-              ariaLabel: t("pluginsPage.toggleNamed", { name: plugin.name }),
-              onChange: (enabled) => {
-                if (!props.canMutate || props.busy[key]) {
-                  return false;
-                }
-                props.onSetEnabled(plugin.id, enabled, key);
-                return true;
-              },
-            }),
-          )}
-        `,
-      })}
-      ${props.pageNotice ? renderMessage(props.pageNotice) : nothing}
-      ${props.error ? renderRetryError(props.error, props.onRefresh) : nothing}
-      ${plugin.error
-        ? html`<div class="callout danger oc-banner oc-banner-error" role="alert">
-            ${formatUiExternalText(plugin.error)}
+    html`${renderSettingsPageHeader({
+      title: html`<div class="plugins-settings-breadcrumb">
+        <a
+          class="plugins-settings-breadcrumb__parent"
+          href=${props.backHref}
+          @click=${(event: Event) => {
+            event.preventDefault();
+            props.onBack();
+          }}
+          >${props.backLabel}</a
+        >
+        <span class="plugins-settings-breadcrumb__chevron" aria-hidden="true"
+          >${icons.chevronRight}</span
+        >
+        <h1 class="plugins-settings-title">${plugin.name}</h1>
+      </div>`,
+      subtitle: plugin.description || plugin.id,
+      actions: html`
+        ${stateStatus}
+        ${renderReasonedDisabledControl(
+          props.mutationBlockedReason,
+          renderSettingsToggle({
+            checked: plugin.enabled,
+            disabled:
+              !props.mutationBlockedReason && (!props.canMutate || Boolean(props.busy[key])),
+            ariaDisabled: !props.canMutate,
+            ariaLabel: t("pluginsPage.toggleNamed", { name: plugin.name }),
+            onChange: (enabled) => {
+              if (!props.canMutate || props.busy[key]) {
+                return false;
+              }
+              props.onSetEnabled(plugin.id, enabled, key);
+              return true;
+            },
+          }),
+        )}
+      `,
+    })}
+    ${props.pageNotice ? renderMessage(props.pageNotice) : nothing}
+    ${props.error ? renderRetryError(props.error, props.onRefresh) : nothing}
+    ${plugin.error
+      ? html`<div class="callout danger oc-banner oc-banner-error" role="alert">
+          ${formatUiExternalText(plugin.error)}
+        </div>`
+      : nothing}
+    ${renderMessage(props.messages[key])}
+    ${renderSettingsSection(
+      {
+        title: t("pluginsPage.configuration"),
+        description: t("pluginsPage.configurationDescription"),
+        actions: renderConfigActions(props),
+        carapace: true,
+      },
+      html`${plugin.state === "needs-setup"
+        ? html`<div class="callout warning oc-banner oc-banner-warning" role="status">
+            ${t("pluginsPage.setupRequiredDescription")}
           </div>`
-        : nothing}
-      ${props.configBlockedReason
-        ? html`<div class="callout info oc-banner oc-banner-info">
-            ${props.configBlockedReason}
-          </div>`
-        : nothing}
-      ${renderMessage(props.messages[key])}
-      ${renderSettingsSection(
-        {
-          title: t("pluginsPage.configuration"),
-          description: t("pluginsPage.configurationDescription"),
-          actions: renderConfigActions(props),
-          carapace: true,
-        },
-        html`${plugin.state === "needs-setup"
-          ? html`<div class="callout warning oc-banner oc-banner-warning" role="status">
-              ${t("pluginsPage.setupRequiredDescription")}
-            </div>`
-          : nothing}${renderConfiguration(props, plugin)}`,
-      )}
-      ${renderSettingsSection(
-        {
-          title: t("pluginsPage.accessCapabilities"),
-          description: t("pluginsPage.accessCapabilitiesDescription"),
-          carapace: true,
-        },
-        renderAccess(props),
-      )}
-      ${renderSettingsSection(
-        {
-          title: t("pluginsPage.lifecycle"),
-          description: t("pluginsPage.lifecycleDescription"),
-          carapace: true,
-        },
-        renderLifecycle(props, plugin),
-      )}`,
+        : nothing}${renderConfiguration(props, plugin)}`,
+    )}
+    ${renderSettingsSection(
+      {
+        title: t("pluginsPage.accessCapabilities"),
+        description: t("pluginsPage.accessCapabilitiesDescription"),
+        carapace: true,
+      },
+      renderAccess(props),
+    )}
+    ${renderSettingsSection(
+      {
+        title: t("pluginsPage.lifecycle"),
+        description: t("pluginsPage.lifecycleDescription"),
+        carapace: true,
+      },
+      renderLifecycle(props, plugin),
+    )}`,
     { carapace: true },
   );
 }

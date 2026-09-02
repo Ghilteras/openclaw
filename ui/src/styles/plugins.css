@@ -1286,8 +1286,30 @@ h3.plugins-subheader {
   text-align: left;
 }
 
-.plugins-settings-back {
-  margin-bottom: var(--space-4);
+.plugins-settings-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.plugins-settings-breadcrumb__parent {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.plugins-settings-breadcrumb__parent:hover {
+  color: var(--text);
+}
+
+.plugins-settings-breadcrumb__chevron {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.plugins-settings-breadcrumb__chevron svg {
+  width: 16px;
+  height: 16px;
 }
 
 .plugins-settings-advanced-access {
