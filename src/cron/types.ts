@@ -15,10 +15,7 @@ import type {
 import type { CronJobBase, CronPacing } from "./types-shared.js";
 
 export type { CronPacing } from "./types-shared.js";
-export type {
-  CronToolsAllowExecTarget,
-  CronToolsAllowExecTargetRequirement,
-} from "./scheduled-tool-policy.js";
+export type { CronToolsAllowExecTarget } from "./scheduled-tool-policy.js";
 export type { CronCompletionStatus } from "./completion-status.js";
 
 /** Supported schedule forms persisted in cron job specs. */

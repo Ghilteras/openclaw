@@ -898,6 +898,7 @@ export const cronHandlers: GatewayRequestHandlers = {
         ...(cronJobUsesToolRuntime(jobCreate)
           ? {
               scheduledToolPolicy: resolveCronScheduledToolPolicyForCaller(callerScope),
+              scheduledToolCallerOrigin: callerScope?.callerOrigin,
             }
           : {}),
       });
@@ -1079,6 +1080,7 @@ export const cronHandlers: GatewayRequestHandlers = {
         cronPatchTouchesToolRuntime(patch)
           ? {
               scheduledToolPolicy: resolveCronScheduledToolPolicyForCaller(callerScope),
+              scheduledToolCallerOrigin: callerScope?.callerOrigin,
               ...(commitGuard ? { commitGuard } : {}),
             }
           : commitGuard

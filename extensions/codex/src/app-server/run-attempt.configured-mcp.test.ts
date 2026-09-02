@@ -112,11 +112,13 @@ describe("configured MCP uses the same ownership for interactive and scheduled w
     const params = createParams(sessionFile, path.join(tempDir, "workspace-" + trigger));
     configureFakeMcp(params);
     params.trigger = trigger;
-    if (trigger === "cron") params.scheduledToolPolicy = { version: 1, mode: "trusted" };
+    if (trigger === "cron") {
+      params.scheduledToolPolicy = { version: 1, mode: "trusted" };
+    }
     const harness = createStartedThreadHarness();
     const run = runCodexAppServerAttempt(params);
     await harness.waitForMethod("turn/start");
-    const request = harness.requests.find((request) => request.method === "thread/start");
+    const request = harness.requests.find((entry) => entry.method === "thread/start");
     const start = request?.params as
       | { config?: Record<string, unknown>; dynamicTools?: unknown }
       | undefined;
@@ -126,7 +128,7 @@ describe("configured MCP uses the same ownership for interactive and scheduled w
     expect(start?.config?.["features.shell_tool"]).not.toBe(false);
     expect(JSON.stringify(start?.dynamicTools)).not.toContain("fake__show");
     expect(mcpMocks.requesterCalls).toBe(1);
-    expect(harness.requests.map((request) => request.method)).not.toContain("mcpServerStatus/list");
+    expect(harness.requests.map((entry) => entry.method)).not.toContain("mcpServerStatus/list");
     await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
     await expect(run).resolves.toBeDefined();
     expect(
@@ -156,7 +158,7 @@ describe("configured MCP uses the same ownership for interactive and scheduled w
         throw new Error(`restricted turn finished before turn/start: ${JSON.stringify(result)}`);
       }),
     ]);
-    const request = harness.requests.find((request) => request.method === "thread/start");
+    const request = harness.requests.find((entry) => entry.method === "thread/start");
     expect((request?.params as { config?: unknown })?.config).toMatchObject({
       "features.shell_tool": false,
       mcp_servers: { fake: { enabled: false } },
@@ -219,8 +221,8 @@ describe("configured MCP uses the same ownership for interactive and scheduled w
     await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
     await run;
 
-    expect(harness.requests.map((request) => request.method)).toContain("thread/start");
-    expect(harness.requests.map((request) => request.method)).not.toContain("thread/resume");
+    expect(harness.requests.map((entry) => entry.method)).toContain("thread/start");
+    expect(harness.requests.map((entry) => entry.method)).not.toContain("thread/resume");
     const turnStart = harness.requests.find((request) => request.method === "turn/start");
     const inputText =
       (turnStart?.params as { input?: Array<{ text?: string }> } | undefined)?.input?.[0]?.text ??

@@ -3,7 +3,6 @@ import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSourceDeliveryPlan } from "../../infra/outbound/source-delivery-plan.js";
 import type { SkillSnapshot } from "../../skills/types.js";
-import { applyJobPatch } from "../service/jobs.js";
 import type { CronDeliveryMode } from "../types.js";
 import type { MutableCronSession } from "./run-session-state.js";
 import {
@@ -879,7 +878,7 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
     });
   });
 
-  it("propagates restricted toolsAllow to CLI-backed announce runs without target metadata", async () => {
+  it("ignores retired toolsAllow to CLI-backed announce runs without target metadata", async () => {
     mockCliAnnounceRun();
 
     await runCronIsolatedAgentTurn({
@@ -892,7 +891,7 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
 
     const cliRun = expectRecordFields(
       getMockCallArg(runCliAgentMock, 0, 0, "CLI run"),
-      { toolsAllow: ["read"] },
+      { toolsAllow: undefined },
       "CLI run params",
     );
     expect(resolveRunPrompt(cliRun, false)).not.toContain("Message delivery destination metadata");
@@ -917,63 +916,6 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
     );
     expect(cliRun.toolsAllow).toBeUndefined();
     expect(resolveRunPrompt(cliRun, true)).toContain("Message delivery destination metadata");
-  });
-
-  it("enforces the auto-applied default toolsAllow cap for CLI-backed runs", async () => {
-    mockCliAnnounceRun();
-
-    await runCronIsolatedAgentTurn({
-      ...makeParams(),
-      job: makeMessageToolPolicyJob(
-        { mode: "announce", channel: "messagechat", to: "123" },
-        {
-          kind: "agentTurn",
-          message: "send a message",
-          toolsAllow: ["read", "cron"],
-          toolsAllowIsDefault: true,
-        },
-      ),
-    });
-
-    const cliRun = expectRecordFields(
-      getMockCallArg(runCliAgentMock, 0, 0, "CLI run"),
-      {},
-      "CLI run params",
-    );
-    expect(cliRun.toolsAllow).toEqual(["read", "cron"]);
-  });
-
-  it("keeps a cron-tool default toolsAllow marker after a self-edit before CLI execution", async () => {
-    mockCliAnnounceRun();
-    const job = makeMessageToolPolicyJob(
-      { mode: "announce", channel: "messagechat", to: "123" },
-      {
-        kind: "agentTurn",
-        message: "send a message",
-        toolsAllow: ["read", "cron"],
-        toolsAllowIsDefault: true,
-      },
-    );
-
-    applyJobPatch(job, {
-      payload: {
-        kind: "agentTurn",
-        message: "send a clearer message",
-        toolsAllow: ["read", "cron"],
-      },
-    });
-
-    await runCronIsolatedAgentTurn({
-      ...makeParams(),
-      job,
-    });
-
-    const cliRun = expectRecordFields(
-      getMockCallArg(runCliAgentMock, 0, 0, "CLI run"),
-      {},
-      "CLI run params",
-    );
-    expect(cliRun.toolsAllow).toEqual(["read", "cron"]);
   });
 
   it("keeps automatic exec completion notifications when announce delivery is active", async () => {
@@ -1857,7 +1799,7 @@ describe("runCronIsolatedAgentTurn delivery instruction", () => {
     {
       name: "does not prompt when the final surface excludes the requested message tool",
       toolsAllow: ["message"],
-      expectedFields: { toolsAllow: ["message"] },
+      expectedFields: { toolsAllow: undefined },
       messageToolAvailable: false,
       hidesDestinationMetadata: true,
     },
@@ -1870,7 +1812,7 @@ describe("runCronIsolatedAgentTurn delivery instruction", () => {
     {
       name: "does not prompt when the final surface excludes message from a narrow cap",
       toolsAllow: ["read"],
-      expectedFields: { toolsAllow: ["read"] },
+      expectedFields: { toolsAllow: undefined },
       messageToolAvailable: false,
       hidesDestinationMetadata: true,
     },

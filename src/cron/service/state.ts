@@ -12,7 +12,10 @@ import { LEGACY_IMPLICIT_AGENT_ID } from "../../routing/session-key.js";
 import type { DeliveryContext } from "../../utils/delivery-context.types.js";
 import type { CronActiveJobMarker } from "../active-jobs.js";
 import { toPublicCronJob } from "../public-job.js";
-import type { CronScheduledToolPolicy } from "../scheduled-tool-policy.js";
+import type {
+  CronScheduledToolPolicy,
+  CronScheduledToolCallerOrigin,
+} from "../scheduled-tool-policy.js";
 import type { QuarantinedCronConfigJob } from "../store.js";
 import type { CronRunReceiptHandle } from "../store/run-receipt-store.js";
 import type {
@@ -464,6 +467,7 @@ export type CronAddOptions = {
   createdActor?: SessionCreatedActor;
   /** Authenticated caller provenance stamped by the service, never public input. */
   scheduledToolPolicy?: CronScheduledToolPolicy;
+  scheduledToolCallerOrigin?: CronScheduledToolCallerOrigin;
   /** Synchronous Gateway-owned liveness guard consumed immediately before mutation. */
   commitGuard?: () => void;
 };
@@ -472,6 +476,7 @@ export type CronUpdateInput = CronJobPatch;
 /** Authenticated caller provenance used only when a tool policy is explicitly adopted. */
 export type CronUpdateOptions = {
   scheduledToolPolicy?: CronScheduledToolPolicy;
+  scheduledToolCallerOrigin?: CronScheduledToolCallerOrigin;
   /** Synchronous Gateway-owned liveness guard consumed immediately before mutation. */
   commitGuard?: () => void;
 };

@@ -206,7 +206,7 @@ export function isNativeWebSearchAllowedByToolPolicy(
 }
 
 /** Builds the OpenAI Responses `web_search` tool payload from config. */
-export function buildCodexNativeWebSearchTool(
+function buildCodexNativeWebSearchTool(
   config: OpenClawConfig | undefined,
 ): Record<string, unknown> {
   const nativeConfig = resolveCodexNativeWebSearchConfig(config);

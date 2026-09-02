@@ -4,14 +4,15 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import {
-  buildCodexNativeWebSearchTool,
-  describeCodexNativeWebSearch,
   patchCodexNativeWebSearchPayload,
   resolveCodexNativeSearchActivation,
-  resolveCodexNativeWebSearchConfig,
-  isCodexNativeWebSearchRelevant,
   shouldSuppressManagedWebSearchTool,
-} from "./codex-native-web-search.js";
+} from "./codex-native-web-search-core.js";
+import { isCodexNativeWebSearchRelevant } from "./codex-native-web-search.js";
+import {
+  describeCodexNativeWebSearch,
+  resolveCodexNativeWebSearchConfig,
+} from "./codex-native-web-search.shared.js";
 
 const baseConfig = {
   tools: {
@@ -319,35 +320,6 @@ describe("Codex native web-search payload helpers", () => {
     expect(result.userLocation?.country).toBe("US");
     expect(result.userLocation?.city).toBe("New York");
     expect(result.userLocation?.timezone).toBe("America/New_York");
-  });
-
-  it("builds the native Responses web_search tool", () => {
-    expect(
-      buildCodexNativeWebSearchTool({
-        tools: {
-          web: {
-            search: {
-              openaiCodex: {
-                enabled: true,
-                mode: "live",
-                allowedDomains: ["example.com"],
-                contextSize: "medium",
-                userLocation: { country: "US" },
-              },
-            },
-          },
-        },
-      }),
-    ).toEqual({
-      type: "web_search",
-      external_web_access: true,
-      filters: { allowed_domains: ["example.com"] },
-      search_context_size: "medium",
-      user_location: {
-        type: "approximate",
-        country: "US",
-      },
-    });
   });
 
   it("injects native web_search into provider payloads", () => {

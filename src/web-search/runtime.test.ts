@@ -161,7 +161,6 @@ function createDuckDuckGoSearchProvider(
 }
 
 describe("web search runtime", () => {
-  let hasUsableWebSearchProvider: typeof import("./runtime.js").hasUsableWebSearchProvider;
   let runWebSearch: typeof import("./runtime.js").runWebSearch;
   let activateSecretsRuntimeSnapshot: typeof import("../secrets/runtime.js").activateSecretsRuntimeSnapshot;
   let clearSecretsRuntimeSnapshot: typeof import("../secrets/runtime.js").clearSecretsRuntimeSnapshot;
@@ -170,7 +169,7 @@ describe("web search runtime", () => {
   const tempDirs: string[] = [];
 
   beforeAll(async () => {
-    ({ hasUsableWebSearchProvider, runWebSearch } = await import("./runtime.js"));
+    ({ runWebSearch } = await import("./runtime.js"));
     ({ activateSecretsRuntimeSnapshot, clearSecretsRuntimeSnapshot } =
       await import("../secrets/runtime.js"));
     ({ clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } =
@@ -221,23 +220,6 @@ describe("web search runtime", () => {
       provider: "custom",
       result: { query: "hello", ok: true },
     });
-  });
-
-  it("accepts the prepared provider selection without rediscovering providers", () => {
-    expect(
-      hasUsableWebSearchProvider({
-        config: {},
-        runtimeWebSearch: {
-          providerSource: "auto-detect",
-          selectedProvider: "brave",
-          selectedProviderKeySource: "config",
-          diagnostics: [],
-        },
-        preferRuntimeProviders: true,
-      }),
-    ).toBe(true);
-    expect(resolveRuntimeWebSearchProvidersMock).not.toHaveBeenCalled();
-    expect(resolvePluginWebSearchProvidersMock).not.toHaveBeenCalled();
   });
 
   it("passes the run abort signal to provider execution", async () => {
@@ -500,14 +482,6 @@ describe("web search runtime", () => {
         ],
       },
     } satisfies OpenClawConfig;
-
-    expect(
-      hasUsableWebSearchProvider({
-        agentDir: activeAgentDir,
-        config,
-        preferRuntimeProviders: true,
-      }),
-    ).toBe(true);
 
     await expect(
       runWebSearch({

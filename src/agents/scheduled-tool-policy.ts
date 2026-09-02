@@ -59,7 +59,6 @@ export function resolveScheduledToolPolicyContext(params: {
           mode: rawPolicy.mode,
           ownerSessionKey: rawPolicy.ownerSessionKey,
           ownerAccountId: rawPolicy.ownerAccountId,
-          ...(rawPolicy.ownerOrigin !== undefined ? { ownerOrigin: rawPolicy.ownerOrigin } : {}),
         }
       : isRecord(rawPolicy) && rawPolicy.mode === "trusted"
         ? { version: rawPolicy.version, mode: rawPolicy.mode }
@@ -73,6 +72,8 @@ export function resolveScheduledToolPolicyContext(params: {
   }
   return {
     ...policy,
-    ownerOrigin: normalizeCronScheduledToolCallerOrigin(policy.ownerOrigin ?? params.callerOrigin),
+    ownerOrigin: normalizeCronScheduledToolCallerOrigin(
+      (isRecord(rawPolicy) ? rawPolicy.ownerOrigin : undefined) ?? params.callerOrigin,
+    ),
   };
 }

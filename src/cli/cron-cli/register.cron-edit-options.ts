@@ -196,9 +196,9 @@ export async function resolveCronEditPayloadDeliveryPatch(
 
   const assignToolsAllowPatch = (payload: Record<string, unknown>): void => {
     if (opts.clearTools) {
-      // Clearing a restriction means an explicit unrestricted grant. Persisting
-      // a wildcard avoids creating a new capless legacy job at the upgrade boundary.
-      payload.toolsAllow = ["*"];
+      // Null removes the retired field; a wildcard would be a new per-job grant
+      // and is correctly rejected by the current Gateway mutation boundary.
+      payload.toolsAllow = null;
     } else if (toolsAllow) {
       payload.toolsAllow = toolsAllow;
     }

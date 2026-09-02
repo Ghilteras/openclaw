@@ -730,7 +730,7 @@ describe("cron edit command", () => {
     );
   });
 
-  it("stores an explicit wildcard with --clear-tools", async () => {
+  it("removes the retired field with --clear-tools", async () => {
     callGatewayFromCli.mockImplementation(async (method: string) => {
       if (method === "cron.get") {
         return { id: "job-1", payload: { kind: "agentTurn", message: "hello" } };
@@ -749,7 +749,7 @@ describe("cron edit command", () => {
         patch: {
           payload: {
             kind: "agentTurn",
-            toolsAllow: ["*"],
+            toolsAllow: null,
           },
         },
       },
@@ -799,7 +799,7 @@ describe("cron edit command", () => {
 
     expect(callGatewayFromCli).toHaveBeenCalledWith("cron.update", expect.anything(), {
       id: "job-1",
-      patch: { payload: { kind, toolsAllow: ["*"] } },
+      patch: { payload: { kind, toolsAllow: null } },
     });
   });
 
@@ -814,7 +814,7 @@ describe("cron edit command", () => {
       label: "command with a cleared allowlist",
       payload: { kind: "command", argv: ["echo", "hello"] },
       toolArgs: ["--clear-tools"],
-      toolsAllow: ["*"],
+      toolsAllow: null,
     },
     {
       label: "agent turn with a restricted allowlist",
@@ -826,7 +826,7 @@ describe("cron edit command", () => {
       label: "agent turn with a cleared allowlist",
       payload: { kind: "agentTurn", message: "hello" },
       toolArgs: ["--clear-tools"],
-      toolsAllow: ["*"],
+      toolsAllow: null,
     },
   ])(
     "preserves the existing $label when editing its timeout",

@@ -33,7 +33,7 @@ export type CronCreatorToolAuthorityMaterialization = {
   runtimeAuthority?: CronRuntimeAuthority;
 };
 
-export type CronCreatorToolAuthoritySnapshot = Omit<
+type CronCreatorToolAuthoritySnapshot = Omit<
   CronCreatorToolAuthorityMaterialization,
   "runtimeAuthority"
 > & {

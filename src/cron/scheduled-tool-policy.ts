@@ -148,31 +148,6 @@ export function restoreCronPinnedExecGrant(params: {
   return restored;
 }
 
-/** Returns operator-visible recovery guidance when a required pin cannot be proven intact. */
-export function resolveCronToolsAllowExecTargetRecoveryError(params: {
-  jobId?: string;
-  requirement?: unknown;
-  execTarget?: unknown;
-}): string | undefined {
-  const requirement = normalizeCronToolsAllowExecTargetRequirement(params.requirement);
-  if (!requirement) {
-    return undefined;
-  }
-  if (resolveMatchingCronExecTarget(params)) {
-    return undefined;
-  }
-  const subject = params.jobId ? `Automation ${params.jobId}` : "This automation";
-  const recoveryCommand = params.jobId
-    ? `openclaw automations edit ${params.jobId} --tools <tool,...>`
-    : "openclaw automations list --all";
-  return (
-    `${subject} cannot run because its captured exec restriction is missing or invalid. ` +
-    "No trigger, script, or agent action was executed. Recreate it from a fresh authenticated creator turn, " +
-    `or explicitly reauthorize its complete tool cap from a trusted operator shell with ` +
-    `\`${recoveryCommand}\`.`
-  );
-}
-
 /** Server-authored owner context; execution still resolves the agent's current policy. */
 export type CronScheduledToolPolicy =
   | {
@@ -186,7 +161,6 @@ export type CronScheduledToolPolicy =
       mode: "account";
       ownerSessionKey: string;
       ownerAccountId: string;
-      ownerOrigin?: CronScheduledToolCallerOrigin;
     };
 
 /** Creates provenance for an authenticated operator or trusted in-process caller. */
@@ -198,7 +172,6 @@ export function createTrustedCronScheduledToolPolicy(): CronScheduledToolPolicy 
 export function createAccountCronScheduledToolPolicy(params: {
   ownerSessionKey: string;
   ownerAccountId: string;
-  ownerOrigin?: CronScheduledToolCallerOrigin;
 }): CronScheduledToolPolicy | undefined {
   const ownerSessionKey = normalizeOptionalString(params.ownerSessionKey);
   const ownerAccountId = normalizeOptionalAccountId(params.ownerAccountId);
@@ -210,9 +183,6 @@ export function createAccountCronScheduledToolPolicy(params: {
     mode: "account",
     ownerSessionKey,
     ownerAccountId,
-    ...(params.ownerOrigin
-      ? { ownerOrigin: normalizeCronScheduledToolCallerOrigin(params.ownerOrigin) }
-      : {}),
   };
 }
 
@@ -235,20 +205,13 @@ export function normalizeCronScheduledToolPolicy(
   const policy = createAccountCronScheduledToolPolicy({
     ownerSessionKey: typeof input.ownerSessionKey === "string" ? input.ownerSessionKey : "",
     ownerAccountId: typeof input.ownerAccountId === "string" ? input.ownerAccountId : "",
-    ...(input.ownerOrigin !== undefined
-      ? { ownerOrigin: normalizeCronScheduledToolCallerOrigin(input.ownerOrigin) }
-      : {}),
   });
   if (!policy) {
     return undefined;
   }
   return Object.keys(input).every(
     (key) =>
-      key === "version" ||
-      key === "mode" ||
-      key === "ownerSessionKey" ||
-      key === "ownerAccountId" ||
-      key === "ownerOrigin",
+      key === "version" || key === "mode" || key === "ownerSessionKey" || key === "ownerAccountId",
   )
     ? policy
     : undefined;

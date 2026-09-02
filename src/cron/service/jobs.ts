@@ -8,7 +8,10 @@ import type { CronConfig } from "../../config/types.cron.js";
 import { normalizeOptionalAccountId } from "../../routing/account-id.js";
 import { resolveCronDeliveryPlan } from "../delivery-plan.js";
 import { assertCronJobStateTimestamps } from "../persisted-shape.js";
-import type { CronScheduledToolPolicy } from "../scheduled-tool-policy.js";
+import type {
+  CronScheduledToolPolicy,
+  CronScheduledToolCallerOrigin,
+} from "../scheduled-tool-policy.js";
 import { normalizeCronScriptPayload } from "../script-payload.js";
 import { normalizeCronStaggerMs, resolveDefaultCronStaggerMs } from "../stagger.js";
 import { createCronStreamSourceIdentity } from "../stream-schedule.js";
@@ -204,6 +207,7 @@ export function createJob(
   input: CronJobCreate,
   opts?: DeliveryValidationOptions & {
     scheduledToolPolicy?: CronScheduledToolPolicy;
+    scheduledToolCallerOrigin?: CronScheduledToolCallerOrigin;
   },
 ): CronStoredJob {
   const now = state.deps.nowMs();
@@ -270,6 +274,7 @@ export function createJob(
     job,
     previouslyUsedToolRuntime: false,
     scheduledToolPolicy: opts?.scheduledToolPolicy,
+    scheduledToolCallerOrigin: opts?.scheduledToolCallerOrigin,
   });
   validateFullJob(
     job,
@@ -294,6 +299,7 @@ export function applyJobPatch(
     scheduleValidationNowMs?: number;
     cronConfig?: CronConfig;
     scheduledToolPolicy?: CronScheduledToolPolicy;
+    scheduledToolCallerOrigin?: CronScheduledToolCallerOrigin;
   } & DeliveryValidationOptions,
 ) {
   const previouslyUsedToolRuntime = cronJobUsesToolRuntime(job);
@@ -364,6 +370,7 @@ export function applyJobPatch(
     job,
     previouslyUsedToolRuntime,
     scheduledToolPolicy: opts?.scheduledToolPolicy,
+    scheduledToolCallerOrigin: opts?.scheduledToolCallerOrigin,
   });
   if (patch.delivery) {
     const implicitMode = resolveCronDeliveryPlan(job).mode;
@@ -452,6 +459,7 @@ export function applyDeclarativeJobSpec(
     nowMs: number;
     cronConfig?: CronConfig;
     scheduledToolPolicy?: CronScheduledToolPolicy;
+    scheduledToolCallerOrigin?: CronScheduledToolCallerOrigin;
   } & DeliveryValidationOptions,
 ) {
   const previouslyUsedToolRuntime = cronJobUsesToolRuntime(job);
@@ -488,6 +496,7 @@ export function applyDeclarativeJobSpec(
     job,
     previouslyUsedToolRuntime,
     scheduledToolPolicy: opts.scheduledToolPolicy,
+    scheduledToolCallerOrigin: opts.scheduledToolCallerOrigin,
   });
   const delivery = resolveInitialCronDelivery(input);
   if (delivery) {

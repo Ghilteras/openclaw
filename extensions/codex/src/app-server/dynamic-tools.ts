@@ -1017,21 +1017,6 @@ function projectCodexExecutableDynamicToolSurface(
   };
 }
 
-/** Applies the exact schema and hook-wrapper projection used by the executable Codex bridge. */
-export function projectCodexExecutableDynamicTools(params: {
-  tools: readonly AnyAgentTool[];
-  hookContext?: CodexDynamicToolHookContext;
-}): {
-  availableTools: AnyAgentTool[];
-  quarantinedTools: CodexDynamicToolSchemaQuarantine[];
-} {
-  const projected = projectCodexExecutableDynamicToolSurface(params.tools, params.hookContext);
-  return {
-    availableTools: projected.tools.map((entry) => entry.tool),
-    quarantinedTools: projected.quarantinedTools,
-  };
-}
-
 function notifyAgentToolResult(
   observer: EmbeddedRunAttemptParams["onAgentToolResult"] | undefined,
   toolName: string,

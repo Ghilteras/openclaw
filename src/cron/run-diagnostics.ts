@@ -5,8 +5,6 @@ import {
   CODE_MODE_MCP_CATALOG_MISS_MESSAGE,
   isEmbeddedRunTerminalToolFailure,
 } from "../agents/embedded-agent-runner/terminal-tool-failure.js";
-import { isToolAllowedByPolicyName } from "../agents/tool-policy-match.js";
-import { normalizeToolPolicyName as normalizePolicyToolName } from "../agents/tool-policy.js";
 import { getReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import {
@@ -25,21 +23,6 @@ import type {
 } from "./types.js";
 
 const EXEC_DIAGNOSTIC_TAIL_CHARS = 2_000;
-const WEB_SEARCH_TOOL_NAME = "web_search";
-
-const MISSING_WEB_SEARCH_PROVIDER_DIAGNOSTIC_MESSAGE =
-  "web_search tool requested in toolsAllow but no web search provider is selected. Configure one with: openclaw configure --section web, or set tools.web.search.provider.";
-
-export function toolsAllowRequestsWebSearch(toolsAllow?: string[]): boolean {
-  const explicitAllow = (toolsAllow ?? []).filter(
-    (entry) => normalizePolicyToolName(entry) !== "*",
-  );
-  return (
-    explicitAllow.length > 0 &&
-    isToolAllowedByPolicyName(WEB_SEARCH_TOOL_NAME, { allow: explicitAllow })
-  );
-}
-
 /** Returns the operator-facing summary for persisted cron diagnostics. */
 export function summarizeCronRunDiagnostics(
   diagnostics: CronRunDiagnostics | undefined,
@@ -128,35 +111,6 @@ export function createCronRunDiagnosticsFromError(
       ],
     },
     opts,
-  );
-}
-
-/** Reports a cron preflight warning for an explicitly allowed web_search with no provider. */
-export function createCronRunDiagnosticsFromMissingWebSearchProvider(params: {
-  toolsAllow?: string[];
-  hasWebSearchProvider: boolean;
-  nowMs?: () => number;
-}): CronRunDiagnostics | undefined {
-  if (params.hasWebSearchProvider || !params.toolsAllow || params.toolsAllow.length === 0) {
-    return undefined;
-  }
-  if (!toolsAllowRequestsWebSearch(params.toolsAllow)) {
-    return undefined;
-  }
-  return normalizeCronRunDiagnostics(
-    {
-      summary: MISSING_WEB_SEARCH_PROVIDER_DIAGNOSTIC_MESSAGE,
-      entries: [
-        {
-          ts: params.nowMs?.() ?? Date.now(),
-          source: "cron-preflight",
-          severity: "warn",
-          message: MISSING_WEB_SEARCH_PROVIDER_DIAGNOSTIC_MESSAGE,
-          toolName: WEB_SEARCH_TOOL_NAME,
-        },
-      ],
-    },
-    { nowMs: params.nowMs },
   );
 }
 

@@ -105,29 +105,3 @@ export function revokeCronCreatorAuthorityRunScope(scope: CronCreatorAuthorityRu
     revokeCronCreatorAuthorityGrant(token);
   }
 }
-
-/** Consumes one live exact-run grant synchronously at the cron commit boundary. */
-export function consumeCronCreatorAuthorityGrant(
-  grant: CronCreatorAuthorityGrant,
-): CronRuntimeAuthority | undefined {
-  const runId = grant.runId.trim();
-  const token = grant.token.trim();
-  const entry = token ? grantsByToken.get(token) : undefined;
-  if (!entry) {
-    throw expiredAuthorityError();
-  }
-  const scope = entry.scope;
-  if (
-    !scope.active ||
-    scope.signal.aborted ||
-    entry.operationSignal?.aborted ||
-    scope.runId !== runId
-  ) {
-    if (!scope.active || scope.signal.aborted || entry.operationSignal?.aborted) {
-      revokeCronCreatorAuthorityGrant(token);
-    }
-    throw expiredAuthorityError();
-  }
-  revokeCronCreatorAuthorityGrant(token);
-  return entry.runtimeAuthority ? cloneCronRuntimeAuthority(entry.runtimeAuthority) : undefined;
-}

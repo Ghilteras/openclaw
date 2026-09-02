@@ -2426,6 +2426,7 @@ describe("cron method validation", () => {
         ownerSessionKey: "agent:ops:main",
         ownerAccountId: "default",
       },
+      scheduledToolCallerOrigin: { kind: "unknown" },
     });
     expectCronSuccess(respond);
   });

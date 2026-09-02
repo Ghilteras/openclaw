@@ -544,6 +544,10 @@ export async function startOrResumeThread(
       binding = undefined;
     }
     if (binding?.threadId) {
+      // A scheduled thread may sleep through an app-policy change. Its saved
+      // binding is a cache, not authorization: recheck before warm reuse or I/O.
+      const requiresCurrentPolicyCheck =
+        params.params.trigger === "cron" || params.pluginThreadConfig?.requiresCurrentPolicyCheck;
       let pluginBindingStale = isCodexPluginThreadBindingStale({
         codexPluginsEnabled: params.pluginThreadConfig?.enabled ?? false,
         bindingFingerprint: binding.pluginAppsFingerprint,
@@ -553,7 +557,7 @@ export async function startOrResumeThread(
       });
       if (
         !pluginBindingStale &&
-        (params.pluginThreadConfig?.requiresCurrentPolicyCheck ||
+        (requiresCurrentPolicyCheck ||
           shouldRecheckRecoverablePluginBinding({
             binding,
             pluginThreadConfig: params.pluginThreadConfig,
@@ -567,7 +571,7 @@ export async function startOrResumeThread(
           pluginBindingStale =
             prebuiltPluginThreadConfig?.fingerprint !== binding.pluginAppsFingerprint;
         } catch (error) {
-          if (params.pluginThreadConfig?.requiresCurrentPolicyCheck) {
+          if (requiresCurrentPolicyCheck) {
             throw error;
           }
           embeddedAgentLog.warn("codex app-server plugin app config recovery check failed", {

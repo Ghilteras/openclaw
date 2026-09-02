@@ -592,7 +592,7 @@ export function buildCodexPluginAppsConfigPatchFromPolicyContext(
   return { apps };
 }
 
-export function buildPluginAppPolicyContext(
+function buildPluginAppPolicyContext(
   apps: Record<string, CodexAppPolicyContextEntry>,
   pluginAppIds: Record<string, string[]>,
 ): PluginAppPolicyContext {

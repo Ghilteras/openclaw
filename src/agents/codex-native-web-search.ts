@@ -10,16 +10,7 @@ import {
 import { resolveCodexNativeWebSearchConfig } from "./codex-native-web-search.shared.js";
 import { resolveDefaultModelForAgent } from "./model-selection.js";
 
-export {
-  buildCodexNativeWebSearchTool,
-  patchCodexNativeWebSearchPayload,
-  resolveCodexNativeSearchActivation,
-  shouldSuppressManagedWebSearchTool,
-} from "./codex-native-web-search-core.js";
-export {
-  describeCodexNativeWebSearch,
-  resolveCodexNativeWebSearchConfig,
-} from "./codex-native-web-search.shared.js";
+export { shouldSuppressManagedWebSearchTool } from "./codex-native-web-search-core.js";
 
 /** True when Codex native web search should appear relevant for an agent. */
 export function isCodexNativeWebSearchRelevant(params: {

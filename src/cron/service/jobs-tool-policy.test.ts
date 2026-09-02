@@ -9,8 +9,8 @@ const policy = {
   mode: "account" as const,
   ownerSessionKey: owner.sessionKey,
   ownerAccountId: owner.accountId,
-  ownerOrigin: { kind: "external" as const, channel: "chat" },
 };
+const origin = { kind: "external" as const, channel: "chat" };
 function toolJob(): CronStoredJob {
   return {
     ...makeCronJob({ payload: { kind: "agentTurn", message: "Read project notes" } }),
@@ -25,8 +25,16 @@ describe("scheduled job owner policy", () => {
       job,
       previouslyUsedToolRuntime: false,
       scheduledToolPolicy: policy,
+      scheduledToolCallerOrigin: origin,
     });
     expect(job.scheduledToolPolicy).toEqual(policy);
+    expect(job.toolsAllowProvenance?.callerOrigin).toEqual(origin);
+    expect(Object.keys(job.scheduledToolPolicy ?? {}).toSorted()).toEqual([
+      "mode",
+      "ownerAccountId",
+      "ownerSessionKey",
+      "version",
+    ]);
     expect(job.payload.toolsAllow).toBeUndefined();
     expect(job.runtimeAuthority).toBeUndefined();
   });
@@ -43,13 +51,28 @@ describe("scheduled job owner policy", () => {
   });
 
   it("does not replace an existing owner with the operator editing the schedule", () => {
-    const job = { ...toolJob(), scheduledToolPolicy: policy };
+    const job: CronStoredJob = {
+      ...toolJob(),
+      scheduledToolPolicy: policy,
+      toolsAllowProvenance: {
+        version: 1,
+        source: "final-executable-surface",
+        callerOrigin: origin,
+      },
+    };
     reconcileScheduledJobOwnerPolicy({
       job,
       previouslyUsedToolRuntime: true,
       scheduledToolPolicy: { version: 1, mode: "trusted" },
     });
     expect(job.scheduledToolPolicy).toEqual(policy);
+    expect(job.toolsAllowProvenance?.callerOrigin).toEqual(origin);
+    expect(Object.keys(job.scheduledToolPolicy ?? {}).toSorted()).toEqual([
+      "mode",
+      "ownerAccountId",
+      "ownerSessionKey",
+      "version",
+    ]);
   });
 
   it("drops scheduled tool context when the payload becomes transport-only", () => {
