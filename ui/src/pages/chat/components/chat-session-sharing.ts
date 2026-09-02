@@ -109,6 +109,7 @@ export function renderChatSessionSharing(props: ChatSessionSharingProps, inline 
       : nothing;
   }
   const result = props.state?.result;
+  const owner = result?.owner ?? session.owner?.actor;
   const members = new Set(result?.members.map((member) => member.identityId) ?? []);
   // The shared header owner chip presents effective ownership; this picker manages mutable members.
   const identities =
@@ -118,7 +119,8 @@ export function renderChatSessionSharing(props: ChatSessionSharingProps, inline 
   const membersAvailable = props.membersAvailable !== false;
   const visibilityOptions = allowed.filter((option) => !canPublish || option !== "shared");
   const shouldCapMembers =
-    membersAvailable && visibilityOptions.length + identities.length + (canPublish ? 1 : 0) > 12;
+    membersAvailable &&
+    visibilityOptions.length + identities.length + (canPublish ? 1 : 0) + (owner ? 1 : 0) > 12;
   const content = html`
     ${canPublish
       ? html`<wa-dropdown-item
@@ -159,6 +161,21 @@ export function renderChatSessionSharing(props: ChatSessionSharingProps, inline 
         </wa-dropdown-item>
       `;
     })}
+    ${owner
+      ? html`
+          <div class="chat-pane__sharing-title chat-pane__sharing-owner-title">
+            ${t("chat.sessionSharing.owner")}
+          </div>
+          <div class="chat-pane__sharing-owner">
+            <span class="chat-pane__sharing-member-icon" aria-hidden="true">
+              ${owner.type === "human"
+                ? renderSessionOwnerChip(owner, "header", "owned")
+                : icons.bot}
+            </span>
+            <span class="chat-pane__sharing-member-label">${owner.label ?? owner.id}</span>
+          </div>
+        `
+      : nothing}
     ${membersAvailable
       ? html`
           <div class="chat-pane__sharing-title chat-pane__sharing-members-title">
