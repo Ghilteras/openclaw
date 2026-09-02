@@ -1,6 +1,10 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createGithubIssue, createGithubIssueAsync } from "./github-issue.js";
+import {
+  createGithubIssue,
+  createGithubIssueAsync,
+  createPrefilledGithubIssueUrl,
+} from "./github-issue.js";
 
 const spawnSyncMock = vi.hoisted(() => vi.fn());
 const spawnMock = vi.hoisted(() => vi.fn());
@@ -21,6 +25,13 @@ describe("createGithubIssue", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.useRealTimers();
+  });
+
+  it("bounds the final encoded prefilled issue URL", () => {
+    const url = createPrefilledGithubIssueUrl("Update failed 🦞", "🦞 &=?".repeat(2_000));
+
+    expect(url.length).toBeLessThanOrEqual(16_384);
+    expect(new URL(url).searchParams.get("body")).toContain("truncated for URL");
   });
 
   it.each([

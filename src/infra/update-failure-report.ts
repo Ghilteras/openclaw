@@ -15,6 +15,7 @@ import {
 } from "./github-issue.js";
 import {
   finalizeUpdateFailureReportReceipt,
+  releaseUpdateFailureReportReceipt,
   reserveUpdateFailureReportReceipt,
   type UpdateFailureReportReceipt,
 } from "./restart-sentinel.js";
@@ -67,7 +68,7 @@ type UpdateFailureReportContext = {
 
 function stripPrivatePaths(value: string): string {
   return value
-    .replace(/(^|[\s("'`])\/(?:[^\s"'`<>]|\/(?!\/))+/gmu, "$1[redacted-path]")
+    .replace(/(^|[^\p{L}\p{N}._~-])\/+[^\s"'`<>]+/gmu, "$1[redacted-path]")
     .replace(/\\\\[^\s"'`<>]+/gu, "[redacted-path]")
     .replace(/\b[A-Za-z]:\\[^\s"'`<>]+/gu, "[redacted-path]");
 }
@@ -360,6 +361,24 @@ function resultFromExistingReceipt(
   };
 }
 
+function finalizeReceiptWithRetry(
+  finalizeReceipt: typeof finalizeUpdateFailureReportReceipt,
+  attemptId: string,
+  receipt: UpdateFailureReportReceipt,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      if (finalizeReceipt(attemptId, receipt, env)) {
+        return true;
+      }
+    } catch {
+      // A transient state-database failure gets one retry before preserving the local fallback.
+    }
+  }
+  return false;
+}
+
 /** Consumes one reviewed preview and invokes the shared GitHub issue creator at most once. */
 export async function submitUpdateFailureReport(
   prepared: PreparedUpdateFailureReport,
@@ -371,6 +390,7 @@ export async function submitUpdateFailureReport(
     env?: NodeJS.ProcessEnv;
     finalizeReceipt?: typeof finalizeUpdateFailureReportReceipt;
     hasCurrentAuthority?: () => boolean;
+    releaseReceipt?: typeof releaseUpdateFailureReportReceipt;
     stateDir?: string;
     validateCurrentAttempt?: () => boolean | Promise<boolean>;
   } = {},
@@ -418,16 +438,15 @@ export async function submitUpdateFailureReport(
       status: "created",
       url: created.url,
     };
-    try {
-      (options.finalizeReceipt ?? finalizeUpdateFailureReportReceipt)(
-        prepared.attemptId,
-        receipt,
-        stateEnv,
-      );
-    } catch {
-      // The external issue already exists; the pending reservation remains the no-retry fence.
+    const finalized = finalizeReceiptWithRetry(
+      options.finalizeReceipt ?? finalizeUpdateFailureReportReceipt,
+      prepared.attemptId,
+      receipt,
+      stateEnv,
+    );
+    if (finalized) {
+      await discardSavedUpdateFailureReport(prepared, saved, true);
     }
-    await discardSavedUpdateFailureReport(prepared, saved, true);
     return { savedReportPath: prepared.savedReportPath, status: "created", url: created.url };
   }
   const message = sanitizeReportField(created.message, context);
@@ -436,8 +455,21 @@ export async function submitUpdateFailureReport(
     reservationId,
     status: "fallback",
   };
-  if (!finalizeUpdateFailureReportReceipt(prepared.attemptId, receipt, stateEnv)) {
-    throw new Error("Update failure report reservation could not be finalized.");
+  const finalized = finalizeReceiptWithRetry(
+    options.finalizeReceipt ?? finalizeUpdateFailureReportReceipt,
+    prepared.attemptId,
+    receipt,
+    stateEnv,
+  );
+  if (
+    !finalized &&
+    !(options.releaseReceipt ?? releaseUpdateFailureReportReceipt)(
+      prepared.attemptId,
+      reservationId,
+      stateEnv,
+    )
+  ) {
+    throw new Error("Update failure report fallback reservation could not be recovered.");
   }
   return {
     fallbackUrl: created.fallbackUrl,

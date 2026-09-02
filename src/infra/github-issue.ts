@@ -22,16 +22,45 @@ type RunGhAsync = (args: readonly string[], options: { input: string }) => Promi
 
 const GITHUB_ISSUE_CREATE_TIMEOUT_MS = 30_000;
 const GITHUB_PREFILL_BODY_MAX_BYTES = 6_000;
+const GITHUB_PREFILL_TITLE_MAX_BYTES = 512;
+const GITHUB_PREFILL_URL_MAX_CHARS = 16_384;
+const GITHUB_PREFILL_TRUNCATED_SUFFIX =
+  "\n\n...(truncated for URL; see the saved sanitized report for the complete body)";
 const REPOSITORY_ISSUES_URL = "https://github.com/openclaw/openclaw/issues";
+
+function buildPrefilledGithubIssueUrl(title: string, body: string): string {
+  const params = new URLSearchParams({ body, title });
+  return `https://github.com/openclaw/openclaw/issues/new?${params.toString()}`;
+}
 
 /** Builds the browser handoff used when the authenticated GitHub CLI is unavailable. */
 export function createPrefilledGithubIssueUrl(title: string, body: string): string {
-  const truncated = Buffer.byteLength(body, "utf8") > GITHUB_PREFILL_BODY_MAX_BYTES;
-  const urlBody = truncated
-    ? `${truncateUtf8Prefix(body, GITHUB_PREFILL_BODY_MAX_BYTES)}\n\n...(truncated for URL; see the saved sanitized report for the complete body)`
-    : body;
-  const params = new URLSearchParams({ body: urlBody, title });
-  return `https://github.com/openclaw/openclaw/issues/new?${params.toString()}`;
+  const boundedTitle = truncateUtf8Prefix(title, GITHUB_PREFILL_TITLE_MAX_BYTES);
+  const fullUrl = buildPrefilledGithubIssueUrl(boundedTitle, body);
+  if (
+    Buffer.byteLength(body, "utf8") <= GITHUB_PREFILL_BODY_MAX_BYTES &&
+    fullUrl.length <= GITHUB_PREFILL_URL_MAX_CHARS
+  ) {
+    return fullUrl;
+  }
+
+  let low = 0;
+  let high = Math.min(Buffer.byteLength(body, "utf8"), GITHUB_PREFILL_BODY_MAX_BYTES);
+  let boundedUrl = buildPrefilledGithubIssueUrl(boundedTitle, GITHUB_PREFILL_TRUNCATED_SUFFIX);
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = buildPrefilledGithubIssueUrl(
+      boundedTitle,
+      `${truncateUtf8Prefix(body, middle)}${GITHUB_PREFILL_TRUNCATED_SUFFIX}`,
+    );
+    if (candidate.length <= GITHUB_PREFILL_URL_MAX_CHARS) {
+      boundedUrl = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return boundedUrl;
 }
 
 /** Creates an openclaw/openclaw issue through the GitHub CLI using sanitized stdin. */

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { finalizeUpdateFailureReportReceipt } from "./restart-sentinel.js";
 import { prepareUpdateFailureReport, submitUpdateFailureReport } from "./update-failure-report.js";
 import type { UpdateRunResult } from "./update-runner.js";
 
@@ -40,7 +41,7 @@ describe("update failure report", () => {
     const prepared = await prepareUpdateFailureReport(
       {
         attemptId: "attempt-redaction",
-        error: `token=${secret} ${home}/private/error.log\nPlease run openclaw doctor --fix\nC:\\Users\\private\\repair.log \\\\server\\private\\repair.log\n${emoji}`,
+        error: `token=${secret} ${home}/private/error.log cwd=/var/lib/openclaw/private.log cwd=//var/lib/openclaw/double-private.log file:/Users/alice/private.log file:///Users/alice/file-private.log context)/Users/alice/closed-private.log nothttp:/Users/alice/nothttp-private.log malformed=https:/Users/alice/malformed-private.log source=https://example.com/?next=/docs\nPlease run openclaw doctor --fix\nC:\\Users\\private\\repair.log \\\\server\\private\\repair.log\n${emoji}`,
         result: failedUpdate({
           reason: `build-failed token=${secret}`,
           steps: [
@@ -77,6 +78,9 @@ describe("update failure report", () => {
     expect(saved).not.toContain("�");
     expect(saved).not.toContain(secret);
     expect(saved).not.toContain(home);
+    expect(saved).not.toContain("/var/lib/openclaw");
+    expect(saved).not.toContain("/Users/alice");
+    expect(saved).not.toContain("https://example.com/?next=/docs");
     expect(saved).not.toContain("raw-command-secret");
     expect(saved).not.toContain("raw-log-secret");
     expect(saved).not.toContain("raw chat and log output");
@@ -134,7 +138,34 @@ describe("update failure report", () => {
     );
     const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
     const createIssue = vi.fn(() => ({ ok: true as const, url: issueUrl }));
-    const finalizeReceipt = vi.fn(fail);
+    const finalizeReceipt = vi.fn(finalizeUpdateFailureReportReceipt).mockImplementationOnce(fail);
+
+    const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      finalizeReceipt,
+      stateDir,
+    });
+    const second = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      stateDir,
+    });
+
+    expect(first).toMatchObject({ status: "created", url: issueUrl });
+    expect(second).toMatchObject({ status: "duplicate", url: issueUrl });
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(finalizeReceipt).toHaveBeenCalledTimes(2);
+    await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps a local fallback and no-retry fence when receipt finalization stays unavailable", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-created-finalize-unavailable", result: failedUpdate() },
+      { stateDir },
+    );
+    const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
+    const createIssue = vi.fn(() => ({ ok: true as const, url: issueUrl }));
+    const finalizeReceipt = vi.fn(() => false);
 
     const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
       createIssue,
@@ -149,8 +180,40 @@ describe("update failure report", () => {
     expect(first).toMatchObject({ status: "created", url: issueUrl });
     expect(second).toMatchObject({ status: "duplicate" });
     expect(createIssue).toHaveBeenCalledOnce();
-    expect(finalizeReceipt).toHaveBeenCalledOnce();
-    await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(finalizeReceipt).toHaveBeenCalledTimes(2);
+    expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
+    if (process.platform !== "win32") {
+      expect((await fs.stat(prepared.savedReportPath)).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it("releases an unfinalized fallback receipt so the handoff can be retried", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-fallback-finalize-unavailable", result: failedUpdate() },
+      { stateDir },
+    );
+    const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
+    const createIssue = vi.fn(() => ({
+      fallbackUrl,
+      message: "GitHub CLI unavailable",
+      ok: false as const,
+    }));
+    const finalizeReceipt = vi.fn(() => false);
+
+    const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      finalizeReceipt,
+      stateDir,
+    });
+    const second = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      stateDir,
+    });
+
+    expect(first).toMatchObject({ status: "fallback", fallbackUrl });
+    expect(second).toMatchObject({ status: "fallback", fallbackUrl });
+    expect(createIssue).toHaveBeenCalledTimes(2);
   });
 
   it("keeps the event loop responsive while issue creation is pending", async () => {
