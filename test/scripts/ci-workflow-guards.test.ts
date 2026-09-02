@@ -8756,8 +8756,12 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(checkShardStep.env.PR_BASE_SHA).toBe(
       "${{ github.event_name == 'pull_request' && needs.preflight.outputs.diff_base_revision || '' }}",
     );
+    expect(checkShardStep.env.CHECKOUT_REPO).toBe("${{ github.repository }}");
+    expect(checkShardStep.env.CHECKOUT_TOKEN).toBe("${{ github.token }}");
+    expect(checkShardStep.run).toContain('checkout_token="${CHECKOUT_TOKEN-}"');
+    expect(checkShardStep.run).toContain("unset CHECKOUT_TOKEN");
     expect(checkShardStep.run).toContain(
-      'python3 -I -S "$RUNNER_TEMP/ci-git-owner.py" --checkout-git 120 fetch --no-tags --depth=1 origin "+${PR_BASE_SHA}:refs/remotes/origin/ci-base"',
+      'CHECKOUT_TOKEN="$checkout_token" python3 -I -S "$RUNNER_TEMP/ci-git-owner.py" --checkout-git 120 fetch --no-tags --depth=1 origin "+${PR_BASE_SHA}:refs/remotes/origin/ci-base"',
     );
   });
 
@@ -9287,6 +9291,10 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(checksFastRun.env.PROTOCOL_SINCE_BASE_SHA).toBe(
       "${{ needs.preflight.outputs.diff_base_revision }}",
     );
+    expect(checksFastRun.env.CHECKOUT_REPO).toBe("${{ github.repository }}");
+    expect(checksFastRun.env.CHECKOUT_TOKEN).toBe("${{ github.token }}");
+    expect(checksFastRun.run).toContain('checkout_token="${CHECKOUT_TOKEN-}"');
+    expect(checksFastRun.run).toContain("unset CHECKOUT_TOKEN");
     expect(releaseGateMerge.run).toContain(
       'gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls/${PULL_REQUEST_NUMBER}"',
     );
@@ -9314,6 +9322,9 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       'echo "RATCHET_BASE_REF=${frozen_base_sha}" >> "$GITHUB_ENV"',
     );
     expect(checksFastRun.run).not.toContain("PROTOCOL_MANUAL_BASE_SHA");
+    expect(checksFastRun.run).toContain(
+      'CHECKOUT_TOKEN="$checkout_token" python3 -I -S "$RUNNER_TEMP/ci-git-owner.py" --checkout-git 0 fetch',
+    );
     expect(checksFastRun.run).toContain(
       '"+${PROTOCOL_SINCE_BASE_SHA}:refs/remotes/origin/protocol-since-base"',
     );

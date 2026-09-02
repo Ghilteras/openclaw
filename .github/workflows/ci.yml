@@ -431,6 +431,14 @@ jobs:
               return environment
 
 
+          def take_checkout_auth_environment():
+              repository = os.environ.get("CHECKOUT_REPO")
+              token = os.environ.pop("CHECKOUT_TOKEN", "")
+              if not token or repository != os.environ.get("GITHUB_REPOSITORY"):
+                  return {}
+              return git_auth_environment(f"https://github.com/{repository}.git", token)
+
+
           def run_git(directory, *arguments, timeout=None, stdout=None, stderr=None, env=None,
                       reclaim_locks=False):
               global closed
@@ -672,8 +680,10 @@ jobs:
                       return
                   if sys.argv[1] not in ("--git", "--checkout-git"):
                       raise ValueError("Unknown Git owner command")
+                  auth_environment = (take_checkout_auth_environment()
+                                      if sys.argv[1] == "--checkout-git" else None)
                   run_git(os.getcwd(), *sys.argv[3:], timeout=float(sys.argv[2]) or None,
-                          reclaim_locks=sys.argv[1] == "--checkout-git")
+                          env=auth_environment, reclaim_locks=sys.argv[1] == "--checkout-git")
                   return
               if git is None:
                   raise RuntimeError("Git unavailable")
@@ -683,10 +693,7 @@ jobs:
               workspace = os.environ["GITHUB_WORKSPACE"]
               remote = f"https://github.com/{os.environ['CHECKOUT_REPO']}.git"
               # The workflow's token is repository-bound; never lend it to a sibling checkout.
-              token = os.environ.pop("CHECKOUT_TOKEN", "")
-              if token and os.environ["CHECKOUT_REPO"] == os.environ.get("GITHUB_REPOSITORY"):
-                  checkout_environment.update(git_auth_environment(remote, token))
-              del token
+              checkout_environment.update(take_checkout_auth_environment())
               if kind == "clawhub":
                   workspace = os.path.join(workspace, "clawhub-source")
               reset = kind in ("linux-node", "android", "clawhub")
@@ -2579,6 +2586,8 @@ jobs:
       - name: Prepare release-gate ratchet merge tree
         if: (matrix.task == 'baseline-ratchets' || startsWith(matrix.task, 'release-lint-')) && github.event_name == 'workflow_dispatch' && inputs.release_gate
         env:
+          CHECKOUT_REPO: ${{ github.repository }}
+          CHECKOUT_TOKEN: ${{ github.token }}
           GH_TOKEN: ${{ github.token }}
           PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
           TARGET_SHA: ${{ inputs.target_ref }}
@@ -2634,6 +2643,8 @@ jobs:
 
       - name: Run ${{ matrix.task }} (${{ matrix.runtime }})
         env:
+          CHECKOUT_REPO: ${{ github.repository }}
+          CHECKOUT_TOKEN: ${{ github.token }}
           OPENCLAW_TEST_PROJECTS_PARALLEL: 3
           PROTOCOL_SINCE_BASE_SHA: ${{ needs.preflight.outputs.diff_base_revision }}
           RATCHET_PR_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
@@ -2641,6 +2652,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          checkout_token="${CHECKOUT_TOKEN-}"
+          unset CHECKOUT_TOKEN
           has_package_script() {
             node -e '
               const scripts = require("./package.json").scripts ?? {};
@@ -2650,7 +2663,7 @@ jobs:
           case "$TASK" in
             bundled-protocol)
               pnpm test:bundled
-              python3 -I -S "$RUNNER_TEMP/ci-git-owner.py" --checkout-git 0 fetch --no-tags --no-recurse-submodules --depth=1 origin \
+              CHECKOUT_TOKEN="$checkout_token" python3 -I -S "$RUNNER_TEMP/ci-git-owner.py" --checkout-git 0 fetch --no-tags --no-recurse-submodules --depth=1 origin \
                 "+${PROTOCOL_SINCE_BASE_SHA}:refs/remotes/origin/protocol-since-base"
               pnpm protocol:check
               ;;
@@ -3294,6 +3307,8 @@ jobs:
 
       - name: Run check shard
         env:
+          CHECKOUT_REPO: ${{ github.repository }}
+          CHECKOUT_TOKEN: ${{ github.token }}
           FROZEN_TARGET: ${{ needs.preflight.outputs.frozen_target }}
           HISTORICAL_TARGET: ${{ needs.preflight.outputs.compatibility_target }}
           FORMAT_CHECK: ${{ needs.preflight.outputs.run_format_check }}
@@ -3309,6 +3324,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          checkout_token="${CHECKOUT_TOKEN-}"
+          unset CHECKOUT_TOKEN
           has_package_script() {
             node -e '
               const scripts = require("./package.json").scripts ?? {};
@@ -3350,7 +3367,7 @@ jobs:
                 exit 1
               fi
               if [ -n "$PR_BASE_SHA" ]; then
-                python3 -I -S "$RUNNER_TEMP/ci-git-owner.py" --checkout-git 120 fetch --no-tags --depth=1 origin "+${PR_BASE_SHA}:refs/remotes/origin/ci-base"
+                CHECKOUT_TOKEN="$checkout_token" python3 -I -S "$RUNNER_TEMP/ci-git-owner.py" --checkout-git 120 fetch --no-tags --depth=1 origin "+${PR_BASE_SHA}:refs/remotes/origin/ci-base"
                 node scripts/report-test-temp-creations.mjs --base refs/remotes/origin/ci-base --head HEAD --no-merge-base
               fi
               pnpm deps:patches:check
@@ -3368,7 +3385,7 @@ jobs:
               npm_lock_base=""
               if [[ "${GITHUB_EVENT_NAME:-}" != "workflow_dispatch" && -n "$DIFF_BASE_SHA" ]] &&
                 has_package_script "deps:npm-lock:check:changed"; then
-                if python3 -I -S "$RUNNER_TEMP/ci-git-owner.py" --checkout-git 120 fetch --no-tags --depth=1 origin "+${DIFF_BASE_SHA}:refs/remotes/origin/npm-lock-base"; then
+                if CHECKOUT_TOKEN="$checkout_token" python3 -I -S "$RUNNER_TEMP/ci-git-owner.py" --checkout-git 120 fetch --no-tags --depth=1 origin "+${DIFF_BASE_SHA}:refs/remotes/origin/npm-lock-base"; then
                   npm_lock_base="refs/remotes/origin/npm-lock-base"
                 else
                   fetch_status="$?"

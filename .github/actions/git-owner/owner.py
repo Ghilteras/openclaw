@@ -219,6 +219,14 @@ def git_auth_environment(remote, token):
     return environment
 
 
+def take_checkout_auth_environment():
+    repository = os.environ.get("CHECKOUT_REPO")
+    token = os.environ.pop("CHECKOUT_TOKEN", "")
+    if not token or repository != os.environ.get("GITHUB_REPOSITORY"):
+        return {}
+    return git_auth_environment(f"https://github.com/{repository}.git", token)
+
+
 def run_git(directory, *arguments, timeout=None, stdout=None, stderr=None, env=None,
             reclaim_locks=False):
     global closed
@@ -460,8 +468,10 @@ def main():
             return
         if sys.argv[1] not in ("--git", "--checkout-git"):
             raise ValueError("Unknown Git owner command")
+        auth_environment = (take_checkout_auth_environment()
+                            if sys.argv[1] == "--checkout-git" else None)
         run_git(os.getcwd(), *sys.argv[3:], timeout=float(sys.argv[2]) or None,
-                reclaim_locks=sys.argv[1] == "--checkout-git")
+                env=auth_environment, reclaim_locks=sys.argv[1] == "--checkout-git")
         return
     if git is None:
         raise RuntimeError("Git unavailable")
@@ -471,10 +481,7 @@ def main():
     workspace = os.environ["GITHUB_WORKSPACE"]
     remote = f"https://github.com/{os.environ['CHECKOUT_REPO']}.git"
     # The workflow's token is repository-bound; never lend it to a sibling checkout.
-    token = os.environ.pop("CHECKOUT_TOKEN", "")
-    if token and os.environ["CHECKOUT_REPO"] == os.environ.get("GITHUB_REPOSITORY"):
-        checkout_environment.update(git_auth_environment(remote, token))
-    del token
+    checkout_environment.update(take_checkout_auth_environment())
     if kind == "clawhub":
         workspace = os.path.join(workspace, "clawhub-source")
     reset = kind in ("linux-node", "android", "clawhub")
