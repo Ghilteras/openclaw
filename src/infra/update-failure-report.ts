@@ -15,7 +15,6 @@ import {
 } from "./github-issue.js";
 import {
   finalizeUpdateFailureReportReceipt,
-  releaseUpdateFailureReportReceipt,
   reserveUpdateFailureReportReceipt,
   type UpdateFailureReportReceipt,
 } from "./restart-sentinel.js";
@@ -346,12 +345,17 @@ async function savePreparedUpdateFailureReport(
 function resultFromExistingReceipt(
   receipt: UpdateFailureReportReceipt | null,
   savedReportPath: string,
+  fallbackUrl: string,
 ): UpdateFailureReportSubmitResult {
   return {
     status: "duplicate",
     savedReportPath,
     ...(receipt?.url ? { url: receipt.url } : {}),
-    ...(receipt?.fallbackUrl ? { fallbackUrl: receipt.fallbackUrl } : {}),
+    ...(receipt?.fallbackUrl
+      ? { fallbackUrl: receipt.fallbackUrl }
+      : receipt?.status === "pending"
+        ? { fallbackUrl }
+        : {}),
     message:
       receipt?.status === "pending"
         ? "This update attempt already has a report submission in progress."
@@ -390,7 +394,6 @@ export async function submitUpdateFailureReport(
     env?: NodeJS.ProcessEnv;
     finalizeReceipt?: typeof finalizeUpdateFailureReportReceipt;
     hasCurrentAuthority?: () => boolean;
-    releaseReceipt?: typeof releaseUpdateFailureReportReceipt;
     stateDir?: string;
     validateCurrentAttempt?: () => boolean | Promise<boolean>;
   } = {},
@@ -422,13 +425,10 @@ export async function submitUpdateFailureReport(
     stateEnv,
   );
   if (!reservation.reserved) {
-    if (
-      reservation.receipt?.status === "created" ||
-      (reservation.receipt?.status === "pending" && saved.reportCreated)
-    ) {
+    if (reservation.receipt?.status === "created") {
       await discardSavedUpdateFailureReport(prepared, saved, true);
     }
-    return resultFromExistingReceipt(reservation.receipt, prepared.savedReportPath);
+    return resultFromExistingReceipt(reservation.receipt, prepared.savedReportPath, prepared.url);
   }
 
   const created = await (options.createIssue ?? createGithubIssueAsync)(prepared);
@@ -455,22 +455,12 @@ export async function submitUpdateFailureReport(
     reservationId,
     status: "fallback",
   };
-  const finalized = finalizeReceiptWithRetry(
+  finalizeReceiptWithRetry(
     options.finalizeReceipt ?? finalizeUpdateFailureReportReceipt,
     prepared.attemptId,
     receipt,
     stateEnv,
   );
-  if (
-    !finalized &&
-    !(options.releaseReceipt ?? releaseUpdateFailureReportReceipt)(
-      prepared.attemptId,
-      reservationId,
-      stateEnv,
-    )
-  ) {
-    throw new Error("Update failure report fallback reservation could not be recovered.");
-  }
   return {
     fallbackUrl: created.fallbackUrl,
     message,

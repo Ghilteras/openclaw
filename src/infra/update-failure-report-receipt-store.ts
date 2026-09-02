@@ -125,31 +125,3 @@ export function finalizeUpdateFailureReportReceiptRowSync(
   );
   return result.numAffectedRows === 1n;
 }
-
-/** Releases only the process-owned pending reservation when no external issue was created. */
-export function releaseUpdateFailureReportReceiptRowSync(
-  db: DatabaseSync,
-  attemptId: string,
-  reservationId: string,
-): boolean {
-  const sentinelKey = receiptKey(attemptId);
-  const current = readRestartSentinelRowForKeySync(db, sentinelKey);
-  const currentReceipt = parseReceipt(current.kind === "valid" ? current.sentinel : null);
-  if (
-    current.kind !== "valid" ||
-    !currentReceipt ||
-    currentReceipt.status !== "pending" ||
-    currentReceipt.reservationId !== reservationId
-  ) {
-    return false;
-  }
-  const stateDb = getNodeSqliteKysely<GatewayRestartSentinelDatabase>(db);
-  const result = executeSqliteQuerySync(
-    db,
-    stateDb
-      .deleteFrom("gateway_restart_sentinel")
-      .where("sentinel_key", "=", sentinelKey)
-      .where("updated_at_ms", "=", current.sentinel.revision),
-  );
-  return result.numAffectedRows === 1n;
-}

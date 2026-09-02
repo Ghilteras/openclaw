@@ -122,6 +122,49 @@ describe("update failure report", () => {
     await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("does not let a pending-reservation loser delete the winner's fallback report", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-pending-fallback-race", result: failedUpdate() },
+      { stateDir },
+    );
+    let finishValidation!: () => void;
+    const validationGate = new Promise<boolean>((resolve) => {
+      finishValidation = () => resolve(true);
+    });
+    const delayedCreateIssue = vi.fn();
+    const delayed = submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue: delayedCreateIssue,
+      stateDir,
+      validateCurrentAttempt: () => validationGate,
+    });
+    await vi.waitFor(async () => {
+      expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
+    });
+
+    const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
+    let finishFallback!: () => void;
+    const createIssue = vi.fn(
+      () =>
+        new Promise<{ fallbackUrl: string; message: string; ok: false }>((resolve) => {
+          finishFallback = () =>
+            resolve({ fallbackUrl, message: "GitHub CLI unavailable", ok: false });
+        }),
+    );
+    const winner = submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      stateDir,
+    });
+    await vi.waitFor(() => expect(createIssue).toHaveBeenCalledOnce());
+
+    finishValidation();
+    await expect(delayed).resolves.toMatchObject({ status: "duplicate" });
+    expect(delayedCreateIssue).not.toHaveBeenCalled();
+    finishFallback();
+    await expect(winner).resolves.toMatchObject({ status: "fallback", fallbackUrl });
+    expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
+  });
+
   it.each([
     ["returns false", () => false],
     [
@@ -187,7 +230,7 @@ describe("update failure report", () => {
     }
   });
 
-  it("releases an unfinalized fallback receipt so the handoff can be retried", async () => {
+  it("keeps an unresolved fallback receipt from replaying transport", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(
       { attemptId: "attempt-fallback-finalize-unavailable", result: failedUpdate() },
@@ -212,8 +255,9 @@ describe("update failure report", () => {
     });
 
     expect(first).toMatchObject({ status: "fallback", fallbackUrl });
-    expect(second).toMatchObject({ status: "fallback", fallbackUrl });
-    expect(createIssue).toHaveBeenCalledTimes(2);
+    expect(second).toMatchObject({ status: "duplicate", fallbackUrl: prepared.url });
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
   });
 
   it("keeps the event loop responsive while issue creation is pending", async () => {
