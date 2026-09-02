@@ -18,6 +18,7 @@ import {
   isDeliverableMessageChannel,
   normalizeMessageChannel,
 } from "../../../utils/message-channel.js";
+import { normalizeAgentRunRouteChange } from "../../agent-run-terminal-receipt.js";
 import { buildAnnounceIdempotencyKey } from "../../announce-idempotency.js";
 import { resolveSubagentRequesterAgentId } from "../../subagent-requester-owner.js";
 import {
@@ -49,15 +50,33 @@ export type RequesterSettleWakeBatchState = Omit<RequesterSettleWakeState, "reti
 const REQUESTER_SETTLE_WAKE_MAX_ATTEMPTS = 3;
 const REQUESTER_SETTLE_WAKE_MAX_AMBIGUOUS_REPLAYS = 3;
 const REQUESTER_SETTLE_WAKE_MAX_DEFERRALS = 10;
+const REQUESTER_SETTLE_WAKE_MAX_ROUTE_NOTICES = 3;
 const REQUESTER_SETTLE_WAKE_RETRY_DELAYS_MS = [30_000, 120_000] as const;
 const activeRequesterSettleWakeBatches = new Set<string>();
 
 function buildRequesterSettleWakeMessage(params: {
-  findings?: string;
+  children: Parameters<typeof buildChildCompletionFindings>[0];
   requireVisibleReply: boolean;
-  modelRouteChange?: string;
   preserveModelRouteNotice: boolean;
 }): string {
+  const findings = buildChildCompletionFindings(params.children);
+  const distinctRoutes = new Set<string>();
+  for (const child of params.children) {
+    const reply = child.completion?.terminalReply;
+    const notice =
+      reply?.disposition === "visible"
+        ? normalizeAgentRunRouteChange(reply.modelRouteChange)
+        : undefined;
+    if (notice) {
+      distinctRoutes.add(notice);
+    }
+  }
+  // Metadata stays separate from child results used by raw delivery. Bound before
+  // joining: each normalized notice is at most 320 characters, regardless of fan-out.
+  const routeNotices = [...distinctRoutes]
+    .toSorted()
+    .slice(0, REQUESTER_SETTLE_WAKE_MAX_ROUTE_NOTICES);
+  const omittedRoutes = distinctRoutes.size - routeNotices.length;
   return [
     "[Subagent Context] Every subagent spawned from this session has now settled — none are still running or awaiting completion delivery.",
     "[Subagent Context] Do not keep waiting or call sessions_yield again for this batch; no further completion events will arrive.",
@@ -65,17 +84,17 @@ function buildRequesterSettleWakeMessage(params: {
     params.requireVisibleReply
       ? "[Subagent Context] Child completion delivery is internal; the original user request still requires your visible final answer."
       : `[Subagent Context] Reply ONLY: ${SILENT_REPLY_TOKEN} only if you already delivered the consolidated final answer for this batch.`,
-    ...(params.modelRouteChange
+    ...(routeNotices.length > 0
       ? [
-          params.modelRouteChange,
+          ...routeNotices,
+          ...(omittedRoutes > 0 ? [`[Model-route notices omitted: ${omittedRoutes}]`] : []),
           params.preserveModelRouteNotice
             ? "[Subagent Context] Preserve this runtime-authored model-route change notice in your final answer."
             : "[Subagent Context] Keep this runtime-authored model-route change notice internal on this shared surface.",
         ]
       : []),
     "",
-    params.findings ??
-      "(each child result was announced individually in earlier completion events)",
+    findings ?? "(each child result was announced individually in earlier completion events)",
   ].join("\n");
 }
 
@@ -384,25 +403,19 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(params: {
     return false;
   }
 
-  const findings = buildChildCompletionFindings(
-    dedupeLatestChildCompletionRows(
-      filterCurrentDirectChildCompletionRows(settledBatch, {
-        requesterSessionKey,
-        requesterAgentId,
-        getLatestSubagentRunByChildSessionKey,
-      }),
-    ),
+  const children = dedupeLatestChildCompletionRows(
+    filterCurrentDirectChildCompletionRows(settledBatch, {
+      requesterSessionKey,
+      requesterAgentId,
+      getLatestSubagentRunByChildSessionKey,
+    }),
   );
   const requesterSessionOrigin = normalizeDeliveryContext(params.requesterOrigin);
   const directOrigin = resolveAnnounceOrigin(requesterEntry, requesterSessionOrigin);
-  const terminalReply = currentSettledEntry.completion?.terminalReply;
-  const modelRouteChange =
-    terminalReply?.disposition === "visible" ? terminalReply.modelRouteChange : undefined;
   const completionChannel = normalizeMessageChannel(directOrigin?.channel);
   const wakeMessage = buildRequesterSettleWakeMessage({
-    findings,
+    children,
     requireVisibleReply: requesterYieldedAfterDelivery,
-    modelRouteChange,
     preserveModelRouteNotice: !completionChannel || !isDeliverableMessageChannel(completionChannel),
   });
   const wakeKeyBase = [
