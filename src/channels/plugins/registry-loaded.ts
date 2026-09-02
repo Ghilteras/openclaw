@@ -20,9 +20,8 @@ import type { ChannelId } from "./types.public.js";
 /**
  * Loaded channel plugin shape after id/meta normalization.
  */
-type LoadedChannelPlugin = ActiveChannelPluginRuntimeShape & {
-  id: string;
-  meta: NonNullable<ActiveChannelPluginRuntimeShape["meta"]>;
+type LoadedChannelPlugin = ChannelPlugin & {
+  meta: NonNullable<ChannelPlugin["meta"]>;
 };
 
 /**
@@ -53,6 +52,8 @@ function coerceLoadedChannelPlugin(
     // channel sorting expects an object so normalize it once at read time.
     plugin.meta = {};
   }
+  // Active registry entries originate only from normalizeRegisteredChannelPlugin;
+  // this read boundary restores the full validated contract once after light storage.
   return plugin as LoadedChannelPlugin;
 }
 
@@ -122,7 +123,7 @@ export function listLoadedChannelPlugins(): LoadedChannelPlugin[] {
 export function listLoadedChannelPluginsForRegistry(
   registry: ActivePluginChannelRegistry,
 ): ChannelPlugin[] {
-  return resolveChannelPlugins(registry).sorted.slice() as ChannelPlugin[];
+  return resolveChannelPlugins(registry).sorted.slice();
 }
 
 /**
@@ -138,7 +139,7 @@ export function getLoadedChannelPluginById(id: string): LoadedChannelPlugin | un
 
 /** Returns one loaded channel plugin without triggering bundled discovery. */
 export function getLoadedChannelPluginForRead(id: ChannelId): ChannelPlugin | undefined {
-  return getLoadedChannelPluginById(id) as ChannelPlugin | undefined;
+  return getLoadedChannelPluginById(id);
 }
 
 /**
