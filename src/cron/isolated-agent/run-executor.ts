@@ -70,6 +70,10 @@ import {
 } from "./run-execution.runtime.js";
 import { resolveCronFallbacksOverride } from "./run-fallback-policy.js";
 import {
+  CRON_EXECUTION_ROOT_RUNTIME_ERROR,
+  isCronRuntimeAllowedForExecutionRoot,
+} from "./run-prepare-runtime.js";
+import {
   type CronLiveSelection,
   type MutableCronSession,
   type PersistCronSessionEntry,
@@ -534,6 +538,14 @@ function createCronPromptExecutor(params: {
           sessionKey: params.runSessionKey,
           sessionEntry: params.cronSession.sessionEntry,
         });
+        if (
+          !isCronRuntimeAllowedForExecutionRoot({
+            executionRoot: params.executionRoot,
+            effectiveAgentRuntime: candidateRuntime,
+          })
+        ) {
+          throw new Error(CRON_EXECUTION_ROOT_RUNTIME_ERROR);
+        }
         const candidateConfiguredThinkLevel =
           params.immutableThinkLevel ??
           resolveConfiguredThinkingDefault({

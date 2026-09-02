@@ -134,6 +134,8 @@ Each reviewer reads only its agent's Workshop directory. The turn edits files
 directly. A full-tree snapshot is created before the turn; every changed or
 added file is scanned after it, and a failing file is restored from the
 snapshot while other safe changes stay. Unlisted skills stay untouched.
+The review runs on the embedded runtime only; model fallback candidates that
+use CLI runtimes are skipped for this job.
 Collection review records its changes in review history and the backup manifest;
 it does not create proposal rows.
 

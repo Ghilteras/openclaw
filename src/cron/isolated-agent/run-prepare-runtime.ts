@@ -50,6 +50,16 @@ export type WithRunSession = (
   result: Omit<RunCronAgentTurnResult, "sessionId" | "sessionKey">,
 ) => RunCronAgentTurnResult;
 
+export const CRON_EXECUTION_ROOT_RUNTIME_ERROR =
+  "collection review requires the embedded agent runtime; the configured CLI runtime cannot be rooted at the Workshop directory";
+
+export function isCronRuntimeAllowedForExecutionRoot(params: {
+  executionRoot?: RunCronAgentTurnParams["executionRoot"];
+  effectiveAgentRuntime: string;
+}): boolean {
+  return !params.executionRoot || params.effectiveAgentRuntime === "openclaw";
+}
+
 export function resolveCronRuntimeSelection(params: {
   cfg: OpenClawConfig;
   provider: string;
@@ -72,7 +82,12 @@ export function resolveCronRuntimeSelection(params: {
     sessionKey: params.sessionKey,
     sessionEntry: params.sessionEntry,
   });
-  if (!params.executionRoot || effectiveAgentRuntime === "openclaw") {
+  if (
+    isCronRuntimeAllowedForExecutionRoot({
+      executionRoot: params.executionRoot,
+      effectiveAgentRuntime,
+    })
+  ) {
     return { effectiveAgentRuntime };
   }
   params.release();
@@ -80,8 +95,7 @@ export function resolveCronRuntimeSelection(params: {
     effectiveAgentRuntime,
     rejectedExecutionRoot: params.withRunSession({
       status: "error",
-      error:
-        "collection review requires the embedded agent runtime; the configured CLI runtime cannot be rooted at the Workshop directory",
+      error: CRON_EXECUTION_ROOT_RUNTIME_ERROR,
     }),
   };
 }

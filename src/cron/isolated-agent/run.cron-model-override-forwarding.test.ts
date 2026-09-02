@@ -20,6 +20,7 @@ import {
   loadModelCatalogMock,
   loadModelCatalogOwnerMock,
   mockRunCronFallbackPassthrough,
+  patchSessionEntryMock,
   resolveAgentConfigMock,
   resolveAgentModelFallbacksOverrideMock,
   resolveAllowedModelRefMock,
@@ -542,6 +543,55 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     expect(result.status).toBe("ok");
     expect(runEmbeddedAgentMock).toHaveBeenCalledWith(expect.objectContaining(executionRoot));
     expect(runCliAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a CLI fallback after a rooted embedded candidate fails", async () => {
+    resolveEffectiveAgentRuntimeMock.mockImplementation(({ modelId }: { modelId: string }) =>
+      modelId === "gemini-2.0-flash" ? "openclaw" : "claude-cli",
+    );
+    isCliProviderMock.mockImplementation((provider: string) => provider === "claude-cli");
+    runEmbeddedAgentMock.mockRejectedValueOnce(new Error("embedded primary failed"));
+    runCliAgentMock.mockResolvedValueOnce({
+      payloads: [{ text: "CLI fallback ran" }],
+      meta: { agentMeta: {} },
+    });
+    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => {
+      await expect(runInitialModelFallbackAttempt(params)).rejects.toThrow(
+        "embedded primary failed",
+      );
+      const result = await runFallbackModelAttempt(
+        params,
+        "claude-cli",
+        "claude-opus-4-6",
+        "unknown",
+      );
+      return { result, provider: "claude-cli", model: "claude-opus-4-6", attempts: [] };
+    });
+
+    const result = await runCronIsolatedAgentTurn(
+      makeParams({
+        executionRoot: {
+          workspaceDir: "/tmp/workshop-skills",
+          cwd: "/tmp/workshop-skills",
+          sessionRoot: "/tmp/workshop-skills",
+          requireWritableSandbox: true,
+        },
+      }),
+    );
+
+    expect(result).toMatchObject({
+      status: "error",
+      admissionDisposition: "rejected",
+      error:
+        "collection review requires the embedded agent runtime; the configured CLI runtime cannot be rooted at the Workshop directory",
+    });
+    expect(runCliAgentMock).not.toHaveBeenCalled();
+    const cliCandidatePersisted = patchSessionEntryMock.mock.calls.some((call) => {
+      const options = requireRecord(call[2]);
+      const fallbackEntry = requireRecord(options.fallbackEntry);
+      return fallbackEntry.modelProvider === "claude-cli";
+    });
+    expect(cliCandidatePersisted).toBe(false);
   });
 
   it("uses a stored cron-session thinking preference before configured defaults", async () => {
