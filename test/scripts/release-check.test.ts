@@ -1,7 +1,7 @@
 // Release Check tests cover release check script behavior.
 import { execFileSync } from "node:child_process";
 import {
-  copyFileSync,
+  linkSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -12,7 +12,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { buildSync } from "esbuild";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import {
   collectRootPackageExcludedExtensionDirs,
@@ -26,6 +27,70 @@ import {
   writePackedTarballInstallManifest,
   writePackedBundledPluginActivationConfig,
 } from "../../scripts/release-check.ts";
+import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.ts";
+
+const generatedPackCapabilities = [
+  ["src/agents/compaction-planning.worker.ts", "dist/agents/compaction-planning.worker.js"],
+  ["src/agents/model-provider-auth.worker.ts", "dist/agents/model-provider-auth.worker.js"],
+  ["src/agents/prepared-model-catalog.worker.ts", "dist/agents/prepared-model-catalog.worker.js"],
+  [
+    "extensions/memory-core/src/memory/manager-search-knn-entrypoint.ts",
+    "dist/extensions/memory-core/memory-search-knn.child.js",
+  ],
+  [
+    "src/config/sessions/session-accessor.sqlite-archive.worker.ts",
+    "dist/config/sessions/session-accessor.sqlite-archive.worker.js",
+  ],
+  [
+    "src/config/sessions/session-transcript-reconcile.worker.ts",
+    "dist/config/sessions/session-transcript-reconcile.worker.js",
+  ],
+  ["src/state/openclaw-database-verify.worker.ts", "dist/state/openclaw-database-verify.worker.js"],
+  [
+    "src/system-agent/setup-inference-detection.worker.ts",
+    "dist/system-agent/setup-inference-detection.worker.js",
+  ],
+  ["src/tasks/task-registry-control.runtime.ts", "dist/task-registry-control.runtime.js"],
+  [
+    "extensions/telegram/src/telegram-ingress-worker.runtime.ts",
+    "dist/telegram-ingress-worker.runtime.js",
+  ],
+] as const;
+const conditionalPackPaths = [
+  "scripts/lib/recommended-tool-installs.json",
+  "scripts/lib/guard-inventory-utils.mjs",
+  ...generatedPackCapabilities.map(([, outputPath]) => outputPath),
+] as const;
+const legacySdkPackPaths = [
+  "dist/extensionAPI.js",
+  "dist/extensionAPI.d.ts",
+  "dist/plugin-sdk/compat.js",
+  "dist/plugin-sdk/compat.d.ts",
+  "dist/plugin-sdk/index.js",
+  "dist/plugin-sdk/index.d.ts",
+  "dist/plugin-sdk/root-alias.cjs",
+] as const;
+const legacySdkSourcePaths = [
+  "src/extensionAPI.ts",
+  "src/plugin-sdk/compat.ts",
+  "src/plugin-sdk/index.ts",
+  "src/plugin-sdk/root-alias.cjs",
+  "scripts/copy-plugin-sdk-root-alias.mjs",
+] as const;
+const legacySdkExports = {
+  "./extension-api": "./dist/extensionAPI.js",
+  "./plugin-sdk": {
+    types: "./dist/plugin-sdk/index.d.ts",
+    default: "./dist/plugin-sdk/index.js",
+  },
+  "./plugin-sdk/compat": {
+    types: "./dist/plugin-sdk/compat.d.ts",
+    default: "./dist/plugin-sdk/compat.js",
+  },
+} as const;
+const sharedTempDirs = useAutoCleanupTempDirTracker(afterAll);
+const targetTempDirs = useAutoCleanupTempDirTracker(afterEach);
+let sparseReleaseToolingRoot: string | undefined;
 
 function requirePluginEntries(config: { plugins?: { entries?: Record<string, unknown> } }) {
   if (!config.plugins?.entries) {
@@ -34,79 +99,326 @@ function requirePluginEntries(config: { plugins?: { entries?: Record<string, unk
   return config.plugins.entries;
 }
 
+function getSparseReleaseToolingRoot() {
+  if (sparseReleaseToolingRoot) {
+    return sparseReleaseToolingRoot;
+  }
+  const toolingRoot = sharedTempDirs.make("openclaw-release-check-tooling-");
+  const workflow = parse(readFileSync(".github/workflows/openclaw-npm-preflight.yml", "utf8"));
+  const checkout = workflow.jobs.check_contents_npm.steps.find(
+    (step: { name?: string }) => step.name === "Checkout trusted Plugin SDK API tooling",
+  );
+  const sparseRoots = checkout.with["sparse-checkout"].trim().split(/\s+/u) as string[];
+  const trackedPaths = [
+    ...Object.keys(
+      buildSync({
+        entryPoints: ["scripts/release-check.ts", "scripts/tsx.mjs"],
+        bundle: true,
+        format: "esm",
+        logLevel: "silent",
+        metafile: true,
+        outdir: toolingRoot,
+        packages: "external",
+        platform: "node",
+        write: false,
+      }).metafile!.inputs,
+    ),
+    "package.json",
+    "scripts/fixtures/packed-plugin-sdk-type-smoke.ts",
+    "tsconfig.json",
+  ];
+  expect(
+    trackedPaths.every(
+      (path) =>
+        path === "package.json" ||
+        path === "tsconfig.json" ||
+        sparseRoots.some((root) => path.startsWith(`${root}/`)),
+    ),
+  ).toBe(true);
+  for (const relativePath of trackedPaths) {
+    const destination = join(toolingRoot, relativePath);
+    mkdirSync(dirname(destination), { recursive: true });
+    linkSync(relativePath, destination);
+  }
+  symlinkSync(resolve("node_modules"), join(toolingRoot, "node_modules"), "junction");
+  sparseReleaseToolingRoot = toolingRoot;
+  return toolingRoot;
+}
+
+function runSparseReleaseToolingFixture(params: {
+  files: unknown;
+  packageExports?: unknown;
+  packPaths?: readonly string[];
+  pluginSdkEntries?: unknown;
+  privatePluginSdkEntries?: unknown;
+  sourcePaths?: readonly string[];
+}) {
+  const root = targetTempDirs.make("openclaw-release-check-target-");
+  try {
+    const toolingRoot = getSparseReleaseToolingRoot();
+    mkdirSync(join(root, "scripts", "lib"), { recursive: true });
+    mkdirSync(join(root, "extensions"));
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ files: params.files, exports: params.packageExports }),
+    );
+    writeFileSync(
+      join(root, "scripts/lib/plugin-sdk-entrypoints.json"),
+      JSON.stringify(params.pluginSdkEntries ?? ["target-private", "target-public"]),
+    );
+    writeFileSync(
+      join(root, "scripts/lib/plugin-sdk-private-local-only-subpaths.json"),
+      JSON.stringify(params.privatePluginSdkEntries ?? ["target-private"]),
+    );
+    for (const sourcePath of params.sourcePaths ?? []) {
+      const destination = join(root, sourcePath);
+      mkdirSync(dirname(destination), { recursive: true });
+      writeFileSync(destination, "export {};\n");
+    }
+    mkdirSync(join(root, "scripts", "fixtures"));
+    writeFileSync(
+      join(root, "scripts/fixtures/packed-plugin-sdk-type-smoke.ts"),
+      "stale target fixture",
+    );
+    const moduleUrl = pathToFileURL(join(toolingRoot, "scripts/release-check.ts")).href;
+    const packPaths = params.packPaths ?? [
+      "dist/plugin-sdk/target-private.js",
+      "dist/plugin-sdk/target-private.d.ts",
+      "dist/plugin-sdk/target-public.js",
+      "dist/plugin-sdk/target-public.d.ts",
+    ];
+    const output = execFileSync(
+      process.execPath,
+      [
+        "--import",
+        join(toolingRoot, "scripts/tsx.mjs"),
+        "--input-type=module",
+        "--eval",
+        `import { readFileSync } from "node:fs";\n` +
+          `const { collectForbiddenPackPaths, collectMissingPackPaths, createPackedPluginSdkTypescriptSmokeProject } = await import(${JSON.stringify(moduleUrl)});\n` +
+          `createPackedPluginSdkTypescriptSmokeProject({ consumerDir: "consumer", packageSpec: "file:fixture.tgz" });\n` +
+          `const conditional = ${JSON.stringify(conditionalPackPaths)};\n` +
+          `const packPaths = ${JSON.stringify(packPaths)};\n` +
+          `console.log(JSON.stringify({ conditional: collectMissingPackPaths([]).filter(path => conditional.includes(path)), forbidden: collectForbiddenPackPaths(packPaths), required: collectMissingPackPaths([]).filter(path => packPaths.includes(path)), fixture: readFileSync("consumer/src/index.ts", "utf8") }));`,
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, TSX_TSCONFIG_PATH: join(toolingRoot, "tsconfig.json") },
+      },
+    );
+    return {
+      output: JSON.parse(output) as {
+        conditional: string[];
+        fixture: string;
+        forbidden: string[];
+        required: string[];
+      },
+      toolingFixture: readFileSync(
+        join(toolingRoot, "scripts/fixtures/packed-plugin-sdk-type-smoke.ts"),
+        "utf8",
+      ),
+    };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 describe("release-check", () => {
   it("loads sparse release tooling and checks the separate target SDK inventory", () => {
-    const root = mkdtempSync(join(tmpdir(), "openclaw-release-check-target-"));
-    try {
-      const toolingRoot = join(root, "tooling");
-      const workflow = parse(readFileSync(".github/workflows/openclaw-npm-preflight.yml", "utf8"));
-      const checkout = workflow.jobs.check_contents_npm.steps.find(
-        (step: { name?: string }) => step.name === "Checkout trusted Plugin SDK API tooling",
-      );
-      const sparseRoots = checkout.with["sparse-checkout"].trim().split(/\s+/u) as string[];
-      const trackedPaths = execFileSync(
-        "git",
-        ["ls-files", "-z", "--", ":(top,glob)*", ...sparseRoots],
-        { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
-      )
-        .split("\0")
-        .filter(Boolean);
-      for (const relativePath of trackedPaths) {
-        const destination = join(toolingRoot, relativePath);
-        mkdirSync(dirname(destination), { recursive: true });
-        copyFileSync(relativePath, destination);
-      }
-      symlinkSync(resolve("node_modules"), join(toolingRoot, "node_modules"), "junction");
-      mkdirSync(join(root, "scripts", "lib"), { recursive: true });
-      mkdirSync(join(root, "extensions"));
-      writeFileSync(join(root, "package.json"), JSON.stringify({ files: ["dist"] }));
-      writeFileSync(
-        join(root, "scripts/lib/plugin-sdk-entrypoints.json"),
-        JSON.stringify(["target-private", "target-public"]),
-      );
-      writeFileSync(
-        join(root, "scripts/lib/plugin-sdk-private-local-only-subpaths.json"),
-        JSON.stringify(["target-private"]),
-      );
-      mkdirSync(join(root, "scripts", "fixtures"));
-      writeFileSync(
-        join(root, "scripts/fixtures/packed-plugin-sdk-type-smoke.ts"),
-        "stale target fixture",
-      );
-      const moduleUrl = pathToFileURL(join(toolingRoot, "scripts/release-check.ts")).href;
-      const output = execFileSync(
-        process.execPath,
-        [
-          "--import",
-          join(toolingRoot, "scripts/tsx.mjs"),
-          "--input-type=module",
-          "--eval",
-          `import { readFileSync } from "node:fs";\n` +
-            `const { collectForbiddenPackPaths, collectMissingPackPaths, createPackedPluginSdkTypescriptSmokeProject } = await import(${JSON.stringify(moduleUrl)});\n` +
-            `createPackedPluginSdkTypescriptSmokeProject({ consumerDir: "consumer", packageSpec: "file:fixture.tgz" });\n` +
-            `console.log(JSON.stringify({ forbidden: collectForbiddenPackPaths(["dist/plugin-sdk/target-private.d.ts", "dist/plugin-sdk/target-public.d.ts"]), required: collectMissingPackPaths([]).filter(path => path.startsWith("dist/plugin-sdk/")), fixture: readFileSync("consumer/src/index.ts", "utf8") }));`,
-        ],
-        {
-          cwd: root,
-          encoding: "utf8",
-          env: { ...process.env, TSX_TSCONFIG_PATH: join(toolingRoot, "tsconfig.json") },
+    const { output, toolingFixture } = runSparseReleaseToolingFixture({ files: ["dist"] });
+    expect(output).toEqual({
+      conditional: [],
+      fixture: toolingFixture,
+      forbidden: ["dist/plugin-sdk/target-private.d.ts"],
+      required: [
+        "dist/plugin-sdk/target-private.js",
+        "dist/plugin-sdk/target-public.d.ts",
+        "dist/plugin-sdk/target-public.js",
+      ],
+    });
+  });
+
+  it("uses exact target package exclusions for private SDK artifacts", () => {
+    const exact = runSparseReleaseToolingFixture({
+      files: ["dist", "!dist/plugin-sdk/target-private.js"],
+      packPaths: ["dist/plugin-sdk/target-private.js", "dist/plugin-sdk/target-private.d.ts"],
+    }).output;
+    expect(exact).toMatchObject({
+      forbidden: ["dist/plugin-sdk/target-private.d.ts", "dist/plugin-sdk/target-private.js"],
+      required: [],
+    });
+
+    const near = runSparseReleaseToolingFixture({
+      files: [
+        "dist",
+        "!dist/plugin-sdk/target-private.*",
+        "!dist/plugin-sdk/target-private.js.map",
+        "!dist/plugin-sdk/nested/target-private.js",
+      ],
+      packPaths: ["dist/plugin-sdk/target-private.js", "dist/plugin-sdk/target-private.d.ts"],
+    }).output;
+    expect(near).toMatchObject({
+      forbidden: ["dist/plugin-sdk/target-private.d.ts"],
+      required: ["dist/plugin-sdk/target-private.js"],
+    });
+  });
+
+  it("requires private SDK runtime artifacts when the exact exclusion is removed", () => {
+    const { output } = runSparseReleaseToolingFixture({
+      files: ["dist"],
+      packPaths: ["dist/plugin-sdk/target-private.js", "dist/plugin-sdk/target-private.d.ts"],
+    });
+    expect(output).toMatchObject({
+      forbidden: ["dist/plugin-sdk/target-private.d.ts"],
+      required: ["dist/plugin-sdk/target-private.js"],
+    });
+  });
+
+  it("allows and requires the seven target-owned legacy SDK outputs", () => {
+    const { output } = runSparseReleaseToolingFixture({
+      files: ["dist"],
+      packageExports: legacySdkExports,
+      packPaths: legacySdkPackPaths,
+      pluginSdkEntries: ["index", "compat"],
+      privatePluginSdkEntries: [],
+      sourcePaths: legacySdkSourcePaths,
+    });
+    expect(output).toMatchObject({
+      forbidden: [],
+      required: [...legacySdkPackPaths].toSorted(),
+    });
+  });
+
+  it("keeps legacy SDK outputs forbidden for modern targets", () => {
+    const { output } = runSparseReleaseToolingFixture({
+      files: ["dist"],
+      packPaths: legacySdkPackPaths,
+      pluginSdkEntries: [],
+      privatePluginSdkEntries: [],
+    });
+    expect(output).toMatchObject({
+      forbidden: [...legacySdkPackPaths].toSorted(),
+      required: [],
+    });
+  });
+
+  it.each([
+    {
+      name: "source-only",
+      packageExports: undefined,
+      packPaths: legacySdkPackPaths,
+      pluginSdkEntries: ["index", "compat"],
+      sourcePaths: legacySdkSourcePaths.filter(
+        (path) => path !== "scripts/copy-plugin-sdk-root-alias.mjs",
+      ),
+    },
+    {
+      name: "export-only",
+      packageExports: legacySdkExports,
+      packPaths: legacySdkPackPaths,
+      pluginSdkEntries: ["index", "compat"],
+      sourcePaths: [],
+    },
+    {
+      name: "partial inventory",
+      packageExports: legacySdkExports,
+      packPaths: ["dist/plugin-sdk/compat.js", "dist/plugin-sdk/compat.d.ts"],
+      pluginSdkEntries: ["index"],
+      sourcePaths: legacySdkSourcePaths,
+    },
+    {
+      name: "near-match export",
+      packageExports: {
+        ...legacySdkExports,
+        "./plugin-sdk/compat": {
+          types: "./dist/plugin-sdk/compat.d.ts.map",
+          default: "./dist/plugin-sdk/compat.js",
         },
-      );
-      expect(JSON.parse(output)).toEqual({
-        fixture: readFileSync(
-          join(toolingRoot, "scripts/fixtures/packed-plugin-sdk-type-smoke.ts"),
-          "utf8",
-        ),
-        forbidden: ["dist/plugin-sdk/target-private.d.ts"],
-        required: [
-          "dist/plugin-sdk/target-private.js",
-          "dist/plugin-sdk/target-public.d.ts",
-          "dist/plugin-sdk/target-public.js",
-        ],
-      });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+      },
+      packPaths: ["dist/plugin-sdk/compat.js", "dist/plugin-sdk/compat.d.ts"],
+      pluginSdkEntries: ["compat"],
+      sourcePaths: ["src/plugin-sdk/compat.ts"],
+    },
+    {
+      name: "unknown inventory entry",
+      packageExports: legacySdkExports,
+      packPaths: ["dist/plugin-sdk/compat.js", "dist/plugin-sdk/compat.d.ts"],
+      pluginSdkEntries: ["compatibility"],
+      sourcePaths: ["src/plugin-sdk/compat.ts"],
+    },
+  ])("fails closed for $name legacy SDK ownership", (fixture) => {
+    const { output } = runSparseReleaseToolingFixture({
+      files: ["dist"],
+      packageExports: fixture.packageExports,
+      packPaths: fixture.packPaths,
+      pluginSdkEntries: fixture.pluginSdkEntries,
+      privatePluginSdkEntries: [],
+      sourcePaths: fixture.sourcePaths,
+    });
+    expect(output.forbidden).toEqual([...fixture.packPaths].toSorted());
+  });
+
+  it("fails closed on malformed target SDK inventory", () => {
+    expect(() =>
+      runSparseReleaseToolingFixture({
+        files: ["dist"],
+        packageExports: legacySdkExports,
+        packPaths: legacySdkPackPaths,
+        pluginSdkEntries: { index: true, compat: true },
+        privatePluginSdkEntries: [],
+        sourcePaths: legacySdkSourcePaths,
+      }),
+    ).toThrow();
+  });
+
+  it("forbids orphan private SDK inventory artifacts", () => {
+    const packPaths = ["dist/plugin-sdk/orphan.js", "dist/plugin-sdk/orphan.d.ts"];
+    const { output } = runSparseReleaseToolingFixture({
+      files: ["dist"],
+      packPaths,
+      pluginSdkEntries: [],
+      privatePluginSdkEntries: ["orphan"],
+    });
+    expect(output).toMatchObject({ forbidden: packPaths.toSorted(), required: [] });
+  });
+
+  it("exempts only exact authorized legacy SDK paths from forbidden prefixes", () => {
+    const nearMatches = [
+      "dist/extensionAPI.js.map",
+      "dist/plugin-sdk/compat.js.map",
+      "dist/plugin-sdk/index.d.ts.map",
+      "dist/plugin-sdk/root-alias.cjs.map",
+      "dist/plugin-sdk/compat.js/nested",
+      "dist/plugin-sdk/index.js/nested",
+    ];
+    const { output } = runSparseReleaseToolingFixture({
+      files: ["dist"],
+      packageExports: legacySdkExports,
+      packPaths: [...legacySdkPackPaths, ...nearMatches],
+      pluginSdkEntries: ["index", "compat"],
+      privatePluginSdkEntries: [],
+      sourcePaths: legacySdkSourcePaths,
+    });
+    expect(output.forbidden).toEqual(nearMatches.toSorted());
+  });
+
+  it("derives support and generated package requirements from target capabilities", () => {
+    const { output } = runSparseReleaseToolingFixture({
+      files: ["dist", "scripts/lib/recommended-tool-installs.json"],
+      sourcePaths: generatedPackCapabilities.map(([sourcePath]) => sourcePath),
+    });
+    expect(output.conditional).toEqual(
+      conditionalPackPaths
+        .filter((path) => path !== "scripts/lib/guard-inventory-utils.mjs")
+        .toSorted(),
+    );
+  });
+
+  it("rejects malformed target package file declarations", () => {
+    expect(() => runSparseReleaseToolingFixture({ files: ["dist", 42] })).toThrow(
+      "release-check: target package.json files must be an array of strings.",
+    );
   });
 
   it("installs the prepared tarball with its real package lifecycle", () => {

@@ -41,10 +41,6 @@ import {
   PACKAGE_DIST_INVENTORY_RELATIVE_PATH,
 } from "./lib/package-dist-inventory.ts";
 import { collectBundledPluginPackageDependencySpecs } from "./lib/plugin-package-dependencies.mts";
-import {
-  listPluginSdkDistArtifacts,
-  listUnpackagedPrivatePluginSdkDistArtifacts,
-} from "./lib/plugin-sdk-entries.mts";
 import { listStaticExtensionAssetOutputs } from "./lib/static-extension-assets.mts";
 import {
   runInstalledWorkspaceBootstrapSmoke,
@@ -80,19 +76,90 @@ const rootPackageExcludedExtensionDirs = collectRootPackageExcludedExtensionDirs
 const rootPackageExcludedExtensionPrefixes = [...rootPackageExcludedExtensionDirs].map(
   (extensionId) => `dist/extensions/${extensionId}/`,
 );
-// Trusted tooling can validate an older release checkout. Its SDK inventory
-// belongs to that target, including release-only compatibility entrypoints.
-const targetPluginSdkEntries = JSON.parse(
-  readFileSync(resolve("scripts/lib/plugin-sdk-entrypoints.json"), "utf8"),
-) as string[];
-const targetPrivatePluginSdkEntries = JSON.parse(
-  readFileSync(resolve("scripts/lib/plugin-sdk-private-local-only-subpaths.json"), "utf8"),
-) as string[];
+// prettier-ignore
+const targetRequiredPathCapabilities = [
+  ["scripts/lib/recommended-tool-installs.json", null],
+  ["scripts/lib/guard-inventory-utils.mjs", null],
+  ["dist/agents/compaction-planning.worker.js", "src/agents/compaction-planning.worker.ts"],
+  ["dist/agents/model-provider-auth.worker.js", "src/agents/model-provider-auth.worker.ts"],
+  ["dist/agents/prepared-model-catalog.worker.js", "src/agents/prepared-model-catalog.worker.ts"],
+  ["dist/extensions/memory-core/memory-search-knn.child.js", "extensions/memory-core/src/memory/manager-search-knn-entrypoint.ts"],
+  ["dist/config/sessions/session-accessor.sqlite-archive.worker.js", "src/config/sessions/session-accessor.sqlite-archive.worker.ts"],
+  ["dist/config/sessions/session-transcript-reconcile.worker.js", "src/config/sessions/session-transcript-reconcile.worker.ts"],
+  ["dist/state/openclaw-database-verify.worker.js", "src/state/openclaw-database-verify.worker.ts"],
+  ["dist/system-agent/setup-inference-detection.worker.js", "src/system-agent/setup-inference-detection.worker.ts"],
+  ["dist/task-registry-control.runtime.js", "src/tasks/task-registry-control.runtime.ts"],
+  ["dist/telegram-ingress-worker.runtime.js", "extensions/telegram/src/telegram-ingress-worker.runtime.ts"],
+] as const;
+// prettier-ignore
+const targetWorkerEntrypointCapabilities = [["src/worker/worker-deploy-entry.ts", "dist/worker/worker.mjs"], ["src/worker/workspace-rsync-receiver.ts", "dist/worker/workspace-rsync-receiver.mjs"]] as const;
+
+function resolveTargetPackageContentCapabilities(rootDir = resolve(".")) {
+  const packageJson = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8")) as {
+    exports?: Record<string, unknown>;
+    files?: unknown;
+  } | null;
+  // prettier-ignore
+  if (!Array.isArray(packageJson?.files) || !packageJson.files.every((entry) => typeof entry === "string")) { throw new Error("release-check: target package.json files must be an array of strings."); }
+  const exists = (path: string) => existsSync(join(rootDir, path));
+  const declaredPackageFiles = new Set(packageJson.files);
+  const exports = packageJson.exports ?? {};
+  // prettier-ignore
+  const pluginSdkEntries = JSON.parse(readFileSync(join(rootDir, "scripts/lib/plugin-sdk-entrypoints.json"), "utf8")) as string[], privateSdkEntries = JSON.parse(readFileSync(join(rootDir, "scripts/lib/plugin-sdk-private-local-only-subpaths.json"), "utf8")) as string[];
+  // prettier-ignore
+  if (!Array.isArray(pluginSdkEntries) || !pluginSdkEntries.every((entry) => typeof entry === "string") || !Array.isArray(privateSdkEntries) || !privateSdkEntries.every((entry) => typeof entry === "string")) {
+    throw new Error("release-check: target Plugin SDK inventories are malformed.");
+  }
+  const requiredPluginSdkPaths: string[] = [];
+  const forbiddenPluginSdkPaths: string[] = [];
+  const authorizedLegacyPaths = new Set<string>();
+  for (const entry of new Set([...pluginSdkEntries, ...privateSdkEntries])) {
+    const base = `dist/plugin-sdk/${entry}`;
+    const js = `${base}.js`;
+    if (privateSdkEntries.includes(entry)) {
+      forbiddenPluginSdkPaths.push(`${base}.d.ts`);
+      (!pluginSdkEntries.includes(entry) || declaredPackageFiles.has(`!${js}`)
+        ? forbiddenPluginSdkPaths
+        : requiredPluginSdkPaths
+      ).push(js);
+      continue;
+    }
+    requiredPluginSdkPaths.push(js, `${base}.d.ts`);
+    const key =
+      entry === "index" ? "./plugin-sdk" : entry === "compat" ? "./plugin-sdk/compat" : "";
+    const value = exports[key] as { default?: unknown; types?: unknown } | undefined;
+    if (
+      key &&
+      value?.types === `./${base}.d.ts` &&
+      value.default === `./${js}` &&
+      exists(`src/plugin-sdk/${entry}.ts`)
+    ) {
+      authorizedLegacyPaths.add(js).add(`${base}.d.ts`);
+    }
+  }
+  if (exports["./extension-api"] === "./dist/extensionAPI.js" && exists("src/extensionAPI.ts")) {
+    authorizedLegacyPaths.add("dist/extensionAPI.js").add("dist/extensionAPI.d.ts");
+  }
+  if (["src/plugin-sdk/root-alias.cjs", "scripts/copy-plugin-sdk-root-alias.mjs"].every(exists)) {
+    authorizedLegacyPaths.add("dist/plugin-sdk/root-alias.cjs");
+  }
+  // prettier-ignore
+  return {
+    requiredPaths: [
+      ...new Set([...requiredPluginSdkPaths, ...authorizedLegacyPaths]),
+      ...targetRequiredPathCapabilities.filter(([path, source]) => source === null ? declaredPackageFiles.has(path) : exists(source)).map(([path]) => path),
+    ],
+    forbiddenPluginSdkPaths,
+    authorizedLegacyPaths,
+    workerEntrypoints: targetWorkerEntrypointCapabilities.filter(([source]) => exists(source)).map(([, output]) => output),
+  };
+}
+
+const targetPackageContentCapabilities = resolveTargetPackageContentCapabilities();
 const requiredPathGroups = [
   PACKAGE_DIST_INVENTORY_RELATIVE_PATH,
   ["dist/index.js", "dist/index.mjs"],
   ["dist/entry.js", "dist/entry.mjs"],
-  ...listPluginSdkDistArtifacts(targetPluginSdkEntries, targetPrivatePluginSdkEntries),
   ...listBundledPluginPackArtifacts(),
   ...listStaticExtensionAssetOutputs().filter((relativePath: string) => {
     const match = /^dist\/extensions\/([^/]+)\//u.exec(relativePath);
@@ -109,20 +176,9 @@ const requiredPathGroups = [
   "scripts/lib/official-external-channel-catalog.json",
   "scripts/lib/official-external-plugin-catalog.json",
   "scripts/lib/official-external-provider-catalog.json",
-  "scripts/lib/recommended-tool-installs.json",
-  "scripts/lib/guard-inventory-utils.mjs",
   "scripts/lib/package-dist-imports.mjs",
   "scripts/postinstall-bundled-plugins.mjs",
-  "dist/agents/compaction-planning.worker.js",
-  "dist/agents/model-provider-auth.worker.js",
-  "dist/agents/prepared-model-catalog.worker.js",
-  "dist/extensions/memory-core/memory-search-knn.child.js",
-  "dist/config/sessions/session-accessor.sqlite-archive.worker.js",
-  "dist/config/sessions/session-transcript-reconcile.worker.js",
-  "dist/state/openclaw-database-verify.worker.js",
-  "dist/system-agent/setup-inference-detection.worker.js",
-  "dist/task-registry-control.runtime.js",
-  "dist/telegram-ingress-worker.runtime.js",
+  ...targetPackageContentCapabilities.requiredPaths,
   "dist/build-info.json",
   "dist/channel-catalog.json",
   "dist/control-ui/index.html",
@@ -149,10 +205,7 @@ const forbiddenPrefixes = [
   "dist/plugin-sdk/compat.",
   "dist/plugin-sdk/root-alias.",
   "dist/extensionAPI.",
-  ...listUnpackagedPrivatePluginSdkDistArtifacts(
-    targetPluginSdkEntries,
-    targetPrivatePluginSdkEntries,
-  ),
+  ...targetPackageContentCapabilities.forbiddenPluginSdkPaths,
   "dist/qa-runtime-",
   "dist/plugin-sdk/.tsbuildinfo",
   "docs/.generated/",
@@ -1129,7 +1182,8 @@ export function collectForbiddenPackPaths(paths: Iterable<string>): string[] {
     .filter(
       (path) =>
         isLegacyPluginDependencyInstallStagePath(path) ||
-        forbiddenPrefixes.some((prefix) => path.startsWith(prefix)) ||
+        (!targetPackageContentCapabilities.authorizedLegacyPaths.has(path) &&
+          forbiddenPrefixes.some((prefix) => path.startsWith(prefix))) ||
         /(^|\/)\.openclaw-runtime-deps-[^/]+(\/|$)/u.test(path) ||
         path.endsWith("/.openclaw-runtime-deps-stamp.json") ||
         path.includes("node_modules/"),
@@ -1396,6 +1450,7 @@ async function main() {
 function verifyPackedContents(results: NpmPackResult[], packedRoot: string): void {
   checkCliBootstrapExternalImports({
     rootDir: packedRoot,
+    workerEntrypoints: targetPackageContentCapabilities.workerEntrypoints,
     logger: {
       error: (message: string) => console.error(`release-check: ${message}`),
     },

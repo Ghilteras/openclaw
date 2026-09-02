@@ -150,6 +150,35 @@ describe("check-cli-bootstrap-imports", () => {
     expect(collectWorkerDeployArtifactErrors({ rootDir: root })).toEqual([]);
   });
 
+  it("skips worker deploy checks when the target has no worker entrypoints", () => {
+    const root = makeTempRoot();
+
+    expect(collectWorkerDeployArtifactErrors({ rootDir: root, workerEntrypoints: [] })).toEqual([]);
+  });
+
+  it("validates only explicitly selected worker deploy artifacts", () => {
+    const root = makeTempRoot();
+    writeFixture(root, "dist/worker/worker.mjs", "export {};\n");
+
+    expect(
+      collectWorkerDeployArtifactErrors({
+        rootDir: root,
+        workerEntrypoints: ["dist/worker/worker.mjs"],
+      }),
+    ).toEqual([]);
+    expect(
+      collectWorkerDeployArtifactErrors({
+        rootDir: root,
+        workerEntrypoints: ["dist/worker/workspace-rsync-receiver.mjs"],
+      }),
+    ).toEqual([
+      "Worker deploy artifact dist/worker/workspace-rsync-receiver.mjs is missing. Run pnpm build first.",
+    ]);
+    expect(collectWorkerDeployArtifactErrors({ rootDir: root })).toEqual([
+      "Worker deploy artifact dist/worker/workspace-rsync-receiver.mjs is missing. Run pnpm build first.",
+    ]);
+  });
+
   it("rejects worker package imports and dependency manifests", () => {
     const root = makeTempRoot();
     writeFixture(
