@@ -365,6 +365,35 @@ describe("managed llama-server", () => {
     expect(reloads).toBe(1);
   });
 
+  it("reloads an unchanged preset when the managed origin changes and changes back", async () => {
+    await createPresetFixture("origin-transition");
+    const reloads = [0, 0];
+    const createReloadServer = (index: number) =>
+      http.createServer((req, res) => {
+        reloads[index]! += Number(req.url === "/models?reload=1");
+        res.end("{}");
+      });
+    const firstServer = createReloadServer(0);
+    const secondServer = createReloadServer(1);
+    servers.push(firstServer, secondServer);
+    const firstPort = await listen(firstServer);
+    const secondPort = await listen(secondServer);
+    await prepareManagedLlamaServer({
+      chatModel: { mode: "remove" },
+      configuredChatModelIds: [],
+      embeddingModelPath: "/models/embedding.gguf",
+      port: firstPort,
+    });
+    const firstBaseUrl = `http://127.0.0.1:${firstPort}/v1`;
+    const secondBaseUrl = `http://127.0.0.1:${secondPort}/v1`;
+
+    await reconcileManagedLlamaServer({ baseUrl: firstBaseUrl });
+    await reconcileManagedLlamaServer({ baseUrl: secondBaseUrl });
+    await reconcileManagedLlamaServer({ baseUrl: firstBaseUrl });
+
+    expect(reloads).toEqual([2, 1]);
+  });
+
   it("retains a failed reload revision for the next reconciliation", async () => {
     await createPresetFixture("reload-failure");
     let status = 500;

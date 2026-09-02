@@ -453,11 +453,11 @@ export async function reconcileManagedLlamaServer(params: {
   signal?: AbortSignal;
 }): Promise<void> {
   await runPresetTransition(async () => {
-    if (presetState.appliedRevision === presetState.desiredRevision) {
+    const origin = new URL(params.baseUrl).origin;
+    const revision = `${origin}\0${presetState.desiredRevision}`;
+    if (presetState.appliedRevision === revision) {
       return;
     }
-    const revision = presetState.desiredRevision;
-    const origin = new URL(params.baseUrl).origin;
     const { response, release } = await fetchConfiguredLocalOriginWithSsrFGuard({
       url: `${origin}/models?reload=1`,
       configuredLocalOriginBaseUrl: origin,
