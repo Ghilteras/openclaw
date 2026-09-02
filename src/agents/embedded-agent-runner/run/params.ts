@@ -231,6 +231,8 @@ export type RunEmbeddedAgentParams = {
   cwd?: string;
   /** Host-only filesystem-tool root override; does not change exec policy. */
   workspaceOnlyOverride?: boolean;
+  /** Refuse an enabled sandbox that would redirect a review away from its workspace. */
+  requireWritableSandbox?: boolean;
   permissionMode?: SessionEntry["permissionMode"];
   sessionRoot?: string;
   agentDir?: string;

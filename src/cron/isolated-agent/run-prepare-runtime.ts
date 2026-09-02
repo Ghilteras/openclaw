@@ -34,6 +34,7 @@ export type RunCronAgentTurnParams = {
     workspaceDir: string;
     cwd: string;
     sessionRoot: string;
+    requireWritableSandbox?: boolean;
   };
 };
 

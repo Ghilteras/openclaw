@@ -928,6 +928,11 @@ export function buildGatewayCronService(params: {
           config: runtimeConfig,
           agentId: reviewAgentId,
           job,
+          abortSignal,
+          onExecutionStarted,
+          onExecutionPhase,
+          onLaneWait,
+          executionIdentity,
           runTurn: async ({ job: reviewJob, message: reviewMessage, ...reviewParams }) =>
             await runCronIsolatedAgentTurn({
               cfg: runtimeConfig,

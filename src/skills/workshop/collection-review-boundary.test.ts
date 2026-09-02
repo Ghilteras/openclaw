@@ -89,6 +89,7 @@ describe("skill collection review boundary", () => {
             workspaceDir: skillsRoot,
             cwd: skillsRoot,
             sessionRoot: skillsRoot,
+            requireWritableSandbox: true,
           });
           await fs.writeFile(
             path.join(skillsRoot, "rewrite", "SKILL.md"),
@@ -208,6 +209,53 @@ describe("skill collection review boundary", () => {
       expect(
         dispatchCommittedSkillChangeBestEffort.mock.calls.map(([change]) => change.action),
       ).toEqual(["created", "updated", "removed"]);
+    } finally {
+      await testState.cleanup();
+      await tempDirs.cleanup();
+    }
+  });
+
+  it("records a sandbox refusal without committing a backup or advancing the snapshot", async () => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-sandbox-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const beforeVersion = getSkillsSnapshotVersion();
+    const job = {
+      id: "skill-review-sandbox",
+      declarationKey: "skill-collection-review:main",
+      name: "skill review",
+      enabled: true,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      agentId: "main",
+      schedule: { kind: "every", everyMs: 604_800_000 },
+      sessionTarget: "isolated",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "agentTurn", message: "review" },
+      state: {},
+    } satisfies CronStoredJob;
+    try {
+      await writeSkill(skillsRoot, "procedure", "Procedure", "# Procedure\n");
+      const result = await runSkillCollectionReviewForAgent({
+        config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
+        agentId: "main",
+        job,
+        env: testState.env,
+        runTurn: async () => {
+          throw new Error("sandbox workspace is not read-write; collection review skipped");
+        },
+      });
+
+      expect(result.status).toBe("error");
+      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.workshop).toEqual(
+        expect.objectContaining({
+          error: "sandbox workspace is not read-write; collection review skipped",
+        }),
+      );
+      expect(getSkillsSnapshotVersion()).toBe(beforeVersion);
+      expect(listSkillCollectionReviewOutcomes({ env: testState.env })).toEqual([]);
     } finally {
       await testState.cleanup();
       await tempDirs.cleanup();

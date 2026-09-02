@@ -120,6 +120,10 @@ the default policy and no connected approval client, `exec` is denied
 immediately and the reviewer continues with file tools. Reviewed skill
 instructions cannot grant host access that the operator has not already granted
 to automations.
+If an enabled sandbox uses `workspaceAccess: "rw"`, the review uses the agent's
+Workshop directory as its sandbox workspace. If it uses `"ro"` or `"none"`, the
+review records `sandbox workspace is not read-write; collection review skipped`,
+does not run, and does not commit a backup or advance the skill snapshot.
 Choosing `auto` intentionally authorizes those rewrites and drops without a
 second approval **for Workshop-owned paths only**; `propose` and `off` do not
 run collection review.

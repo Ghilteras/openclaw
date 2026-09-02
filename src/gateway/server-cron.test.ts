@@ -40,6 +40,7 @@ const {
   fetchWithSsrFGuardMock,
   sendCronAnnouncePayloadStrictMock,
   runCronIsolatedAgentTurnMock,
+  runSkillCollectionReviewForAgentMock,
   getGlobalHookRunnerMock,
   runCronChangedMock,
   abortAndDrainEmbeddedAgentRunMock,
@@ -78,6 +79,7 @@ const {
     status: "ok",
     summary: "ok",
   })),
+  runSkillCollectionReviewForAgentMock: vi.fn(),
   runCronChangedMock: vi.fn(async (_event: unknown, _context?: unknown) => {}),
   getGlobalHookRunnerMock: vi.fn(() => ({
     hasHooks: (hookName: string) => hookName === "cron_changed",
@@ -217,6 +219,10 @@ vi.mock("../cron/isolated-agent.js", () => ({
   runCronIsolatedAgentTurn: runCronIsolatedAgentTurnMock,
 }));
 
+vi.mock("../skills/workshop/collection-review-boundary.js", () => ({
+  runSkillCollectionReviewForAgent: runSkillCollectionReviewForAgentMock,
+}));
+
 vi.mock("../plugins/hook-runner-global.js", () => ({
   getGlobalHookRunner: getGlobalHookRunnerMock,
 }));
@@ -250,7 +256,7 @@ import {
   trackActiveCronTaskRunSettlement,
 } from "../cron/service/active-run-cancellation.js";
 import { resetActiveCronTaskRunsForTests } from "../cron/service/active-run-cancellation.test-support.js";
-import type { CronServiceState } from "../cron/service/state.js";
+import type { CronExecutionIdentityAdmission, CronServiceState } from "../cron/service/state.js";
 import { armTimer } from "../cron/service/timer.js";
 import type { CronJob, CronJobCreate } from "../cron/types.js";
 import {
@@ -478,6 +484,7 @@ describe("buildGatewayCronService", () => {
     fetchWithSsrFGuardMock.mockClear();
     sendCronAnnouncePayloadStrictMock.mockClear();
     runCronIsolatedAgentTurnMock.mockClear();
+    runSkillCollectionReviewForAgentMock.mockReset();
     runCronChangedMock.mockClear();
     getGlobalHookRunnerMock.mockClear();
     abortAndDrainEmbeddedAgentRunMock.mockClear();
@@ -502,6 +509,91 @@ describe("buildGatewayCronService", () => {
       hasHooks: (hookName: string) => hookName === "cron_changed",
       runCronChanged: runCronChangedMock,
     });
+  });
+
+  it("forwards cancellation, execution callbacks, and identity to collection review turns", async () => {
+    const cfg = {
+      ...createCronConfig("server-cron-skill-review-forwarding"),
+      skills: { workshop: { autonomous: { mode: "auto" } } },
+    } satisfies OpenClawConfig;
+    const state = loadCronService(cfg);
+    const abortController = new AbortController();
+    const onExecutionStarted = vi.fn();
+    const onExecutionPhase = vi.fn();
+    const onLaneWait = vi.fn();
+    const executionIdentity = {
+      ingress: { kind: "schedule", boundary: "cron.test", state: "present" },
+    } satisfies CronExecutionIdentityAdmission;
+    await expect(state.reconcileHeartbeatJobs(cfg)).resolves.toBe("converged");
+    const job = (await state.cron.list({ includeDisabled: true })).find(
+      (candidate) => candidate.declarationKey === "skill-collection-review:main",
+    );
+    if (!job) {
+      throw new Error("expected the skill collection review monitor");
+    }
+    runSkillCollectionReviewForAgentMock.mockImplementationOnce(
+      async (params: {
+        job: typeof job;
+        abortSignal?: AbortSignal;
+        onExecutionStarted?: typeof onExecutionStarted;
+        onExecutionPhase?: typeof onExecutionPhase;
+        onLaneWait?: typeof onLaneWait;
+        executionIdentity?: CronExecutionIdentityAdmission;
+        runTurn: (input: {
+          job: typeof job;
+          message: string;
+          abortSignal?: AbortSignal;
+          onExecutionStarted?: typeof onExecutionStarted;
+          onExecutionPhase?: typeof onExecutionPhase;
+          onLaneWait?: typeof onLaneWait;
+          executionIdentity?: CronExecutionIdentityAdmission;
+          executionRoot: {
+            workspaceDir: string;
+            cwd: string;
+            sessionRoot: string;
+            requireWritableSandbox?: boolean;
+          };
+        }) => Promise<unknown>;
+      }) =>
+        await params.runTurn({
+          job: params.job,
+          message: "review",
+          abortSignal: params.abortSignal,
+          onExecutionStarted: params.onExecutionStarted,
+          onExecutionPhase: params.onExecutionPhase,
+          onLaneWait: params.onLaneWait,
+          executionIdentity: params.executionIdentity,
+          executionRoot: {
+            workspaceDir: "/tmp/workshop",
+            cwd: "/tmp/workshop",
+            sessionRoot: "/tmp/workshop",
+          },
+        }),
+    );
+
+    try {
+      await getCronDeps(state).runIsolatedAgentJob({
+        job,
+        message: "review",
+        abortSignal: abortController.signal,
+        onExecutionStarted,
+        onExecutionPhase,
+        onLaneWait,
+        executionIdentity,
+      });
+
+      expect(runCronIsolatedAgentTurnMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          abortSignal: abortController.signal,
+          onExecutionStarted,
+          onExecutionPhase,
+          onLaneWait,
+          executionIdentity,
+        }),
+      );
+    } finally {
+      state.cron.stop();
+    }
   });
 
   it.each([

@@ -259,6 +259,7 @@ function createCronPromptExecutor(params: {
     workspaceDir: string;
     cwd: string;
     sessionRoot: string;
+    requireWritableSandbox?: boolean;
   };
   pluginRegistry?: PluginRegistry;
   lane?: string;
@@ -743,6 +744,7 @@ function createCronPromptExecutor(params: {
           bootstrapWorkspaceDir: params.workspaceDir,
           cwd: params.executionRoot?.cwd,
           sessionRoot: params.executionRoot?.sessionRoot,
+          requireWritableSandbox: params.executionRoot?.requireWritableSandbox,
           workspaceOnlyOverride: params.executionRoot !== undefined,
           config: params.cfgWithAgentDefaults,
           skillsSnapshot: params.skillsSnapshot,
@@ -895,6 +897,7 @@ export async function executeCronRun(params: {
     workspaceDir: string;
     cwd: string;
     sessionRoot: string;
+    requireWritableSandbox?: boolean;
   };
   lane?: string;
   resolvedDelivery: {

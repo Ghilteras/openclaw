@@ -104,6 +104,7 @@ type AttemptWorkspaceParams = Pick<
   | "sessionKey"
   | "sessionRoot"
   | "skillsSnapshot"
+  | "requireWritableSandbox"
   | "workspaceOnlyOverride"
   | "workspaceDir"
 >;
@@ -131,6 +132,9 @@ export async function resolveAttemptWorkspaceSandbox(params: AttemptWorkspacePar
   });
   const effectiveWorkspace =
     sandbox?.enabled && sandbox.workspaceAccess !== "rw" ? sandbox.workspaceDir : resolvedWorkspace;
+  if (params.requireWritableSandbox && sandbox?.enabled && sandbox.workspaceAccess !== "rw") {
+    throw new Error("sandbox workspace is not read-write; collection review skipped");
+  }
   const requestedCwd = params.cwd ? resolveUserPath(params.cwd) : undefined;
   // Recorded roots pin worktree/explicit-cwd boundaries; rootless sessions use
   // the agent's canonical workspace as their permission boundary.

@@ -5,6 +5,7 @@ import { canonicalizePath } from "../../agents/utils/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { RunCronAgentTurnParams } from "../../cron/isolated-agent/run-prepare-runtime.js";
 import type { RunCronAgentTurnResult } from "../../cron/isolated-agent/run.types.js";
+import type { CronExecutionIdentityAdmission } from "../../cron/service/state.js";
 import type { PluginHookSkillArtifact } from "../../plugins/hook-types.js";
 import {
   dispatchCommittedSkillChangeBestEffort,
@@ -36,6 +37,10 @@ type ReviewTurn = (params: {
   job: RunCronAgentTurnParams["job"];
   message: string;
   abortSignal?: AbortSignal;
+  onExecutionStarted?: RunCronAgentTurnParams["onExecutionStarted"];
+  onExecutionPhase?: RunCronAgentTurnParams["onExecutionPhase"];
+  onLaneWait?: RunCronAgentTurnParams["onLaneWait"];
+  executionIdentity?: CronExecutionIdentityAdmission;
   executionRoot: NonNullable<RunCronAgentTurnParams["executionRoot"]>;
 }) => Promise<RunCronAgentTurnResult>;
 
@@ -53,6 +58,10 @@ export async function runSkillCollectionReviewForAgent(params: {
   job: RunCronAgentTurnParams["job"];
   env?: NodeJS.ProcessEnv;
   abortSignal?: AbortSignal;
+  onExecutionStarted?: RunCronAgentTurnParams["onExecutionStarted"];
+  onExecutionPhase?: RunCronAgentTurnParams["onExecutionPhase"];
+  onLaneWait?: RunCronAgentTurnParams["onLaneWait"];
+  executionIdentity?: CronExecutionIdentityAdmission;
   runTurn: ReviewTurn;
 }): Promise<RunCronAgentTurnResult> {
   if (params.config.skills?.workshop?.autonomous?.mode !== "auto") {
@@ -102,6 +111,10 @@ export async function runSkillCollectionReviewForAgent(params: {
           },
           message,
           ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
+          ...(params.onExecutionStarted ? { onExecutionStarted: params.onExecutionStarted } : {}),
+          ...(params.onExecutionPhase ? { onExecutionPhase: params.onExecutionPhase } : {}),
+          ...(params.onLaneWait ? { onLaneWait: params.onLaneWait } : {}),
+          ...(params.executionIdentity ? { executionIdentity: params.executionIdentity } : {}),
           // File tools are rooted at the Workshop directory. Exec follows the operator's cron
           // exec-approval policy; with the default policy and no approval client it is denied.
           // Reviewed instructions cannot gain host authority the operator has not granted to automations.
@@ -109,6 +122,7 @@ export async function runSkillCollectionReviewForAgent(params: {
             workspaceDir: skillsRoot,
             cwd: skillsRoot,
             sessionRoot: skillsRoot,
+            requireWritableSandbox: true,
           },
         });
         assertCurrent(lease);

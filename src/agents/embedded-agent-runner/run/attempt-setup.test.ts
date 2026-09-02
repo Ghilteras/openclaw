@@ -6,6 +6,7 @@ import { useAutoCleanupTempDirTracker } from "../../../../test/helpers/temp-dir.
 import { attachRuntimePromptMediaFacts } from "../../../media/media-facts.js";
 import type { ProviderRuntimePluginHandle } from "../../../plugins/provider-hook-runtime.js";
 import { resolveSandboxContext as resolveRealSandboxContext } from "../../sandbox/context.js";
+import type { SandboxContext } from "../../sandbox/types.js";
 import { castAgentMessage } from "../../test-helpers/agent-message-fixtures.js";
 import { buildEmbeddedForegroundPromptContext } from "./agent-end-context.js";
 import type { EmbeddedRunAttemptParams } from "./types.js";
@@ -32,6 +33,32 @@ import {
 const TINY_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAsTAAALEwEAmpwYAAAADUlEQVR4nGP4////KwAJ5gPoxLp9owAAAABJRU5ErkJggg==";
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+function sandboxContext(workspaceAccess: SandboxContext["workspaceAccess"]): SandboxContext {
+  return {
+    enabled: true,
+    backendId: "docker",
+    sessionKey: "agent:main:skill-collection-review",
+    workspaceDir: path.join(os.tmpdir(), "openclaw-sandbox-workspace"),
+    agentWorkspaceDir: path.join(os.tmpdir(), "openclaw-agent-workspace"),
+    workspaceAccess,
+    runtimeId: "sandbox-runtime",
+    runtimeLabel: "sandbox",
+    containerName: "openclaw-sandbox",
+    containerWorkdir: "/workspace",
+    docker: {
+      image: "openclaw-sandbox",
+      containerPrefix: "openclaw-sandbox",
+      workdir: "/workspace",
+      readOnlyRoot: false,
+      tmpfs: [],
+      network: "none",
+      capDrop: [],
+    },
+    tools: {},
+    browserAllowHostControl: false,
+  };
+}
 
 describe("prepareEmbeddedAttemptSetup", () => {
   beforeEach(() => {
@@ -209,6 +236,38 @@ describe("prepareEmbeddedAttemptSetup", () => {
     } as unknown as EmbeddedRunAttemptParams);
 
     expect(resolveSandboxContext).toHaveBeenCalledWith(expect.objectContaining({ skillsSnapshot }));
+  });
+
+  it("keeps collection review in the Workshop workspace with read-write sandbox access", async () => {
+    const workspaceDir = tempDirs.make("openclaw-attempt-setup-collection-review-rw-");
+    resolveSandboxContext.mockResolvedValueOnce(sandboxContext("rw"));
+
+    const setup = await resolveAttemptWorkspaceSandbox({
+      agentId: "main",
+      config: { agents: { defaults: { sandbox: { mode: "all", workspaceAccess: "rw" } } } },
+      sessionId: "session-collection-review-rw",
+      sessionKey: "agent:main:skill-collection-review",
+      requireWritableSandbox: true,
+      workspaceDir,
+    });
+
+    expect(setup.effectiveWorkspace).toBe(workspaceDir);
+  });
+
+  it("fails closed before collection review enters a read-only sandbox workspace", async () => {
+    const workspaceDir = tempDirs.make("openclaw-attempt-setup-collection-review-ro-");
+    resolveSandboxContext.mockResolvedValueOnce(sandboxContext("ro"));
+
+    await expect(
+      resolveAttemptWorkspaceSandbox({
+        agentId: "main",
+        config: { agents: { defaults: { sandbox: { mode: "all", workspaceAccess: "ro" } } } },
+        sessionId: "session-collection-review-ro",
+        sessionKey: "agent:main:skill-collection-review",
+        requireWritableSandbox: true,
+        workspaceDir,
+      }),
+    ).rejects.toThrow("sandbox workspace is not read-write; collection review skipped");
   });
 
   it("reuses lifecycle metadata and the provider handle from the runtime plan", async () => {
