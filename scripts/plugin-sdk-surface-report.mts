@@ -342,7 +342,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: Gateway caller ownership for standalone browser routing.
       // -1: keep the provider API-key auth factory on provider-auth instead of duplicating it
       // through provider-entry.
-      4373,
+      // +1: canonical temporal context renderer for plugin-owned agent harnesses.
+      4374,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -458,7 +459,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: Gateway caller ownership for standalone browser routing.
       // -1: keep the provider API-key auth factory on provider-auth instead of duplicating it
       // through provider-entry.
-      2604,
+      // +1: canonical temporal context renderer for plugin-owned agent harnesses.
+      2605,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(

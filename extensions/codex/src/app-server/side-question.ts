@@ -151,6 +151,7 @@ import {
   CodexThreadPolicyHandoffError,
   refreshCodexThreadPolicy,
 } from "./thread-policy.js";
+import { buildCodexTemporalAdditionalContext } from "./turn-params.js";
 import { filterCodexVisionTools } from "./vision-tools.js";
 import {
   resolveCodexWebSearchPlan,
@@ -581,6 +582,8 @@ export async function runCodexAppServerSideQuestion(
             turnId,
             autoApproveMcpTools,
             projectedMcpServers,
+            getActiveMcpToolCall: (serverName) =>
+              nativeToolLifecycleProjector?.getActiveMcpToolCall(serverName),
             pluginAppPolicyContext: binding.pluginAppPolicyContext,
             signal: runAbortController.signal,
           });
@@ -854,6 +857,11 @@ export async function runCodexAppServerSideQuestion(
           {
             threadId: sideThreadId,
             input: [{ type: "text", text: params.question.trim(), text_elements: [] }],
+            additionalContext: buildCodexTemporalAdditionalContext(sideRunParams, {
+              sessionStatusAvailable: toolBridge.availableTools.some(
+                (tool) => tool.name === "session_status",
+              ),
+            }),
             ...(sandboxEnvironment
               ? {
                   cwd: sandboxEnvironment.cwd,

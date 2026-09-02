@@ -163,7 +163,8 @@ export async function prepareWorkspaceBuildGroup(
     providerDiscoveryProviderIds?: readonly string[];
     preferBuiltPluginArtifacts?: boolean;
     includeCredentialProviders?: boolean;
-    configuredHarnessRuntimes?: readonly string[];
+    getConfiguredHarnessRuntimes?: () => readonly string[];
+    basePluginIds?: readonly string[];
   } = {},
   loadInboundPluginRegistry?: PreparedInboundRegistryLoader,
   reusablePluginGeneration?: PreparedModelRuntimePluginGeneration,
@@ -204,7 +205,8 @@ export async function prepareWorkspaceBuildGroup(
     loadInboundPluginRegistry,
     preferBuiltPluginArtifacts,
     reusablePluginGeneration,
-    options.configuredHarnessRuntimes,
+    options.getConfiguredHarnessRuntimes,
+    options.basePluginIds,
   );
   const reuseRuntimeFacts =
     reusablePluginGeneration && runtimePluginRegistry === reusablePluginGeneration.pluginRegistry;
