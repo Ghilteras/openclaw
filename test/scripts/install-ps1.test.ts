@@ -1174,12 +1174,12 @@ try {
           throw new Error(`Missing PowerShell fixture ${name}`);
         }
         const invocation = `$ErrorActionPreference = 'Stop'; & ([scriptblock]::Create((Get-Content -LiteralPath ${toPowerShellSingleQuotedLiteral(fixture.scriptPath)} -Raw)))`;
-        const result = spawnSync(engine, ["-NoLogo", "-NoProfile", "-Command", invocation], {
+        const engineResult = spawnSync(engine, ["-NoLogo", "-NoProfile", "-Command", invocation], {
           encoding: "utf8",
         });
         batchedPowerShellResults.set(`${name}:${engine}`, {
-          ok: result.status === 0,
-          error: result.status === 0 ? "" : result.stdout + result.stderr,
+          ok: engineResult.status === 0,
+          error: engineResult.status === 0 ? "" : engineResult.stdout + engineResult.stderr,
         });
       }
     }
