@@ -114,6 +114,12 @@ file-tool root, and session root. It keeps distinct useful skills, rewrites
 weak ones, consolidates overlap, and drops junk or stale fragments.
 When the operator runs agents in a sandbox, the sandbox workspace for this turn
 is the agent's Workshop directory.
+The file tools are rooted at that directory. The review keeps the normal `exec`
+tool, but shell access follows the operator's cron exec-approval policy. With
+the default policy and no connected approval client, `exec` is denied
+immediately and the reviewer continues with file tools. Reviewed skill
+instructions cannot grant host access that the operator has not already granted
+to automations.
 Choosing `auto` intentionally authorizes those rewrites and drops without a
 second approval **for Workshop-owned paths only**; `propose` and `off` do not
 run collection review.
