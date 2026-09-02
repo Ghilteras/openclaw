@@ -1,6 +1,9 @@
 // Shared process-test harness: mock Gateway servers used by CLI exit-code proofs.
+import { createHash } from "node:crypto";
 import { once } from "node:events";
+import fs from "node:fs/promises";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
 import { isLoopbackIpAddress, isPrivateOrLoopbackIpAddress } from "@openclaw/net-policy/ip";
 import { expect } from "vitest";
 import { WebSocketServer } from "ws";
@@ -15,6 +18,10 @@ import {
   pickMatchingExternalInterfaceAddress,
   readNetworkInterfaces,
 } from "../infra/network-interfaces.js";
+import {
+  type CliProcessChildResult,
+  runCliProcessChild,
+} from "./cli-process-child.test-helpers.js";
 
 const activeServers = new Set<WebSocketServer>();
 
@@ -25,6 +32,84 @@ export const EMPTY_STABILITY_SNAPSHOT = {
   events: [],
   summary: { byType: {} },
 };
+
+export async function snapshotDirectoryContents(root: string): Promise<Record<string, string>> {
+  const snapshot: Record<string, string> = {};
+  const visit = async (directory: string): Promise<void> => {
+    for (const name of (await fs.readdir(directory)).toSorted()) {
+      const absolutePath = path.join(directory, name);
+      const relativePath = path.relative(root, absolutePath);
+      const stat = await fs.lstat(absolutePath);
+      if (stat.isDirectory()) {
+        snapshot[relativePath] = "directory";
+        await visit(absolutePath);
+      } else if (stat.isSymbolicLink()) {
+        snapshot[relativePath] = `symlink:${await fs.readlink(absolutePath)}`;
+      } else {
+        snapshot[relativePath] = `file:${createHash("sha256")
+          .update(await fs.readFile(absolutePath))
+          .digest("hex")}`;
+      }
+    }
+  };
+  await visit(root);
+  return snapshot;
+}
+
+export async function snapshotSharedStateArtifacts(
+  stateDir: string,
+): Promise<Record<string, string>> {
+  const sharedStateDir = path.join(stateDir, "state");
+  try {
+    return await snapshotDirectoryContents(sharedStateDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
+}
+
+export async function runIsolatedGatewayCli(params: {
+  args: string[];
+  root: string;
+  stateDir: string;
+  configPath: string;
+  env?: NodeJS.ProcessEnv;
+  onStdout?: (stdout: string) => void;
+}): Promise<CliProcessChildResult> {
+  return await runCliProcessChild({
+    nodeArgs: ["--import", "tsx", "src/entry.ts", ...params.args],
+    env: {
+      ...process.env,
+      HOME: params.root,
+      USERPROFILE: params.root,
+      // CI shard runners export NODE_COMPILE_CACHE; in a source checkout entry.ts
+      // then respawns a detached grandchild that shares this child's stdio pipes,
+      // so a SIGKILLed parent leaves an orphan holding them open. Keep these
+      // children single-process; entry.compile-cache owns that respawn contract.
+      NODE_DISABLE_COMPILE_CACHE: "1",
+      NODE_ENV: undefined,
+      NODE_OPTIONS: undefined,
+      OPENCLAW_CONFIG_PATH: params.configPath,
+      OPENCLAW_SKIP_CHANNELS: "1",
+      OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
+      OPENCLAW_GATEWAY_PASSWORD: undefined,
+      OPENCLAW_GATEWAY_TOKEN: undefined,
+      OPENCLAW_GATEWAY_URL: undefined,
+      OPENCLAW_HOME: params.root,
+      OPENCLAW_NO_RESPAWN: "1",
+      OPENCLAW_STATE_DIR: params.stateDir,
+      DISCORD_BOT_TOKEN: undefined,
+      TWILIO_ACCOUNT_SID: undefined,
+      TWILIO_AUTH_TOKEN: undefined,
+      TWILIO_FROM_NUMBER: undefined,
+      VITEST: undefined,
+      ...params.env,
+    },
+    onStdout: params.onStdout,
+  });
+}
 
 export async function startCronListGateway(token: string): Promise<{ url: string }> {
   const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
