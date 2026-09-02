@@ -247,7 +247,17 @@ async function openWorkboard(page: Parameters<typeof waitForControlUiRoute>[0], 
   await expect.poll(() => page.locator('[data-plugin-id="workboard"]').count()).toBe(0);
   await search.clear();
 
-  await page.locator('[data-plugin-id="workboard"]').waitFor();
+  const workboardRow = page.locator('[data-plugin-id="workboard"]');
+  await workboardRow.waitFor();
+  expect(await workboardRow.locator(".settings-status").count()).toBe(0);
+  const enabledSwitch = workboardRow.getByRole("switch");
+  expect(await enabledSwitch.count()).toBe(1);
+  expect(
+    await enabledSwitch.evaluate(
+      (element) => (element as HTMLElement & { checked: boolean }).checked,
+    ),
+  ).toBe(true);
+  await page.locator(".settings-page.oc-app-surface").waitFor();
   if (captureUiProof) {
     await page.screenshot({
       animations: "disabled",
@@ -255,7 +265,7 @@ async function openWorkboard(page: Parameters<typeof waitForControlUiRoute>[0], 
       path: path.join(proofDir, "01-installed-inventory.png"),
     });
   }
-  await page.locator('[data-plugin-id="workboard"]').click();
+  await workboardRow.click();
   await waitForControlUiRoute(page, {
     pathname: "/settings/plugins/workboard",
     routeId: "plugin-settings",
