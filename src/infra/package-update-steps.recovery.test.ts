@@ -562,7 +562,10 @@ describe("package update recovery safety", () => {
       });
 
       expect(result.afterVersion).toBe("1.0.0");
-      expect(result.recovery.packageRollbackVerified).toBe(false);
+      expect(result.recovery).toMatchObject({
+        serviceRestartSafe: false,
+        packageRollbackVerified: false,
+      });
       expect(result.failedStep?.stderrTail).toContain(
         "rollback verification failed: restored package tree does not match backup",
       );
@@ -626,7 +629,10 @@ describe("package update recovery safety", () => {
         });
 
         expect(result.afterVersion).toBe("1.0.0");
-        expect(result.recovery.packageRollbackVerified).toBe(false);
+        expect(result.recovery).toMatchObject({
+          serviceRestartSafe: false,
+          packageRollbackVerified: false,
+        });
         expect(result.failedStep?.stderrTail).toContain(
           "rollback verification failed: restored package tree does not match backup",
         );
@@ -687,7 +693,10 @@ describe("package update recovery safety", () => {
           });
 
           expect(result.afterVersion).toBe("1.0.0");
-          expect(result.recovery.packageRollbackVerified).toBe(false);
+          expect(result.recovery).toMatchObject({
+            serviceRestartSafe: false,
+            packageRollbackVerified: false,
+          });
           expect(result.failedStep?.stderrTail).toContain(
             "rollback verification failed: restored package tree does not match backup",
           );
@@ -745,7 +754,10 @@ describe("package update recovery safety", () => {
         });
 
         expect(result.afterVersion).toBe("1.0.0");
-        expect(result.recovery.packageRollbackVerified).toBe(true);
+        expect(result.recovery).toMatchObject({
+          serviceRestartSafe: false,
+          packageRollbackVerified: true,
+        });
         await expect(fs.readlink(danglingLink)).resolves.toBe(`${packageEntry}/child`);
       });
     },
