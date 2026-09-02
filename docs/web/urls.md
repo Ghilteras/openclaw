@@ -279,7 +279,7 @@ no route-specific URL parameters.
 | Skill Workshop      | `/skills/workshop`          | -                         | -                                                                 |
 | Skills              | `/skills`                   | -                         | -                                                                 |
 | Plugins             | `/plugins`                  | -                         | -                                                                 |
-| Plugin settings     | `/settings/plugins`         | -                         | `/settings/plugins/<pluginId>`                                    |
+| Plugin settings     | `/settings/plugins`         | -                         | `?tab=advanced`, `/settings/plugins/<pluginId>`                   |
 | Automations         | `/cron`                     | -                         | `?job=<jobId>`, `?job=<jobId>&run=<runId>`                        |
 | Tasks               | `/tasks`                    | -                         | -                                                                 |
 | Devices             | `/settings/devices`         | `/nodes`                  | Shared settings parameters below                                  |
