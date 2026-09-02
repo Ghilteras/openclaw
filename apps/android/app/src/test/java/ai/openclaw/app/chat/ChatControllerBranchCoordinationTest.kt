@@ -1076,6 +1076,7 @@ class ChatControllerBranchCoordinationTest {
 
     suspend fun admit(): ChatOutboxItem {
       assertTrue(controller.sendMessageAwaitAcceptance("retained input", "off", listOf(attachment)))
+      // Admission owns durability; a newer refresh may still own the visible snapshot.
       val admitted = outbox.load("gateway-a").single()
       awaitBranchProgress { controller.outboxItems.value.any { it.id == admitted.id } }
       return controller.outboxItems.value.single().also {
