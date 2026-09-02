@@ -180,7 +180,6 @@ it("starts routing an agent-scoped remembered session while the Gateway is offli
   });
   window.history.replaceState({}, "", "/");
   const runtime = bootstrapApplication({ sessionPathBuilderReady: Promise.resolve() });
-  vi.spyOn(runtime.context.gateway, "start").mockImplementation(() => undefined);
   const routerStart = vi.spyOn(runtime.router, "start").mockResolvedValue(undefined);
 
   try {
