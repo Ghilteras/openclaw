@@ -160,7 +160,6 @@ export async function runSqliteSessionsTranscriptsFlipProof(options: RunOptions 
           throw new Error(`expected built CLI entrypoint, got ${gatewayEntrypoint.join(" ")}`);
         }
         if (options.requireBuiltCli === true) {
-          // Only this provider is exercised; the full inventory can exceed the CLI log-tail bound.
           const inspection = await inst.cli(["plugins", "inspect", "openai", "--json"]);
           const plugin = asRecord(parseJsonObject(inspection.stdout)?.plugin);
           if (
@@ -169,7 +168,9 @@ export async function runSqliteSessionsTranscriptsFlipProof(options: RunOptions 
             plugin.origin !== "bundled" ||
             typeof plugin.source !== "string"
           ) {
-            throw new Error("built CLI could not inspect the bundled OpenAI artifact");
+            throw new Error(
+              `built CLI could not inspect the bundled OpenAI artifact (code=${String(inspection.code)} signal=${String(inspection.signal)})\n--- CLI stdout ---\n${tail(inspection.stdout, 6_000)}\n--- CLI stderr ---\n${tail(inspection.stderr, 6_000)}`,
+            );
           }
           bundledPlugins = [{ id: plugin.id, source: plugin.source }];
         }
