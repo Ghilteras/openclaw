@@ -18,6 +18,7 @@ import { createVitestWorkerRun } from "../../scripts/lib/vitest-worker-run.mts";
 import { resolveVitestSpawnParams, spawnWatchedVitestProcess } from "../../scripts/run-vitest.mts";
 import { createVitestProcessCompletion } from "../../scripts/vitest-process-group.mts";
 import { resolveRuntimeWorkerArgv } from "../../src/infra/runtime-worker-url.js";
+import { createBoundedChildOutput } from "../helpers/bounded-child-output.js";
 import { createDeferred, withTestTimeout } from "../helpers/promise.js";
 import { copyFsSafePackageFixture } from "./fs-safe-package.test-support.js";
 import {
@@ -1149,8 +1150,29 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
   it("keeps watch launches on live source across dependency edits", ({
     workerArtifacts,
     onTestFinished,
+    signal,
   }) =>
     workerArtifacts.fixtureLifetime.run(async () => {
+      const started = process.hrtime.bigint();
+      const phases = new Set<string>();
+      const receipt = (phase: string, detail?: string | number | null) => {
+        if (phases.has(phase) || phases.size >= 32) return;
+        phases.add(phase);
+        fs.writeSync(
+          2,
+          `[watch-phase] ${JSON.stringify({ phase, monotonicMs: Number(process.hrtime.bigint()) / 1e6, elapsedMs: Number(process.hrtime.bigint() - started) / 1e6, detail })}\n`,
+        );
+      };
+      // Direct stderr receipts survive Vitest console capture and use one monotonic origin.
+      const receiptSource = `
+        const phases = new Set();
+        const receipt = phase => {
+          if (phases.has(phase) || phases.size >= 8) return;
+          phases.add(phase);
+          fs.writeSync(2, '[watch-phase] '+JSON.stringify({phase,monotonicMs:Number(process.hrtime.bigint())/1e6,elapsedMs:Number(process.hrtime.bigint()-BigInt(${JSON.stringify(String(started))}))/1e6})+'\\n');
+        };
+      `;
+      receipt("outer-start");
       const directory = workerArtifacts.fixtureDirectory();
       const observed = path.join(directory, "watch-result.txt");
       const dependency = writeFixture(
@@ -1169,12 +1191,19 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
       import {runtimeProcessEntrypoints} from ${JSON.stringify(path.join(root, "src/infra/runtime-process-entrypoints.ts"))};
       import {tuiPtyRuntimeEntrypoints} from ${JSON.stringify(path.join(root, "src/tui/tui-pty-runtime-test-support.ts"))};
       import {resolveRuntimeWorkerUrl} from ${JSON.stringify(path.join(root, "src/infra/runtime-worker-url.ts"))};
-      it('uses live source',()=>{
+      ${receiptSource}
+      receipt(value+':collection-complete');
+      it('uses live source',({onTestFailed})=>{
+        receipt(value+':body-entry');
+        onTestFailed(()=>receipt(value+':test-failed'));
         expect(resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.sqliteReadOnly).pathname).toMatch(/\\.ts$/);
         for (const entry of Object.values(tuiPtyRuntimeEntrypoints)) expect(resolveRuntimeWorkerUrl(entry).pathname).toMatch(/\\.ts$/);
+        receipt(value+':exec-before');
         const actual=execFileSync(process.execPath,['--import','tsx',${JSON.stringify(dependency)}],{encoding:'utf8'}).trim();
+        receipt(value+':exec-returned');
         expect(actual).toBe(value);
         fs.writeFileSync(${JSON.stringify(observed)},actual);
+        receipt(value+':result-written');
       });
     `,
       );
@@ -1182,7 +1211,10 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
         directory,
         "vitest.config.mts",
         `
+      import fs from 'node:fs';
       import {sharedVitestConfig as shared} from ${JSON.stringify(pathToFileURL(path.join(root, "test/vitest/vitest.shared.config.ts")).href)};
+      ${receiptSource}
+      receipt('nested-config-evaluated');
       export default {plugins:shared.plugins,test:{include:[${JSON.stringify(convertPathToPattern(test))}],pool:'forks',maxWorkers:1}};
     `,
       );
@@ -1192,25 +1224,68 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
         env: process.env,
       });
       let output = "";
+      const diagnostics = createBoundedChildOutput(16 * 1024);
+      let dumpedDiagnostics = false;
+      const dumpDiagnostics = () => {
+        if (dumpedDiagnostics) return;
+        dumpedDiagnostics = true;
+        fs.writeSync(
+          2,
+          `[watch-diagnostics:tail]\n${diagnostics.text()}\n[/watch-diagnostics:tail]\n`,
+        );
+      };
+      const aborted = () => {
+        receipt("outer-abort");
+        dumpDiagnostics();
+      };
+      signal.addEventListener("abort", aborted, { once: true });
+      handle.child.once("spawn", () => receipt("native-spawn", handle.child.pid));
+      handle.child.once("exit", (code, childSignal) => receipt("native-exit", childSignal ?? code));
+      handle.child.once("close", (code, childSignal) =>
+        receipt("native-close", childSignal ?? code),
+      );
+      void handle.completion.then(
+        () => receipt("handle-complete"),
+        () => {
+          receipt("handle-rejected");
+          dumpDiagnostics();
+        },
+      );
       handle.child.stdout?.on("data", (chunk) => {
         output += String(chunk);
+        diagnostics.append(chunk);
       });
       handle.child.stderr?.on("data", (chunk) => {
         output += String(chunk);
+        diagnostics.append(chunk);
       });
       onTestFinished(async () => {
+        receipt("finished-sigterm");
         handle.child.kill("SIGTERM");
         await handle.completion;
+        receipt("finished-joined");
+        signal.removeEventListener("abort", aborted);
       });
       try {
+        receipt("first-wait");
         await waitForFixtureFile(observed, handle.completion, "first");
+        receipt("first-observed");
         const rerun = waitForFixtureFile(observed, handle.completion, "second");
+        receipt("dependency-edit-before");
         fs.writeFileSync(dependency, 'export const value: string = "second"; console.log(value);');
+        receipt("dependency-edit-after");
         await rerun;
+        receipt("second-observed");
         expect(output).not.toContain("[vitest-workers] prepared");
+      } catch (error) {
+        receipt("outer-failed");
+        dumpDiagnostics();
+        throw error;
       } finally {
+        receipt("finally-sigterm");
         handle.child.kill("SIGTERM");
         await handle.completion;
+        receipt("finally-joined");
       }
     }));
 
@@ -1253,6 +1328,13 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
           },
         );
         expect(policy.code, policy.stderr + policy.stdout).toBe(0);
+        const copyReceipt = (phase: string) => {
+          fs.writeSync(
+            2,
+            `[fixture-copy-phase] ${JSON.stringify({ phase, monotonicMs: Number(process.hrtime.bigint()) / 1e6 })}\n`,
+          );
+        };
+        copyReceipt("inputs-start");
         for (const filename of Object.keys(manifest.inputs)) {
           const target = path.join(fixture, path.relative(root, filename));
           fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -1266,15 +1348,18 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
             );
           }
         }
+        copyReceipt("inputs-done");
         // This is a synthetic source checkout. Its dist is valid old code, not an
         // invalid sentinel that could fail even if stale-artifact fallback regressed.
         fs.cpSync(path.join(initialDirectory, "dist"), path.join(fixture, "dist"), {
           recursive: true,
         });
+        copyReceipt("dist-done");
         const databasePath = path.join(fixture, "probe.sqlite");
         const database = new DatabaseSync(databasePath);
         database.exec("CREATE TABLE probe(value TEXT); INSERT INTO probe VALUES ('native work');");
         database.close();
+        copyReceipt("seed-done");
         const childArgs = ["--openclaw-sqlite-readonly-child", "async", databasePath];
         const stale = await node([
           path.join(fixture, "dist/infra/sqlite-readonly-location.worker.js"),
