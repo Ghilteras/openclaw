@@ -447,12 +447,12 @@ function prepareConfigForDisabledInstall(config: OpenClawConfig, pluginId: strin
   };
 }
 
-type PluginConfigEnablement =
+export type PluginConfigEnablement =
   | { mode: "ready" }
   | { mode: "missing" }
   | { mode: "invalid"; error: string };
 
-function resolvePluginConfigEnablement(params: {
+export function resolvePluginConfigEnablement(params: {
   config: OpenClawConfig;
   pluginId: string;
   manifest?: PluginManifestRecord;
