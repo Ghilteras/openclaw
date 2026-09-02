@@ -118,6 +118,41 @@ describe("update failure report", () => {
     await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it.each([
+    ["returns false", () => false],
+    [
+      "throws",
+      () => {
+        throw new Error("receipt database unavailable");
+      },
+    ],
+  ])("returns a created URL without retrying when receipt finalization %s", async (_, fail) => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-created-finalize-failure", result: failedUpdate() },
+      { stateDir },
+    );
+    const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
+    const createIssue = vi.fn(() => ({ ok: true as const, url: issueUrl }));
+    const finalizeReceipt = vi.fn(fail);
+
+    const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      finalizeReceipt,
+      stateDir,
+    });
+    const second = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      stateDir,
+    });
+
+    expect(first).toMatchObject({ status: "created", url: issueUrl });
+    expect(second).toMatchObject({ status: "duplicate" });
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(finalizeReceipt).toHaveBeenCalledOnce();
+    await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("keeps the event loop responsive while issue creation is pending", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(

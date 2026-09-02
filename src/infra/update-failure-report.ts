@@ -369,6 +369,7 @@ export async function submitUpdateFailureReport(
       issue: SanitizedGithubIssue,
     ) => GithubIssueCreateResult | Promise<GithubIssueCreateResult>;
     env?: NodeJS.ProcessEnv;
+    finalizeReceipt?: typeof finalizeUpdateFailureReportReceipt;
     hasCurrentAuthority?: () => boolean;
     stateDir?: string;
     validateCurrentAttempt?: () => boolean | Promise<boolean>;
@@ -401,7 +402,10 @@ export async function submitUpdateFailureReport(
     stateEnv,
   );
   if (!reservation.reserved) {
-    if (reservation.receipt?.status === "created") {
+    if (
+      reservation.receipt?.status === "created" ||
+      (reservation.receipt?.status === "pending" && saved.reportCreated)
+    ) {
       await discardSavedUpdateFailureReport(prepared, saved, true);
     }
     return resultFromExistingReceipt(reservation.receipt, prepared.savedReportPath);
@@ -414,8 +418,14 @@ export async function submitUpdateFailureReport(
       status: "created",
       url: created.url,
     };
-    if (!finalizeUpdateFailureReportReceipt(prepared.attemptId, receipt, stateEnv)) {
-      throw new Error("Update failure report reservation could not be finalized.");
+    try {
+      (options.finalizeReceipt ?? finalizeUpdateFailureReportReceipt)(
+        prepared.attemptId,
+        receipt,
+        stateEnv,
+      );
+    } catch {
+      // The external issue already exists; the pending reservation remains the no-retry fence.
     }
     await discardSavedUpdateFailureReport(prepared, saved, true);
     return { savedReportPath: prepared.savedReportPath, status: "created", url: created.url };
