@@ -115,9 +115,10 @@ suite.define(() => {
           timeout: 10_000,
         })
         .toBe(2);
-      await page.locator('[data-session-section="category:Recovered group"]').waitFor({
-        state: "visible",
-      });
+      await page.getByRole("button", { name: "Hidden Groups" }).click();
+      await page
+        .locator('[data-session-section="category:Recovered group"]')
+        .waitFor({ state: "visible" });
     } finally {
       await context.close();
     }
@@ -929,9 +930,13 @@ suite.define(() => {
       await captureUiProof(suite, page, "sidebar-session-groups-reordered.png");
 
       await page.reload();
+      await expect.poll(customGroupOrder).toEqual(["category:Alpha", "category:Beta"]);
+      const hiddenGroups = page.locator('[data-session-section="hidden-groups"]');
       await expect
-        .poll(customGroupOrder)
-        .toEqual(["category:Gamma", "category:Alpha", "category:Beta"]);
+        .poll(() => hiddenGroups.locator(".sidebar-session-group-count").textContent())
+        .toBe("1");
+      await hiddenGroups.getByRole("button", { name: "Hidden Groups" }).click();
+      await page.locator('[data-session-section="category:Gamma"]').waitFor({ state: "visible" });
       await expect
         .poll(() =>
           page
@@ -955,7 +960,7 @@ suite.define(() => {
     }
   });
 
-  it("keeps a new empty group visible before the first saved session", async () => {
+  it("keeps a new empty group available before the first saved session", async () => {
     const context = await suite.browser.newContext({
       locale: "en-US",
       serviceWorkers: "block",
@@ -973,12 +978,13 @@ suite.define(() => {
         "sessions.groups.put",
       ],
       sessionKey: "agent:main:main",
-      // Stored-but-empty catalog groups stay visible as sections/move targets.
+      // Stored-but-empty catalog groups remain available as sections/move targets.
       sessionGroups: ["First group"],
     });
 
     try {
       await page.goto(`${suite.server.baseUrl}chat`);
+      await page.getByRole("button", { name: "Hidden Groups" }).click();
       const firstGroup = page.locator('[data-session-section="category:First group"]');
       await firstGroup.waitFor({ state: "visible" });
 
@@ -999,7 +1005,7 @@ suite.define(() => {
     }
   });
 
-  it("keeps empty gateway groups compact for the selected agent", async () => {
+  it("collects another agent's empty gateway groups in Hidden Groups", async () => {
     const context = await suite.browser.newContext({
       locale: "en-US",
       serviceWorkers: "block",
@@ -1045,7 +1051,22 @@ suite.define(() => {
         )
         .toBe(true);
 
-      const emptyGroups = page.locator('[data-session-section^="category:"]');
+      const hiddenGroups = page.locator('[data-session-section="hidden-groups"]');
+      await hiddenGroups.waitFor({ state: "visible" });
+      const hiddenGroupsToggle = hiddenGroups.getByRole("button", {
+        name: "Hidden Groups",
+        exact: true,
+      });
+      await expect.poll(() => hiddenGroupsToggle.getAttribute("aria-expanded")).toBe("false");
+      await expect
+        .poll(() => hiddenGroups.locator(".sidebar-session-group-count").textContent())
+        .toBe("2");
+      await expect.poll(() => page.locator('[data-session-section^="category:"]').count()).toBe(0);
+      await captureUiProof(suite, page, "sidebar-empty-cross-agent-groups-collapsed.png");
+
+      await hiddenGroupsToggle.click();
+      await expect.poll(() => hiddenGroupsToggle.getAttribute("aria-expanded")).toBe("true");
+      const emptyGroups = hiddenGroups.locator('[data-session-section^="category:"]');
       await expect.poll(() => emptyGroups.count()).toBe(2);
 
       for (const name of ["Email intake", "Customer replies"]) {
@@ -1059,28 +1080,14 @@ suite.define(() => {
         await expect.poll(() => toggle.getAttribute("aria-expanded")).toBe("true");
       }
 
-      await expect.poll(() => emptyGroups.locator(".sidebar-session-empty-hint").count()).toBe(0);
+      await expect.poll(() => emptyGroups.locator(".sidebar-session-empty-hint").count()).toBe(2);
+      await expect
+        .poll(() => emptyGroups.locator(".sidebar-session-empty-hint").allTextContents())
+        .toEqual(["No sessions", "No sessions"]);
       await expect
         .poll(() => emptyGroups.locator(".sidebar-recent-sessions__list").count())
         .toBe(0);
-
-      const firstEmptyGroup = emptyGroups.first();
-      const groupHeight = () =>
-        firstEmptyGroup.evaluate((element) => element.getBoundingClientRect().height);
-      await expect.poll(groupHeight).toBeGreaterThan(0);
-      const expandedHeight = await groupHeight();
-      await captureUiProof(suite, page, "sidebar-empty-cross-agent-groups.png");
-
-      const toggle = firstEmptyGroup.locator(".sidebar-session-group-toggle");
-      await toggle.click();
-      await expect.poll(() => toggle.getAttribute("aria-expanded")).toBe("false");
-      await expect.poll(groupHeight).toBe(expandedHeight);
-      await expect
-        .poll(() => firstEmptyGroup.locator(".sidebar-session-empty-hint").count())
-        .toBe(0);
-      await expect
-        .poll(() => firstEmptyGroup.locator(".sidebar-recent-sessions__list").count())
-        .toBe(0);
+      await captureUiProof(suite, page, "sidebar-empty-cross-agent-groups-expanded.png");
     } finally {
       await context.close();
     }

@@ -308,7 +308,7 @@ The sidebar organizes everything around the agent. The identity row at the top i
 
 Session previews are hidden by default for compact, single-line rows. Enable **Show message preview** in the **Sessions** filter menu to restore routine status text and message previews. The browser remembers your choice. Errors and requests for attention remain visible with previews off.
 
-Enable **Hide empty groups** in the same menu to hide custom groups with no sessions in the current sidebar view. It is off by default, and the browser remembers your choice. Collapsed groups with sessions stay visible. Hidden groups keep their membership and order and remain available in **Move to group**; turn the setting off to use their headers as drag targets again.
+Custom groups with no sessions for the selected agent are collected under the collapsed **Hidden Groups** section. Expand it to start a session in an empty group or use that group's header as a drag target. Group membership and order remain gateway-wide; only the sidebar visibility is scoped to the selected agent.
 
 **Mark as unread** creates a reminder that remains unread while the current chat stays open, including while a run streams or completes. Leave and reopen the session, or choose **Mark as read**, to clear it.
 

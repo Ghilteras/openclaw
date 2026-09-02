@@ -37,6 +37,8 @@ type SidebarSessionListHost = SessionListHost & {
   loadMoreSidebarSessions(): Promise<void>;
 };
 
+const HIDDEN_SESSION_GROUPS_SECTION_ID = "hidden-groups";
+
 type SessionCatalogRenderSnapshot = {
   catalogs: readonly SessionCatalog[];
   basePath: string;
@@ -245,7 +247,11 @@ function renderSessionSection(params: {
                     (session) => renderSessionTree({ host, session }),
                   )}
                 </div>`
-              : nothing}
+              : group
+                ? html`<span class="sidebar-session-empty-hint"
+                    >${t("sessionsView.emptyGroup")}</span
+                  >`
+                : nothing}
             ${renderSessionPagination({ host, section })}
           `}
     </div>
@@ -400,6 +406,60 @@ function renderSessionCatalog(params: {
   `;
 }
 
+function renderHiddenSessionGroups(
+  host: SidebarSessionListHost,
+  sections: RenderableSessionSection[],
+) {
+  if (sections.length === 0) {
+    return nothing;
+  }
+  const collapsed =
+    !host.sessionOrganizer.expandedHiddenSessionGroupAgentIds.has(host.expandedAgentId()) &&
+    host.sessionOrganizer.draggingSessionKey === null;
+  const label = t("sessionsView.hiddenGroups");
+  return html`
+    <div
+      class="sidebar-recent-sessions__group sidebar-hidden-session-groups ${collapsed
+        ? "sidebar-recent-sessions__group--collapsed"
+        : ""}"
+      data-session-section=${HIDDEN_SESSION_GROUPS_SECTION_ID}
+    >
+      ${renderSidebarSessionSectionHeader({
+        sectionId: HIDDEN_SESSION_GROUPS_SECTION_ID,
+        draggable: false,
+        onStartDrag: () => undefined,
+        onFinishDrag: () => undefined,
+        content: html`
+          <button
+            type="button"
+            class="sidebar-session-group-toggle"
+            aria-expanded=${String(!collapsed)}
+            aria-label=${label}
+            @click=${() => host.sessionOrganizer.toggleHiddenSessionGroups(host.expandedAgentId())}
+          >
+            <span class="sidebar-session-group-toggle__lead" aria-hidden="true">
+              <span class="sidebar-session-group-toggle__icon"
+                >${collapsed ? icons.chevronRight : icons.chevronDown}</span
+              >
+            </span>
+            <span class="sidebar-recent-sessions__label-text hover-marquee">${label}</span>
+            <span class="sidebar-session-group-count">${sections.length}</span>
+          </button>
+        `,
+      })}
+      ${collapsed
+        ? nothing
+        : html`<div class="sidebar-hidden-session-groups__list">
+            ${repeat(
+              sections,
+              (section) => section.id,
+              (section) => renderSessionSection({ host, section }),
+            )}
+          </div>`}
+    </div>
+  `;
+}
+
 function renderSessionListBody(params: {
   host: SidebarSessionListHost;
   sections: RenderableSessionSection[];
@@ -411,9 +471,15 @@ function renderSessionListBody(params: {
   const catalogsBySectionId = new Map(
     params.catalogs.catalogs.map((catalog) => [`catalog:${catalog.id}`, catalog]),
   );
+  const hiddenGroups = params.sections.filter(
+    (section) => section.category && section.totalRowCount === 0,
+  );
+  const visibleSections = params.sections.filter(
+    (section) => !section.category || section.totalRowCount > 0,
+  );
   return html`
     ${repeat(
-      params.sections,
+      visibleSections,
       (section) => section.id,
       (section) => {
         if (section.id.startsWith("catalog:")) {
@@ -447,6 +513,7 @@ function renderSessionListBody(params: {
         return renderSessionSection({ host, section });
       },
     )}
+    ${renderHiddenSessionGroups(host, hiddenGroups)}
   `;
 }
 

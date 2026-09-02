@@ -23,7 +23,6 @@ import {
   storeSidebarSessionStatusFilter,
   storeCollapsedSessionSections,
   storeSidebarSessionsGrouping,
-  storeSidebarSessionsHideEmptyGroups,
   storeSidebarSessionsShowCron,
   storeSidebarSessionsShowPreview,
   storeSidebarSessionsShowSystem,
@@ -47,6 +46,7 @@ type SessionGroupDefaultsDialogOpener =
 /** Custom session groups, collapse state, and drag-and-drop assignment. */
 export class SessionOrganizerController {
   collapsedSessionSections = loadStoredCollapsedSessionSections();
+  readonly expandedHiddenSessionGroupAgentIds = new Set<string>();
   draggingSessionKey: string | null = null;
   draggingSidebarSection: string | null = null;
   sessionDropTarget: string | null = null;
@@ -575,6 +575,12 @@ export class SessionOrganizerController {
     this.saveCollapsedSessionSections(collapsed);
   }
 
+  toggleHiddenSessionGroups(agentId: string): void {
+    const operation = this.expandedHiddenSessionGroupAgentIds.has(agentId) ? "delete" : "add";
+    this.expandedHiddenSessionGroupAgentIds[operation](agentId);
+    this.host.requestUpdate();
+  }
+
   private async reorderSidebarSection(
     sourceSectionId: string,
     targetSectionId: string,
@@ -774,14 +780,5 @@ export class SessionOrganizerController {
       // Keep the in-memory preference when storage is unavailable.
     }
     void this.host.sessionData.refreshSidebarSessions();
-  }
-
-  setSessionsHideEmptyGroups(hide: boolean) {
-    this.host.sessionsHideEmptyGroups = hide;
-    try {
-      storeSidebarSessionsHideEmptyGroups(hide);
-    } catch {
-      // Keep the in-memory preference when storage is unavailable.
-    }
   }
 }

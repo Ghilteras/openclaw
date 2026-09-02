@@ -55,9 +55,12 @@ describe("AppSidebar categorized child sessions", () => {
     sidebar.querySelector<HTMLButtonElement>("[data-child-session-toggle]")?.click();
     await waitForFast(() => expect(harness.list).toHaveBeenCalledOnce());
 
-    const research = sidebar.querySelector('[data-session-section="category:Research"]');
     await waitForFast(() =>
-      expect(research?.querySelectorAll(`[data-session-key="${categorizedKey}"]`)).toHaveLength(1),
+      expect(
+        sidebar.querySelectorAll(
+          `[data-session-section="category:Research"] [data-session-key="${categorizedKey}"]`,
+        ),
+      ).toHaveLength(1),
     );
     expect(
       sidebar.querySelector(

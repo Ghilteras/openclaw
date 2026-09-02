@@ -80,9 +80,11 @@ export interface SessionListHost {
     SessionOrganizerController,
     | "draggingSidebarSection"
     | "draggingSessionKey"
+    | "expandedHiddenSessionGroupAgentIds"
     | "sessionDropTarget"
     | "sidebarSectionDropTarget"
     | "sessionListRemovalDrop"
+    | "toggleHiddenSessionGroups"
   >;
   readonly sidebarMenus: Pick<
     SidebarMenusController,
