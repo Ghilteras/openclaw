@@ -1258,7 +1258,7 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
         watcher.on('all',onEvent);watcher.once('ready',onReady);process.once('exit',dispose);
         snapshot('configured');
       },closeBundle(){disposeScope?.();}};
-      export default {plugins:[...shared.plugins,scopeObserver],test:{include:[${JSON.stringify(convertPathToPattern(test))}],pool:'forks',maxWorkers:1}};
+      export default {root:${JSON.stringify(directory)},plugins:[...shared.plugins,scopeObserver],test:{include:[${JSON.stringify(convertPathToPattern(test))}],pool:'forks',maxWorkers:1}};
     `,
       );
       const handle = spawnWatchedVitestProcess({
