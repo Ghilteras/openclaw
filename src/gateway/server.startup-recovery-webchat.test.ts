@@ -4,6 +4,7 @@ import { writeOpenAiResponsesText } from "../../test/helpers/openai-responses-ss
 import { createDeferred } from "../../test/helpers/promise.js";
 import { MAIN_SESSION_RECOVERY_WORK_ADMISSION_OWNER } from "../agents/main-session-recovery/main-session-recovery-admission.js";
 import { recoverRestartAbortedMainSessions } from "../agents/main-session-recovery/main-session-restart-recovery.js";
+import { getFollowupQueueDepth } from "../auto-reply/reply/queue.js";
 import { clearFollowupQueue, getExistingFollowupQueue } from "../auto-reply/reply/queue/state.js";
 import {
   appendTranscriptMessage,
@@ -183,27 +184,32 @@ it(
 
       const canceledRunId = "webchat-canceled-during-recovery";
       const survivorRunId = "webchat-survives-recovery";
-      await Promise.all(
-        [
-          [canceledRunId, canceledMessage],
-          [survivorRunId, survivorMessage],
-        ].map(async ([runId, message]) => {
-          await expect(
-            client.request("chat.send", {
-              sessionKey,
-              sessionId,
-              message,
-              deliver: false,
-              queueMode: "followup",
-              idempotencyKey: runId,
-            }),
-          ).resolves.toMatchObject({ runId, status: "started" });
-        }),
-      );
+      const sendQueuedTurn = async (runId: string, message: string) => {
+        await expect(
+          client.request("chat.send", {
+            sessionKey,
+            sessionId,
+            message,
+            deliver: false,
+            queueMode: "followup",
+            idempotencyKey: runId,
+          }),
+        ).resolves.toMatchObject({ runId, status: "started" });
+      };
+      // Hold the cancellation target in flight before queueing the survivor.
+      // A started ACK precedes insertion into the followup queue.
+      await sendQueuedTurn(canceledRunId, canceledMessage);
+      await vi.waitFor(() => {
+        const queue = getExistingFollowupQueue(sessionKey);
+        expect([...(queue?.inFlight ?? [])].map((item) => item.messageId)).toEqual([canceledRunId]);
+      });
+      await sendQueuedTurn(survivorRunId, survivorMessage);
+      // The queue retains its active item; only the survivor counts as pending.
       await vi.waitFor(() => {
         const queue = getExistingFollowupQueue(sessionKey);
         expect(queue?.inFlight).toHaveLength(1);
-        expect(queue?.items).toHaveLength(1);
+        expect(queue?.items.map((item) => item.messageId)).toEqual([canceledRunId, survivorRunId]);
+        expect(getFollowupQueueDepth(sessionKey)).toBe(1);
       });
       replacementOwner = await beginSessionWorkAdmission({
         scope: storePath,
