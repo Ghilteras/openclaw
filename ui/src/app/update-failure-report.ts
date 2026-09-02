@@ -9,7 +9,8 @@ registerUpdateActionsEnglish();
 type ReadyUpdateReport = Extract<UpdateReportResult, { status: "ready" }>;
 export type SubmittedUpdateReport = Exclude<UpdateReportResult, { status: "ready" }>;
 
-const UPDATE_REPORT_REQUEST_TIMEOUT_MS = 35_000;
+// Covers the 30s auth preflight plus 30s issue creation with RPC delivery margin.
+const UPDATE_REPORT_REQUEST_TIMEOUT_MS = 75_000;
 
 export async function reportUpdateFailure(params: {
   attemptId: string;

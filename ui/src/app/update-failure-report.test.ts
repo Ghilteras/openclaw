@@ -36,7 +36,7 @@ describe("Control UI update failure report consent", () => {
     expect(request).toHaveBeenCalledWith(
       "update.report",
       { action: "preview", attemptId: "handoff-failed" },
-      { timeoutMs: 35_000 },
+      { timeoutMs: 75_000 },
     );
   });
 
@@ -65,7 +65,7 @@ describe("Control UI update failure report consent", () => {
         attemptId: "handoff-failed",
         previewDigest: "a".repeat(64),
       },
-      { timeoutMs: 35_000 },
+      { timeoutMs: 75_000 },
     );
   });
 
