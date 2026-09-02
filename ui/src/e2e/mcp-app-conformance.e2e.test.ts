@@ -23,6 +23,7 @@ import type { OpenClawConfig } from "../../../src/config/types.openclaw.js";
 import { startGatewayServer } from "../../../src/gateway/server.js";
 import { getGatewayE2ePortBlock } from "../../../src/gateway/test-helpers.e2e.js";
 import { captureEnv, setTestEnvValue } from "../../../src/test-utils/env.js";
+import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import {
   canRunPlaywrightChromium,
   resolvePlaywrightChromiumExecutablePath,
@@ -56,12 +57,7 @@ const describeConformance = chromiumAvailable || !allowMissingChromium ? describ
 const authValue = "test";
 const sessionKey = "agent:main:mcp-app-conformance";
 const captureUiProof = process.env.OPENCLAW_CAPTURE_UI_PROOF === "1";
-const proofDir = path.resolve(
-  process.env.OPENCLAW_UI_E2E_ARTIFACT_DIR?.trim() || ".artifacts/control-ui-e2e",
-  "mcp-app-request-lifetime",
-);
-const proofOptions = { proofDir, captureUiProof };
-const recordHost = recordMcpAppHost.bind(undefined, proofOptions);
+let proofOptions: { proofDir: string; captureUiProof: boolean };
 
 let browser: Browser;
 let controlUiServer: ControlUiE2eServer;
@@ -83,12 +79,14 @@ const openContexts = new Set<BrowserContext>();
 
 describeConformance("MCP App Control UI and standalone host conformance", () => {
   beforeAll(async () => {
-    // Both tests share this artifact owner; never clear between their recordings.
-    await fs.rm(proofDir, { recursive: true, force: true });
-    await fs.mkdir(proofDir, { recursive: true });
     if (!chromiumAvailable) {
       throw new Error(`Playwright Chromium is unavailable at ${chromiumExecutablePath}`);
     }
+    // Both tests share retained reports even when screenshots and video are disabled.
+    proofOptions = {
+      proofDir: createControlUiE2eArtifactDir("mcp-app-request-lifetime"),
+      captureUiProof,
+    };
     envSnapshot = captureEnv([
       "HOME",
       "OPENCLAW_STATE_DIR",
@@ -251,23 +249,22 @@ describeConformance("MCP App Control UI and standalone host conformance", () => 
     clearRuntimeConfigSnapshot();
     envSnapshot?.restore();
     if (tempRoot) {
-      await fs.mkdir(proofDir, { recursive: true });
       await settle("archive fixture events", () =>
-        fs.copyFile(fixtureEventsPath, path.join(proofDir, "fixture-events.jsonl")),
+        fs.copyFile(fixtureEventsPath, path.join(proofOptions.proofDir, "fixture-events.jsonl")),
       );
       await settle("fixture temp root", () => fs.rm(tempRoot, { recursive: true, force: true }));
     }
-    await fs.writeFile(
-      path.join(proofDir, "cleanup.json"),
-      JSON.stringify({ failures, terminalAtMs: Date.now() }, null, 2),
-    );
+    if (proofOptions) {
+      await fs.writeFile(
+        path.join(proofOptions.proofDir, "cleanup.json"),
+        JSON.stringify({ failures, terminalAtMs: Date.now() }, null, 2),
+      );
+    }
     expect(failures).toEqual([]);
   }, 120_000);
 
   it("drives the authenticated Control UI and ticketed standalone bridges", async () => {
-    if (captureUiProof) {
-      await fs.mkdir(proofDir, { recursive: true });
-    }
+    const { proofDir } = proofOptions;
     const teardownProof = createMcpAppTeardownRecorder(proofDir, fixtureEventsPath);
     const controlContext = await openMcpAppProofContext(browser, openContexts, proofOptions);
     const controlPage = await controlContext.newPage();
@@ -536,7 +533,8 @@ describeConformance("MCP App Control UI and standalone host conformance", () => 
   }, 90_000);
 
   it("preserves composed operations and propagates caller cancellation through real transports", async () => {
-    await fs.mkdir(proofDir, { recursive: true });
+    const { proofDir } = proofOptions;
+    const recordHost = recordMcpAppHost.bind(undefined, proofOptions);
     await fs.writeFile(
       path.join(proofDir, "runtime.json"),
       JSON.stringify(

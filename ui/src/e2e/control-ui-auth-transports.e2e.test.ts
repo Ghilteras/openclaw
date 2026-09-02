@@ -1,6 +1,6 @@
 // Control UI tests prove trusted-proxy and browser-origin auth through real transports.
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -17,6 +17,7 @@ import {
   type OpenClawTestState,
 } from "../../../src/test-utils/openclaw-test-state.js";
 import type { ApplicationRuntime } from "../app/bootstrap.ts";
+import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import {
   canRunPlaywrightChromium,
   controlUiE2eWaitTimeoutMs,
@@ -30,11 +31,7 @@ const chromiumAvailable = canRunPlaywrightChromium(chromiumExecutablePath);
 const allowMissingChromium = process.env.OPENCLAW_UI_E2E_ALLOW_MISSING_CHROMIUM === "1";
 const describeControlUiE2e = chromiumAvailable || !allowMissingChromium ? describe : describe.skip;
 const captureUiProofEnabled = process.env.OPENCLAW_CAPTURE_UI_PROOF === "1";
-const artifactDir = path.resolve(
-  process.cwd(),
-  process.env.OPENCLAW_UI_E2E_ARTIFACT_DIR?.trim() ||
-    ".artifacts/control-ui-e2e/control-ui-auth-transports",
-);
+let artifactDir: string;
 const viewport = { height: 900, width: 1280 };
 const trustedProxyUser = "qa-operator";
 const configProofIdentifier = "9223372036854775807";
@@ -494,7 +491,6 @@ async function createBrowserPage(
   errors: string[];
   page: Page;
 }> {
-  await mkdir(artifactDir, { recursive: true });
   const context = await browser.newContext({
     locale: "en-US",
     recordVideo: captureUiProofEnabled ? { dir: artifactDir, size: viewport } : undefined,
@@ -702,7 +698,11 @@ describeControlUiE2e("Control UI real auth transports E2E", () => {
         `Playwright Chromium is not installed or cannot start at ${chromiumExecutablePath}.`,
       );
     }
-    await mkdir(artifactDir, { recursive: true });
+    artifactDir = createControlUiE2eArtifactDir(
+      "control-ui-auth-transports",
+      process.env.OPENCLAW_UI_E2E_ARTIFACT_DIR?.trim() ||
+        ".artifacts/control-ui-e2e/control-ui-auth-transports",
+    );
     allowedUi = await startControlUiE2eServer();
     // A lightweight proxy supplies the distinct rejected Origin without starting
     // a second Vite compiler in the already resource-intensive browser shard.
@@ -733,11 +733,13 @@ describeControlUiE2e("Control UI real auth transports E2E", () => {
       gatewayPortClosed: gateway ? await isPortClosed("127.0.0.1", gateway.port) : true,
       proxyPortClosed: proxy ? await isPortClosed("127.0.0.1", proxy.port) : true,
     };
-    await writeFile(
-      path.join(artifactDir, "cleanup-summary.json"),
-      `${JSON.stringify(cleanup, null, 2)}\n`,
-      "utf8",
-    );
+    if (artifactDir) {
+      await writeFile(
+        path.join(artifactDir, "cleanup-summary.json"),
+        `${JSON.stringify(cleanup, null, 2)}\n`,
+        "utf8",
+      );
+    }
     expect(cleanup).toEqual({
       gatewayPortClosed: true,
       proxyPortClosed: true,
