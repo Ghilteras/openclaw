@@ -625,6 +625,8 @@ export type InternalSessionEntryCore = SessionEntryCore & {
     workspace?: string;
     name?: string;
     baseRef?: string;
+    /** Current requests fail closed; unmarked pre-validation rows may recover to the default. */
+    baseRefPolicy?: "strict";
     titleSource: string;
   };
   /** Suppresses repeated byte-triggered compaction after an oversized successor was observed. */

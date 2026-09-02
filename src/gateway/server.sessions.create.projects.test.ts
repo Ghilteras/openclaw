@@ -119,7 +119,9 @@ test.each([
           message: "Inspect the remote project",
           ...(attachments ? { attachments } : {}),
           projectGitUrl: "git@github.com:OpenClaw/OpenClaw.git",
-          ...(worktree ? { worktree: true, worktreeName: "remote-startup" } : {}),
+          ...(worktree
+            ? { worktree: true, worktreeName: "remote-startup", worktreeBaseRef: "main" }
+            : {}),
         },
         { ...controlUiClient, context },
       );
@@ -138,6 +140,7 @@ test.each([
       expect(loadSessionEntry({ agentId: "main", sessionKey: key, storePath })).toMatchObject({
         sessionId,
         pendingProjectGitUrl: "https://github.com/openclaw/openclaw.git",
+        ...(worktree ? { pendingWorktree: { baseRefPolicy: "strict" } } : {}),
       });
       await vi.waitFor(() => expect(projectCloneMocks.materialize).toHaveBeenCalledOnce());
       expect(projectCloneMocks.materialize).toHaveBeenCalledWith(
@@ -514,6 +517,7 @@ test.each([false, true])(
           agentId: "main",
           message: "Start during setup",
           worktree: true,
+          worktreeBaseRef: "main",
           label: "Concurrent setup",
         },
         options,
@@ -526,7 +530,7 @@ test.each([false, true])(
       expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
       expect(
         loadSessionEntry({ agentId: "main", sessionKey: key, storePath })?.pendingWorktree,
-      ).toBeDefined();
+      ).toMatchObject({ baseRef: "main", baseRefPolicy: "strict" });
       const sent = await directSessionReq(
         "chat.send",
         {

@@ -4,6 +4,10 @@ import {
   errorShape,
   type ErrorShape,
 } from "../../../packages/gateway-protocol/src/index.js";
+import {
+  InvalidWorktreeBaseRefError,
+  resolveWorktreeBase,
+} from "../../agents/worktrees/base-ref.js";
 import { loadSessionEntry, patchSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { assertAgentRunLifecycleGenerationCurrent } from "../../infra/agent-events.js";
 import { emitAgentRunStatusEvent } from "../../infra/agent-run-status-events.js";
@@ -190,12 +194,28 @@ export async function prepareSessionWorkspace(params: {
       sessionRoot: root.value.sessionRoot,
     };
     if (pending) {
+      let baseRef = pending.baseRef;
+      if (baseRef && pending.baseRefPolicy !== "strict") {
+        try {
+          await resolveWorktreeBase(directory, baseRef, signal);
+        } catch (error) {
+          if (!(error instanceof InvalidWorktreeBaseRefError)) {
+            throw error;
+          }
+          // Older builds persisted unchecked refs before starting Git work.
+          // Resume those sessions from the normal default instead of trapping every retry.
+          context.logGateway.warn(
+            "discarded invalid saved worktree base ref; using repository default",
+          );
+          baseRef = undefined;
+        }
+      }
       // Retries inherit workspace intent, not a previous caller's setup authority.
       const result = await prepareSessionWorktree({
         target: { ...target, key: sessionKey, entry: saved },
         workspace: directory,
         name: pending.name,
-        baseRef: pending.baseRef,
+        baseRef,
         label: title ?? resolveExplicitSessionName(saved) ?? pending.titleSource,
         runSetupScript: client?.connect?.scopes?.includes(ADMIN_SCOPE) === true,
         signal,
