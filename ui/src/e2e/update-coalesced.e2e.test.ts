@@ -162,7 +162,10 @@ suite.define(() => {
 
         expect(await gateway.getRequests("update.run")).toHaveLength(1);
         expect(await gateway.getRequests("openclaw.chat")).toHaveLength(0);
+        // Without Ask OpenClaw, recovery navigates to Updates and retires the old Inbox.
+        await page.waitForURL("**/settings/updates");
         await dialog.getByRole("button", { name: "Close", exact: true }).click();
+        await page.locator("openclaw-config-page").getByText("Updates", { exact: true }).waitFor();
         await page.locator(".sidebar-issues-button").click();
         const updateIssue = page.locator(
           'openclaw-sidebar-update-card[data-attention-kind="updateAvailable"]',

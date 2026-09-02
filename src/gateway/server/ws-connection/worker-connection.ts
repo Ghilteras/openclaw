@@ -382,7 +382,8 @@ export function attachWorkerWsMessageHandler(params: WorkerWsMessageHandlerParam
   let pendingFrames = 0;
   let pendingBytes = 0;
   function onMessage(data: RawData) {
-    if (disposed) {
+    // Drain already-received frames without admitting new work from an open socket.
+    if (disposed || params.connectionWork.isClosing) {
       return;
     }
     const frameBytes = rawDataByteLength(data);
