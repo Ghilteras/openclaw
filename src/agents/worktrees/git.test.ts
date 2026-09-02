@@ -44,9 +44,10 @@ describe("Git ref mutation ownership", () => {
     return root;
   }
 
-  function holdSnapshotDeletion(failure?: Error) {
+  function holdSnapshotDeletion(failure?: Error, discoverySignal?: AbortSignal) {
     const started = createDeferred();
     const release = createDeferred();
+    const discovered = createDeferred<SpawnResult>();
     const mutations: Array<{ cwd: string; args: string[] }> = [];
     const run = processExec.runCommandWithTimeout;
     let held = false;
@@ -63,10 +64,40 @@ describe("Git ref mutation ownership", () => {
           }
         }
       }
-      return await run(argv, options);
+      const result = await run(argv, options);
+      if (
+        discoverySignal &&
+        typeof options !== "number" &&
+        options.signal === discoverySignal &&
+        args[0] === "rev-parse" &&
+        args[1] === "--git-common-dir"
+      ) {
+        discovered.resolve(result);
+      }
+      return result;
     });
-    return { started, release, mutations };
+    return { started, release, discovered, mutations };
   }
+
+  it("rejects cancelled discovery with exit code zero without deleting the requested ref", async () => {
+    const root = await repository();
+    const commandSpy = vi.spyOn(processExec, "runCommandWithTimeout").mockResolvedValueOnce({
+      stdout: ".git\n",
+      stderr: "",
+      code: 0,
+      signal: null,
+      termination: "signal",
+      killed: false,
+    });
+
+    await expect(requireGit(root, ["update-ref", "-d", queuedRef])).rejects.toThrow(
+      `git update-ref -d ${queuedRef} failed (terminated):\n.git`,
+    );
+    expect(commandSpy.mock.calls.map(([argv]) => argv.slice(3))).toEqual([
+      ["rev-parse", "--git-common-dir"],
+    ]);
+    expect(await requireGit(root, ["show-ref", "--verify", queuedRef])).toContain(queuedRef);
+  });
 
   it("serializes snapshot and branch deletes across checkout aliases without blocking other repositories or reads", async () => {
     const root = await repository();
@@ -104,18 +135,24 @@ describe("Git ref mutation ownership", () => {
     const root = await repository();
     await requireGit(root, ["branch", "kept", "HEAD"]);
     const failure = new Error("Git executor unavailable");
-    const held = holdSnapshotDeletion(failure);
+    const controller = new AbortController();
+    const held = holdSnapshotDeletion(failure, controller.signal);
     const rejected = expect(requireGit(root, ["update-ref", "-d", snapshotRef])).rejects.toBe(
       failure,
     );
     const pending: Promise<unknown>[] = [rejected];
-    const controller = new AbortController();
     let cancelled: Promise<Awaited<ReturnType<typeof runGit>>> | undefined;
     try {
       await held.started.promise;
       cancelled = runGit(root, ["branch", "-D", "kept"], { signal: controller.signal });
       pending.push(cancelled, requireGit(root, ["update-ref", "-d", queuedRef]));
-      await requireGit(root, ["show-ref", "--verify", "refs/heads/kept"]);
+      // Abort only after this candidate's real discovery settles; a separate read
+      // can finish first and accidentally cancel discovery instead of the writer.
+      await expect(held.discovered.promise).resolves.toMatchObject({
+        code: 0,
+        termination: "exit",
+      });
+      expect(held.mutations).toEqual([{ cwd: root, args: ["update-ref", "-d", snapshotRef] }]);
       controller.abort();
     } finally {
       held.release.resolve();

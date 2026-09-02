@@ -85,7 +85,7 @@ export async function requireGit(
   } = {},
 ): Promise<string> {
   const result = await runGit(cwd, args, options);
-  if (result.code !== 0) {
+  if (result.termination !== "exit" || result.code !== 0) {
     throw commandError(`git ${args.join(" ")}`, result);
   }
   return result.stdout.trim();

@@ -76,7 +76,7 @@ export async function requireGitCommandRaw(
   options: Parameters<typeof requireGitCommand>[2] = {},
 ): Promise<string> {
   const result = await executeGitCommand(cwd, args, options);
-  if (result.code !== 0) {
+  if (result.termination !== "exit" || result.code !== 0) {
     throw createGitCommandError(`git ${args.join(" ")}`, result);
   }
   return result.stdout;
