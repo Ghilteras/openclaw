@@ -895,6 +895,7 @@ enum class GatewayMethod(
   SessionsGithubStatus("sessions.github.status"),
   SessionsGithubConfirm("sessions.github.confirm"),
   UpdateReport("update.report"),
+  SessionsTitlePrepare("sessions.title.prepare"),
 }
 
 enum class GatewayEvent(
