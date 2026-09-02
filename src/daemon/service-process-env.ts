@@ -54,6 +54,8 @@ const SERVICE_MANAGER_ENV_KEYS = new Set([
   "PROGRAMW6432",
   "USERNAME",
   "USERDOMAIN",
+  // PowerShell reads this caller-selected module cache during child startup.
+  "PSMODULEANALYSISCACHEPATH",
 ]);
 
 /** Project native control children only; service definitions and payloads retain their full env. */

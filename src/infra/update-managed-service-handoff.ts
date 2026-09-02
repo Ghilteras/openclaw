@@ -44,6 +44,7 @@ import {
   stopManagedTriageScope,
   type ManagedHandoffLease,
 } from "./update-managed-service-handoff-lease.js";
+import { stageManagedHandoffRuntime } from "./update-managed-service-handoff-runtime.js";
 import { HANDOFF_SCRIPT } from "./update-managed-service-handoff-script.js";
 import type { UpdateRestartSentinelMeta } from "./update-restart-sentinel-payload.js";
 import { readCurrentGitUpdateRecovery } from "./update-runner-git-recovery.js";
@@ -447,6 +448,7 @@ async function spawnManagedServiceUpdateHandoff(
     owner.exited = true;
   };
   try {
+    helperParams.sensitivePaths.push(...stageManagedHandoffRuntime(dir));
     await fs.writeFile(scriptPath, `${HANDOFF_SCRIPT}\n`, { mode: 0o700 });
     await fs.writeFile(paramsPath, `${JSON.stringify(helperParams, null, 2)}\n`, { mode: 0o600 });
     await fs.writeFile(metaPath, `${JSON.stringify(metaFile, null, 2)}\n`, { mode: 0o600 });

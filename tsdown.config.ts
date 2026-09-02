@@ -33,6 +33,10 @@ import {
   createWorkerDeployBuildPlugin,
   WORKER_DEPLOY_OPTIONAL_NATIVE_MODULE_ID,
 } from "./scripts/lib/worker-deploy-build-plugin.mts";
+import {
+  MANAGED_HANDOFF_RUNTIME_DIST,
+  MANAGED_HANDOFF_RUNTIME_FILES,
+} from "./src/infra/update-managed-service-handoff-runtime-assets.ts";
 
 type InputOptionsFactory = Extract<NonNullable<UserConfig["inputOptions"]>, Function>;
 type InputOptionsArg = InputOptionsFactory extends (
@@ -807,6 +811,11 @@ const configs = [
       // and bundled hooks in one graph so runtime singletons are emitted once.
       entry: unifiedDistEntries,
       deps: unifiedDeps,
+      copy: ({ cwd, outDir }) =>
+        MANAGED_HANDOFF_RUNTIME_FILES.map((file) => ({
+          from: path.join(cwd, file),
+          to: path.join(outDir, MANAGED_HANDOFF_RUNTIME_DIST, path.dirname(file)),
+        })),
       plugins: [createClaudeAgentSdkAssetPlugin(), createStateSchemaInlinePlugin()],
     },
     false,

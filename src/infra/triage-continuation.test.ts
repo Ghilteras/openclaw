@@ -262,6 +262,7 @@ unix.each([
   "foreground-simultaneous",
   "unsupervised-startup",
   "failed-but-drained",
+  "dead-legacy",
 ] as const)(
   "admits one family and leaves the exact winner unchanged: %s",
   async (order) => {
@@ -274,11 +275,34 @@ unix.each([
       order === "foreground-pair" ||
       order === "foreground-simultaneous" ||
       order === "unsupervised-startup" ||
-      order === "failed-but-drained"
+      order === "failed-but-drained" ||
+      order === "dead-legacy"
     ) {
       root = await createRoot();
       await prepare(root);
       cleanups.push(() => rescue(root));
+      if (order === "dead-legacy") {
+        const store = createManagedHandoffLeaseStore();
+        const reserved = store.acquire(root, "legacy-fixture", { kind: "update" });
+        expect(reserved.kind).toBe("acquired");
+        const child = spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+          stdio: ["pipe", "ignore", "ignore"],
+        });
+        const exited = new Promise((resolve) => {
+          child.once("exit", resolve);
+        });
+        const identity = store.processIdentity(child.pid);
+        child.stdin.end();
+        await exited;
+        const db = new DatabaseSync(resolveManagedUpdateLeaseDatabasePath());
+        try {
+          db.prepare(
+            "UPDATE managed_update_handoffs SET payload_json = ? WHERE install_root = ?",
+          ).run(JSON.stringify({ version: 1, ...identity }), root);
+        } finally {
+          db.close();
+        }
+      }
       first = foreground(root, firstLabel, "update", order === "foreground-simultaneous");
       if (order === "foreground-simultaneous") {
         simultaneous = foreground(root, "other", "update", true);

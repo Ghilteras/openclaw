@@ -2,7 +2,11 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  MANAGED_HANDOFF_RUNTIME_DIST,
+  MANAGED_HANDOFF_RUNTIME_FILES,
+} from "../../src/infra/update-managed-service-handoff-runtime-assets.ts";
 import { createStateSchemaInlinePlugin } from "./state-schema-inline-plugin.mts";
 import {
   hashVitestWorkerArtifact,
@@ -10,7 +14,10 @@ import {
   vitestWorkerDeclarationEntries,
   type VitestWorkerManifest,
 } from "./vitest-worker-artifacts.mts";
-import { vitestWorkerBuildEntries } from "./vitest-worker-build-entries.mts";
+import {
+  vitestMaintenanceBuildEntries,
+  vitestWorkerBuildEntries,
+} from "./vitest-worker-build-entries.mts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -50,15 +57,19 @@ async function compileVitestWorkerArtifacts(directory: string): Promise<void> {
     "scripts/lib/vitest-worker-build-entries.mts",
     "scripts/lib/state-schema-inline-plugin.mts",
     "scripts/lib/vitest-cli-mode.mts",
+    "src/infra/update-managed-service-handoff-runtime-assets.ts",
+    ...MANAGED_HANDOFF_RUNTIME_FILES,
   ]) {
     recordInput(path.join(root, name));
   }
   const entry = {
     ...vitestWorkerBuildEntries,
     ...vitestWorkerDeclarationEntries,
+    ...vitestMaintenanceBuildEntries,
   };
   const schemaPlugin = createStateSchemaInlinePlugin(root);
   const outDir = path.join(directory, "dist");
+  const serviceUrl = pathToFileURL(path.join(outDir, "triage-maintenance/service.js")).href;
   await build({
     config: false,
     cwd: root,
@@ -70,6 +81,11 @@ async function compileVitestWorkerArtifacts(directory: string): Promise<void> {
     dts: false,
     envPrefix: [],
     clean: false,
+    copy: ({ cwd, outDir: copyOutDir }) =>
+      MANAGED_HANDOFF_RUNTIME_FILES.map((file) => ({
+        from: path.join(cwd, file),
+        to: path.join(copyOutDir, MANAGED_HANDOFF_RUNTIME_DIST, path.dirname(file)),
+      })),
     outExtensions: () => ({ js: ".js" }),
     deps: {
       // Root runtime dependencies stay external; bundled workspace code owns its private deps.
@@ -80,6 +96,22 @@ async function compileVitestWorkerArtifacts(directory: string): Promise<void> {
     },
     logLevel: "warn",
     plugins: [
+      {
+        name: "openclaw:maintenance-service-boundary",
+        resolveId(id, importer) {
+          // Native mocks bind this generation's URL, not bundled local functions.
+          // All real consumers keep the same service edge in the shared graph.
+          if (
+            importer &&
+            id.startsWith(".") &&
+            path.resolve(path.dirname(importer), id).replace(/\.js$/u, ".ts") ===
+              vitestMaintenanceBuildEntries["triage-maintenance/service"]
+          ) {
+            return { id: serviceUrl, external: "absolute" };
+          }
+          return null;
+        },
+      },
       {
         name: "openclaw:worker-build-inputs",
         load(id) {
@@ -121,6 +153,16 @@ async function compileVitestWorkerArtifacts(directory: string): Promise<void> {
       },
     ],
   });
+  // tsdown copies after generateBundle. Bind those bytes to the pre-build source
+  // snapshot before they join the invocation's existing verified output set.
+  for (const file of MANAGED_HANDOFF_RUNTIME_FILES) {
+    const output = path.posix.join(MANAGED_HANDOFF_RUNTIME_DIST, file);
+    const hash = hashVitestWorkerArtifact(fs.readFileSync(path.join(outDir, output)));
+    if (hash !== inputs[path.join(root, file)]) {
+      throw new Error(`Copied handoff runtime changed during preparation: ${file}`);
+    }
+    outputs[output] = hash;
+  }
   for (const name of Object.keys(entry)) {
     fs.accessSync(path.join(directory, "dist", `${name}.js`));
   }

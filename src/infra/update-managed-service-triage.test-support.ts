@@ -6,10 +6,13 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 import { resolveServiceManagerEnv } from "../daemon/service-process-env.js";
+import { buildCliRespawnPlan } from "../entry.respawn.js";
 import { getFileLockProcessStartTime, isPidAlive } from "../shared/pid-alive.js";
 import { resolveRuntimeWorkerUrl } from "./runtime-worker-url.js";
+import { setSqliteBusyTimeout } from "./sqlite-busy-timeout.js";
 import { triageTestRuntimeEntrypoints } from "./triage-runtime.test-support.js";
 import { resolveManagedUpdateLeaseDatabasePath } from "./update-managed-service-handoff-lease.js";
+import { stageManagedHandoffRuntime } from "./update-managed-service-handoff-runtime.js";
 import { HANDOFF_SCRIPT } from "./update-managed-service-handoff-script.js";
 import { writeTriageMaintenanceProbe } from "./update-managed-service-triage-maintenance.test-support.js";
 
@@ -28,6 +31,14 @@ export async function createTriageBoundary(
   switchRoot?: true | string,
 ) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "tb-")));
+  let runtimeFiles: string[];
+  try {
+    // No actor exists yet if the package's fallible source closure cannot be staged.
+    runtimeFiles = stageManagedHandoffRuntime(root);
+  } catch (error) {
+    await fs.rm(root, { recursive: true, force: true });
+    throw error;
+  }
   const installRoot = switchRoot ? path.join(root, "package") : root;
   const candidateRoot = switchRoot === true ? path.join(root, "checkout") : switchRoot || root;
   await fs.mkdir(installRoot, { recursive: true });
@@ -71,13 +82,22 @@ const scopeFile = ${JSON.stringify(scopeFile)};
 const primaryFile = ${JSON.stringify(primaryFile)};
 const event = (kind, data = {}) => fs.appendFileSync(${JSON.stringify(events)}, JSON.stringify({kind, pid:process.pid, handoff:process.env.OPENCLAW_UPDATE_RUN_HANDOFF ?? null, sentinel:process.env.OPENCLAW_CONTROL_PLANE_UPDATE_SENTINEL_META ?? null, ...data})+'\\n');
 `;
+  // HOME does not fence macOS's gui/UID namespace if a service mock misses.
+  await fs.writeFile(
+    path.join(bin, "launchctl"),
+    `#!${process.execPath}\n` +
+      common +
+      "event('unexpected-native', {command:'launchctl'}); process.exitCode=97;\n",
+    { mode: 0o700 },
+  );
   const preload = path.join(root, "placement.cjs");
   await fs.writeFile(
     preload,
     common +
       `
 const read = fs.readFileSync;
-const native = /systemctl$|systemd-run$/.test(process.argv[1] || '');
+const native = /systemctl$|systemd-run$|launchctl$/.test(process.argv[1] || '');
+if (/maintenance.mjs$/.test(process.argv[1] || '')) event('maintenance-phase', {phase:'preload',ppid:process.ppid,sequence:0,elapsedMs:0});
 if (!native) fs.writeFileSync(root + '/members/' + process.pid, String(process.pid));
 fs.readFileSync = function(file, ...args) {
   if (typeof file === 'string' && /^\\/proc\\/(self|[0-9]+)\\/cgroup$/.test(file)) {
@@ -164,7 +184,12 @@ const admission=await acceptTriageContinuation();
 if (!admission) throw new Error('No live triage admission');
 event('fixer', {failure:admission.failure});
 if (${Boolean(maintenance)}) {
-  const child=spawn(process.execPath,['--import',${JSON.stringify(path.resolve("scripts/tsx.mjs"))},'--experimental-test-module-mocks',${JSON.stringify(maintenanceProbe)},${JSON.stringify(maintenance ?? "active")}],{stdio:'inherit'});
+  const started=performance.now(); let sequence=0;
+  const phase=(phase,data={})=>event('maintenance-phase',{phase,ppid:process.ppid,sequence:++sequence,elapsedMs:performance.now()-started,...data});
+  phase('spawn-begin');
+  const child=spawn(process.execPath,['--experimental-test-module-mocks',${JSON.stringify(maintenanceProbe)},${JSON.stringify(maintenance ?? "active")}],{stdio:'inherit'});
+  child.once('spawn',()=>phase('spawn',{child:child.pid}));
+  child.once('error',error=>phase('spawn-error',{error:String(error)}));
   const exit=await new Promise(resolve=>child.once('exit',(code,signal)=>resolve({code,signal})));
   event('maintenance-exit',exit);
 }
@@ -205,43 +230,7 @@ process.stdout.write(JSON.stringify({status:'error',reason:'original failure'})+
   const paramsFile = path.join(root, "handoff.json");
   const helperFile = path.join(root, "handoff.cjs");
   await fs.writeFile(helperFile, HANDOFF_SCRIPT);
-  await fs.writeFile(
-    paramsFile,
-    JSON.stringify({
-      serviceManagerEnv: resolveServiceManagerEnv({
-        ...process.env,
-        HOME: root,
-        PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-      }),
-      nodeExecArgv: ["--disable-warning=ExperimentalWarning"],
-      action: mode === "startup" ? "triage" : "update",
-      failure: mode === "startup" ? { ...failure, kind: "gateway-startup" } : undefined,
-      parentPid,
-      parentStartIdentity: String(getFileLockProcessStartTime(parentPid)),
-      parentExitTimeoutMs: 30_000,
-      parentExitDeadlineAt: Date.now() + 30_000,
-      cwd: root,
-      commandArgv: [
-        process.execPath,
-        mode === "startup" ? candidate : updater,
-        mode === "startup" ? "triage" : "update",
-      ],
-      commandLabel: "synthetic",
-      handoffId: root,
-      logPath: log,
-      metaPath,
-      stateDatabasePath: path.join(root, "state.sqlite"),
-      nodeSqliteLocation: path.join(root, "state.sqlite"),
-      updateLeaseDatabasePath: databasePath,
-      updateLeaseKey: installRoot,
-      updateLeaseOwner: root,
-      sensitivePaths: [],
-      serviceRecovery: { kind: "systemd", unit },
-      scopeUnit: mode === "startup" ? scope : updateScope,
-      systemdRun: path.join(bin, "systemd-run"),
-    }),
-  );
-  const env = {
+  const childEnv = {
     ...process.env,
     HOME: root,
     OPENCLAW_HOME: "",
@@ -258,6 +247,55 @@ process.stdout.write(JSON.stringify({status:'error',reason:'original failure'})+
     TSX_TSCONFIG_PATH: path.resolve("tsconfig.json"),
     NODE_OPTIONS: [triageRuntimeNodeOptions(), `--require ${preload}`].filter(Boolean).join(" "),
   };
+  const commandArgv = [
+    process.execPath,
+    mode === "startup" ? candidate : updater,
+    mode === "startup" ? "triage" : "update",
+  ];
+  // Mirror the real handoff producer before the helper owns the child IPC channel.
+  const startup = buildCliRespawnPlan({
+    argv: commandArgv,
+    env: childEnv,
+    execArgv: [],
+    execPath: commandArgv[0],
+  });
+  const nodeExecArgv = startup?.argv.slice(0, startup.argv.length - commandArgv.length + 1) ?? [];
+  if (startup) {
+    commandArgv[0] = startup.command;
+  }
+  const env = startup?.env ?? childEnv;
+  await fs.writeFile(
+    paramsFile,
+    JSON.stringify({
+      serviceManagerEnv: resolveServiceManagerEnv({
+        ...process.env,
+        HOME: root,
+        PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      }),
+      nodeExecArgv,
+      action: mode === "startup" ? "triage" : "update",
+      failure: mode === "startup" ? { ...failure, kind: "gateway-startup" } : undefined,
+      parentPid,
+      parentStartIdentity: String(getFileLockProcessStartTime(parentPid)),
+      parentExitTimeoutMs: 30_000,
+      parentExitDeadlineAt: Date.now() + 30_000,
+      cwd: root,
+      commandArgv,
+      commandLabel: "synthetic",
+      handoffId: root,
+      logPath: log,
+      metaPath,
+      stateDatabasePath: path.join(root, "state.sqlite"),
+      nodeSqliteLocation: path.join(root, "state.sqlite"),
+      updateLeaseDatabasePath: databasePath,
+      updateLeaseKey: installRoot,
+      updateLeaseOwner: root,
+      sensitivePaths: runtimeFiles,
+      serviceRecovery: { kind: "systemd", unit },
+      scopeUnit: mode === "startup" ? scope : updateScope,
+      systemdRun: path.join(bin, "systemd-run"),
+    }),
+  );
   try {
     await beforeStart?.(root, env);
   } catch (error) {
@@ -358,6 +396,8 @@ process.stdout.write(JSON.stringify({status:'error',reason:'original failure'})+
       });
     },
     replay: async () => {
+      // Replay a stale claim with prepared code, not a missing-module failure after cleanup.
+      stageManagedHandoffRuntime(root);
       const child = spawn(process.execPath, [helperFile, paramsFile], {
         env,
         stdio: ["ignore", "pipe", "pipe"],
@@ -373,6 +413,9 @@ process.stdout.write(JSON.stringify({status:'error',reason:'original failure'})+
     replaceLease: (field: "owner" | "cancelled" | "scope" = "owner") => {
       const db = new DatabaseSync(databasePath);
       try {
+        // Match the lease owner's bounded connection policy: contention must not
+        // prevent the fault producer from applying the intended loss.
+        setSqliteBusyTimeout(db, 5000);
         if (field === "owner") {
           db.prepare(
             "UPDATE managed_update_handoffs SET owner = 'replacement' WHERE install_root = ?",
@@ -415,13 +458,29 @@ process.stdout.write(JSON.stringify({status:'error',reason:'original failure'})+
       }
       await Promise.all([exit, parentExit]);
       lines.close();
+      const finalEvents = await readEvents();
+      if (maintenance) {
+        console.error(
+          "[triage-maintenance]",
+          JSON.stringify({
+            primary: maintenance,
+            events: finalEvents.slice(-160),
+            stderr: stderr.slice(-8000),
+            log: (await fs.readFile(log, "utf8").catch(() => "")).slice(-8000),
+          }),
+        );
+      }
       const db = new DatabaseSync(databasePath);
       try {
+        setSqliteBusyTimeout(db, 5000);
         db.prepare("DELETE FROM managed_update_handoffs WHERE owner = ?").run(root);
       } finally {
         db.close();
       }
       await fs.rm(root, { recursive: true, force: true });
+      if (finalEvents.some((event) => event.kind === "unexpected-native")) {
+        throw new Error("Triage fixture attempted an unexpected native service command");
+      }
     },
   };
 }

@@ -120,9 +120,24 @@ describe("resolveServiceManagerEnv", () => {
       ProgramW6432: "programs-64",
       UserName: "native",
       UserDomain: "machine",
+      PSModuleAnalysisCachePath: "C:\\synthetic\\ModuleAnalysisCache",
     };
-    expect(resolveServiceManagerEnv({ ...native, BOUNDARY_APPLICATION: "synthetic" })).toEqual(
-      native,
-    );
+    expect(
+      resolveServiceManagerEnv({
+        ...native,
+        psmoduleanalysiscachepath: "C:\\ignored\\cache",
+        PSModulePath: "C:\\untrusted-modules",
+        PSExecutionPolicyPreference: "Bypass",
+        NODE_OPTIONS: "--inspect",
+        OPENCLAW_GATEWAY_TOKEN: "synthetic",
+        BOUNDARY_APPLICATION: "synthetic",
+      }),
+    ).toEqual(native);
+    expect(
+      resolveServiceManagerEnv({
+        PSModuleAnalysisCachePath: undefined,
+        psmoduleanalysiscachepath: "C:\\ignored\\cache",
+      }),
+    ).toEqual({});
   });
 });

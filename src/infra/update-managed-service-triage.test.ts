@@ -24,9 +24,10 @@ async function fixing(boundary: Awaited<ReturnType<typeof start>>) {
   // One readiness budget covers the fixer and its complete descendant placement.
   await vi.waitFor(
     async () => {
+      const events = await boundary.readEvents();
       expect(
-        (await boundary.readEvents()).filter((event) => event.kind === "branch"),
-        await boundary.log().catch(() => boundary.stderr()),
+        events.filter((event) => event.kind === "branch"),
+        `${await boundary.log().catch(() => boundary.stderr())}\nEvents: ${events.map((event) => event.kind).join(", ")}`,
       ).toHaveLength(1);
       expect(
         (await boundary.members()).filter((member) => member.alive).length,

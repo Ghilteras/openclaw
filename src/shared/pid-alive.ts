@@ -60,12 +60,12 @@ export function isPidDefinitelyDead(pid: number): boolean {
   return isZombieProcess(pid);
 }
 
-function getDarwinProcessStartTime(pid: number): number | null {
+function getDarwinProcessStartTime(pid: number, env: NodeJS.ProcessEnv): number | null {
   try {
     const startedAt = childProcess
       .execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], {
         encoding: "utf8",
-        env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+        env: { ...env, LC_ALL: "C", TZ: "UTC" },
         stdio: ["ignore", "pipe", "ignore"],
         timeout: PROCESS_START_TIMEOUT_MS,
         killSignal: "SIGKILL",
@@ -105,6 +105,15 @@ export function getProcessStartTime(pid: number): number | null {
 
 /** Read a cross-platform process identity for filesystem lock ownership. */
 export function getFileLockProcessStartTime(pid: number): number | null {
+  return readFileLockProcessStartTime(pid, process.env);
+}
+
+/** Managed callers retain their native environment and Windows query budget. */
+export function readFileLockProcessStartTime(
+  pid: number,
+  env: NodeJS.ProcessEnv,
+  windowsTimeoutMs?: number,
+): number | null {
   if (!isValidPid(pid)) {
     return null;
   }
@@ -114,9 +123,9 @@ export function getFileLockProcessStartTime(pid: number): number | null {
   }
   const startTime =
     process.platform === "darwin"
-      ? getDarwinProcessStartTime(pid)
+      ? getDarwinProcessStartTime(pid, env)
       : process.platform === "win32"
-        ? readWindowsProcessStartTimeSync(pid)
+        ? readWindowsProcessStartTimeSync(pid, windowsTimeoutMs, env)
         : getProcessStartTime(pid);
   if (isSelf && startTime !== null) {
     selfStartTime = startTime;

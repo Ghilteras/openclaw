@@ -2,6 +2,7 @@
  * Tests managed-service update handoff behavior exposed by gateway methods.
  */
 import { EventEmitter } from "node:events";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -46,6 +47,7 @@ import {
   registerManagedRecoveryOutcomeTests,
   registerManagedTerminalResultTests,
 } from "./update-managed-service-handoff-result.test-support.js";
+import { stageManagedHandoffRuntime } from "./update-managed-service-handoff-runtime.js";
 import { registerManagedUpdateHandoffTriageTests } from "./update-managed-service-handoff-triage.test-support.js";
 import { signalMockManagedUpdateHandoffReady } from "./update-managed-service-handoff.test-support.js";
 
@@ -586,6 +588,43 @@ describe("managed service update handoff", () => {
     },
   );
 
+  it("removes a partially staged runtime before any helper is spawned", async () => {
+    const { startManagedServiceUpdateHandoff } =
+      await import("./update-managed-service-handoff.js");
+    const write = fsSync.writeFileSync;
+    let directory = "";
+    const fault = vi.spyOn(fsSync, "writeFileSync").mockImplementation((file, ...args) => {
+      if (String(file).endsWith("update-managed-service-handoff-cleanup.ts")) {
+        directory = path.resolve(String(file), "../../../..");
+        expect(
+          fsSync.existsSync(
+            path.join(
+              directory,
+              "runtime/src/infra/update-managed-service-handoff-lease-runtime.ts",
+            ),
+          ),
+        ).toBe(true);
+        throw Object.assign(new Error("staging failed"), { code: "EIO" });
+      }
+      return write(file, ...args);
+    });
+    try {
+      await expect(
+        startManagedServiceUpdateHandoff({
+          root: MOCK_INSTALL_ROOT,
+          restartDrainTimeoutMs: 300_000,
+          parentPid: process.pid,
+          meta: {},
+        }),
+      ).rejects.toThrow("staging failed");
+      expect(directory).not.toBe("");
+      expect(spawnMock).not.toHaveBeenCalled();
+      await expect(pathExists(directory)).resolves.toBe(false);
+    } finally {
+      fault.mockRestore();
+    }
+  });
+
   it("rejects failed helper spawns and removes the sensitive handoff directory", async () => {
     const child = createSpawnMock();
     Reflect.deleteProperty(child, "pid");
@@ -1022,6 +1061,8 @@ describe("managed service update handoff", () => {
     await fs.mkdir(staleDir, { recursive: true });
     await fs.mkdir(freshDir, { recursive: true });
     await fs.mkdir(unrelatedDir, { recursive: true });
+    const staleFiles = stageManagedHandoffRuntime(staleDir);
+    const freshFiles = stageManagedHandoffRuntime(freshDir);
     const now = Date.now();
     const staleTime = new Date(now - 25 * 60 * 60_000);
     await fs.utimes(staleDir, staleTime, staleTime);
@@ -1035,6 +1076,8 @@ describe("managed service update handoff", () => {
     ).resolves.toBe(1);
 
     await expect(pathExists(staleDir)).resolves.toBe(false);
+    expect(await Promise.all(staleFiles.map(pathExists))).toEqual(staleFiles.map(() => false));
+    expect(await Promise.all(freshFiles.map(pathExists))).toEqual(freshFiles.map(() => true));
     await expect(pathExists(freshDir)).resolves.toBe(true);
     await expect(pathExists(unrelatedDir)).resolves.toBe(true);
   });

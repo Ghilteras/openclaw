@@ -83,6 +83,13 @@ The fixing agent receives the original failure and a verification goal: check th
 
 Skipped or blocked updates, capability approval refusals, ownership and schema refusals, existing-Gateway lock conflicts, external supervisors, and commands already running inside a fixing agent do not trigger another automatic agent. Automatic triage honors `--no-restart` and leaves intentionally stopped services stopped. Termination signals cancel foreground triage. Diagnostics and agent output go to stderr; the original failure result and exit status remain unchanged even if the agent reports success.
 
+When upgrading from an older managed-update helper, a leftover transient claim is
+reclaimed on the next admission only if its recorded process instance is positively
+dead. This includes an exited updater runner or a verified reused PID, not just a
+dead helper. Live, unverifiable, malformed, or concurrently replaced claims are left
+alone. This cleanup does not adopt a live older helper into automatic triage:
+incompatible live handoffs still require the saved diagnostics and manual guidance.
+
 Automatic fixing is single-flight per canonical installation, including foreground updates and unsupervised Gateway startup. A competing failure reports that triage is already owned, preserves its original output and exit status, and leaves the running attempt alone. After normal cleanup, a later independent failure can start a fresh attempt.
 
 Foreground triage stays attached to its caller. Cancellation or loss of that connection stops new work and gives registered OpenClaw resources their existing cleanup deadlines. The CLI gets the existing 30-second handoff grace to exit after cancellation or terminal disconnect; a stuck CLI is then terminated and its generation remains fenced. A normally exiting external CLI completes that invocation; OpenClaw cannot certify that arbitrary processes detached by that CLI have exited. A failed agent can still finish cleanup normally.

@@ -239,7 +239,7 @@ describe("process start times", () => {
     return withMockedPlatform("win32", async () => {
       expect(getProcessStartTime(42)).toBeNull();
       expect(getFileLockProcessStartTime(42)).toBe(1_752_000_000_123);
-      expect(readWindowsProcessStartTimeSyncMock).toHaveBeenCalledWith(42);
+      expect(readWindowsProcessStartTimeSyncMock).toHaveBeenCalledWith(42, undefined, process.env);
     });
   });
 
@@ -278,11 +278,14 @@ describe("process start times", () => {
       await withMockedPlatform(platform, async () => {
         // Each simulated platform needs a fresh module's process-lifetime state.
         vi.resetModules();
-        const { getFileLockProcessStartTime: readIdentity } = await import("./pid-alive.js");
-        expect(readIdentity(process.pid)).toBeNull();
+        const {
+          getFileLockProcessStartTime: readIdentity,
+          readFileLockProcessStartTime: readManaged,
+        } = await import("./pid-alive.js");
+        expect(readManaged(process.pid, {}, 1000)).toBeNull();
         expect(readIdentity(process.pid)).toBe(identity);
-        expect(readIdentity(process.pid)).toBe(identity);
-        expect(readIdentity(foreignPid)).toBe(111);
+        expect(readManaged(process.pid, {}, 1000)).toBe(identity);
+        expect(readManaged(foreignPid, {}, 1000)).toBe(111);
         expect(readIdentity(foreignPid)).toBe(222);
         expect(readIdentity(process.pid)).toBe(identity);
         expect(probe).toHaveBeenCalledTimes(4);

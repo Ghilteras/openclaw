@@ -1,6 +1,6 @@
 // One staged helper for managed updates and revocable automatic triage.
 import { MANAGED_SERVICE_UPDATE_UNSAFE_EXIT_CODE } from "./update-control-plane-sentinel.js";
-import { HANDOFF_LEASE_FACTORY_SOURCE } from "./update-managed-service-handoff-lease-script.js";
+import { MANAGED_HANDOFF_RUNTIME_ENTRY } from "./update-managed-service-handoff-runtime-assets.js";
 import {
   HANDOFF_SENTINEL_SCRIPT,
   HANDOFF_SENTINEL_STATE_SCRIPT,
@@ -57,7 +57,8 @@ function appendLog(line) {
   }
 }
 
-const leaseStore = (${HANDOFF_LEASE_FACTORY_SOURCE})({ fs, path, spawnSync, DatabaseSync: require("node:sqlite").DatabaseSync, process }, {
+const { createManagedHandoffLeaseRuntime } = require("./runtime/${MANAGED_HANDOFF_RUNTIME_ENTRY}");
+const leaseStore = createManagedHandoffLeaseRuntime({ fs, path, spawnSync, DatabaseSync: require("node:sqlite").DatabaseSync, process }, {
   databasePath: params.updateLeaseDatabasePath,
   serviceManagerEnv: params.serviceManagerEnv,
 });

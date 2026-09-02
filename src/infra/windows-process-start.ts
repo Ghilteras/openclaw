@@ -1,13 +1,16 @@
 // Reads PID-reuse-safe Windows process start identities without workspace imports.
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { resolveEnvironmentValue } from "./process-env.ts";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_PROCESS_START_TIMEOUT_MS = 10_000;
 const DEFAULT_WINDOWS_SYSTEM_ROOT = "C:\\Windows";
 
-function windowsSystemRoot(): string {
-  const configured = process.env.SystemRoot ?? process.env.WINDIR;
+function windowsSystemRoot(env: NodeJS.ProcessEnv): string {
+  const configured =
+    resolveEnvironmentValue(env, "SystemRoot", "win32") ??
+    resolveEnvironmentValue(env, "WINDIR", "win32");
   if (!configured) {
     return DEFAULT_WINDOWS_SYSTEM_ROOT;
   }
@@ -17,9 +20,9 @@ function windowsSystemRoot(): string {
     : DEFAULT_WINDOWS_SYSTEM_ROOT;
 }
 
-function windowsPowerShellPath(): string {
+function windowsPowerShellPath(env: NodeJS.ProcessEnv): string {
   return path.win32.join(
-    windowsSystemRoot(),
+    windowsSystemRoot(env),
     "System32",
     "WindowsPowerShell",
     "v1.0",
@@ -27,8 +30,8 @@ function windowsPowerShellPath(): string {
   );
 }
 
-function windowsWmicPath(): string {
-  return path.win32.join(windowsSystemRoot(), "System32", "wbem", "wmic.exe");
+function windowsWmicPath(env: NodeJS.ProcessEnv): string {
+  return path.win32.join(windowsSystemRoot(env), "System32", "wbem", "wmic.exe");
 }
 
 export function decodeWindowsProcessOutput(output: Buffer | string): string {
@@ -78,6 +81,7 @@ function parseWindowsProcessStartTime(raw: Buffer | string): number | null {
 export function readWindowsProcessStartTimeSync(
   pid: number,
   timeoutMs = DEFAULT_PROCESS_START_TIMEOUT_MS,
+  env: NodeJS.ProcessEnv = process.env,
 ): number | null {
   if (!Number.isInteger(pid) || pid <= 0) {
     return null;
@@ -86,7 +90,7 @@ export function readWindowsProcessStartTimeSync(
   // still keep their smaller end-to-end budget.
   const deadline = Date.now() + timeoutMs;
   const powershell = spawnSync(
-    windowsPowerShellPath(),
+    windowsPowerShellPath(env),
     [
       "-NoProfile",
       "-NonInteractive",
@@ -95,6 +99,7 @@ export function readWindowsProcessStartTimeSync(
     ],
     {
       encoding: "utf8",
+      env,
       timeout: Math.min(timeoutMs, DEFAULT_TIMEOUT_MS),
       windowsHide: true,
     },
@@ -110,9 +115,10 @@ export function readWindowsProcessStartTimeSync(
     return null;
   }
   const wmic = spawnSync(
-    windowsWmicPath(),
+    windowsWmicPath(env),
     ["process", "where", `ProcessId=${pid}`, "get", "CreationDate", "/value"],
     {
+      env,
       timeout: remainingMs,
       windowsHide: true,
       stdio: ["ignore", "pipe", "ignore"],

@@ -6,13 +6,15 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { MANAGED_HANDOFF_RUNTIME_FILES } from "../infra/update-managed-service-handoff-runtime-assets.js";
 
 const dirs = useAutoCleanupTempDirTracker(afterEach);
 it("retains original JSON and closes the shared lease after preloaded owner files and old lazy chunks are removed", async () => {
   const root = await fs.realpath(dirs.make("triage-rotated-child-"));
+  await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ type: "module" }));
   const source = path.resolve("src/commands/triage-failure.ts");
   const oldOwner = path.join(root, "triage-failure.mts");
-  // Preload the real continuation, adapter and literal too. Removing them after
+  // Preload the real continuation, adapter and complete lease owner too. Removing them after
   // import protects the old updater's resident graph across package replacement.
   const relocated = new Map([
     [source, oldOwner],
@@ -21,10 +23,9 @@ it("retains original JSON and closes the shared lease after preloaded owner file
       path.resolve("src/infra/update-managed-service-handoff-lease.ts"),
       path.join(root, "lease.mts"),
     ],
-    [
-      path.resolve("src/infra/update-managed-service-handoff-lease-script.ts"),
-      path.join(root, "factory.mts"),
-    ],
+    ...MANAGED_HANDOFF_RUNTIME_FILES.map(
+      (file) => [path.resolve(file), path.join(root, path.basename(file))] as const,
+    ),
   ]);
   for (const [original, destination] of relocated) {
     const code = (await fs.readFile(original, "utf8")).replace(
