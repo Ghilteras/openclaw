@@ -53,6 +53,36 @@ function mockFallbackIssue(fallbackUrl: string, message = "GitHub CLI unavailabl
 }
 
 describe("update failure report", () => {
+  it("excludes a later advisory step when selecting the failed phase", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-advisory-");
+    const prepared = await prepareUpdateFailureReport(
+      {
+        attemptId: "attempt-advisory-phase",
+        result: failedUpdate({
+          steps: [
+            failedUpdate().steps[0]!,
+            {
+              name: "post-install doctor",
+              command: "openclaw doctor",
+              cwd: "/tmp/openclaw",
+              durationMs: 5,
+              exitCode: 86,
+              advisory: {
+                kind: "package-post-install-doctor",
+                message: "recoverable repair warning",
+              },
+            },
+          ],
+        }),
+      },
+      { stateDir },
+    );
+
+    expect(prepared.title).toBe("Update failure: build (2026.8.1)");
+    expect(prepared.body).toContain("Failed phase: build");
+    expect(prepared.body).not.toContain("post-install doctor");
+  });
+
   it("saves only allowlisted, redacted, Unicode-safe report facts for fallback", async () => {
     const home = tempDirs.make("openclaw-update-report-");
     const stateDir = path.join(home, ".openclaw");

@@ -139,6 +139,41 @@ describe("update.report", () => {
     expect(respond.mock.calls[0]?.[1]).not.toHaveProperty("savedReportPath");
   });
 
+  it("preserves advisory classification when projecting persisted update steps", async () => {
+    mocks.refreshLatest.mockResolvedValue({
+      ...failure,
+      stats: {
+        ...failure.stats,
+        steps: [
+          ...(failure.stats?.steps ?? []),
+          {
+            name: "post-install doctor",
+            command: "openclaw doctor",
+            durationMs: 5,
+            advisory: true,
+            log: { exitCode: 86 },
+          },
+        ],
+      },
+    });
+
+    await invoke({ action: "preview", attemptId: "handoff-failed" });
+
+    const projected = mocks.prepare.mock.calls[0]?.[0];
+    expect(projected).toMatchObject({
+      result: {
+        steps: [
+          { name: "build" },
+          {
+            name: "post-install doctor",
+            advisory: { kind: "package-post-install-doctor" },
+          },
+        ],
+      },
+    });
+    expect(projected.result.steps[0]).not.toHaveProperty("advisory");
+  });
+
   it("submits only the reviewed digest for the same current attempt", async () => {
     const respond = await invoke({
       action: "submit",

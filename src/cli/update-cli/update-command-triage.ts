@@ -96,7 +96,6 @@ export async function withUpdateFailureTriage(
             defaultRuntime.error(
               `Update failure report could not be prepared: ${formatErrorMessage(reportError)}`,
             );
-            nextAction = "handled";
           }
         }
         if (nextAction === "triage") {

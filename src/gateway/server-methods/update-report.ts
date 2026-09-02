@@ -4,6 +4,7 @@ import {
   validateUpdateReportResult,
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { RestartSentinelPayload } from "../../infra/restart-sentinel.js";
+import { PACKAGE_POST_INSTALL_DOCTOR_ADVISORY } from "../../infra/update-doctor-result.js";
 import {
   prepareUpdateFailureReport,
   submitUpdateFailureReport,
@@ -51,13 +52,19 @@ function projectReportInput(payload: RestartSentinelPayload): UpdateFailureRepor
       ...(typeof stats.reason === "string" ? { reason: stats.reason } : {}),
       ...(readIdentity(stats.before) ? { before: readIdentity(stats.before) } : {}),
       ...(readIdentity(stats.after) ? { after: readIdentity(stats.after) } : {}),
-      steps: (stats.steps ?? []).map((step) => ({
-        name: step.name,
-        command: "",
-        cwd: "",
-        durationMs: step.durationMs ?? 0,
-        exitCode: step.log?.exitCode ?? null,
-      })),
+      steps: (stats.steps ?? []).map((step) => {
+        const projected: UpdateFailureReportInput["result"]["steps"][number] = {
+          name: step.name,
+          command: "",
+          cwd: "",
+          durationMs: step.durationMs ?? 0,
+          exitCode: step.log?.exitCode ?? null,
+        };
+        if (step.advisory) {
+          projected.advisory = PACKAGE_POST_INSTALL_DOCTOR_ADVISORY;
+        }
+        return projected;
+      }),
       durationMs: stats.durationMs ?? 0,
       ...(recovery ? { recovery } : {}),
     },

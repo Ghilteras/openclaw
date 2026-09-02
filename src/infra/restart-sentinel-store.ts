@@ -21,6 +21,7 @@ type RestartSentinelStep = {
   cwd?: string | null;
   durationMs?: number | null;
   log?: RestartSentinelLog | null;
+  advisory?: boolean;
 };
 
 type RestartSentinelStats = {
@@ -154,10 +155,12 @@ function parseRestartSentinelStep(value: unknown): RestartSentinelStep | null {
   const cwd = parseOptionalNullableString(value, "cwd");
   const durationMs = value.durationMs;
   const log = value.log;
+  const advisory = value.advisory;
   if (
     cwd === false ||
     (durationMs !== undefined && durationMs !== null && !isFiniteNumber(durationMs)) ||
-    (log !== undefined && log !== null && !parseRestartSentinelLog(log))
+    (log !== undefined && log !== null && !parseRestartSentinelLog(log)) ||
+    (advisory !== undefined && typeof advisory !== "boolean")
   ) {
     return null;
   }
@@ -170,6 +173,9 @@ function parseRestartSentinelStep(value: unknown): RestartSentinelStep | null {
   }
   if (log !== undefined) {
     result.log = log === null ? null : parseRestartSentinelLog(log);
+  }
+  if (advisory !== undefined) {
+    result.advisory = advisory;
   }
   return result;
 }

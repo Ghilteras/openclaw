@@ -320,6 +320,34 @@ describe("update failure triage boundary", () => {
     expect(attemptIds[0]).not.toBe(attemptIds[1]);
   });
 
+  it("falls through to triage when the report action throws", async () => {
+    const target = await createInstalledTriage();
+    const bin = path.join(target.root, "bin");
+    const triageReceipt = path.join(target.root, "triage-receipt");
+    await fs.mkdir(bin);
+    await fs.writeFile(
+      path.join(bin, "claude"),
+      `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(triageReceipt)}, "called");\n`,
+      { mode: 0o700 },
+    );
+    runInteractiveUpdateFailureAction.mockRejectedValue(new Error("report storage unavailable"));
+
+    await withEnvAsync({ PATH: bin, HOME: target.root, USERPROFILE: target.root }, () =>
+      withTerminal(async () => {
+        await expect(
+          withUpdateFailureTriage({}, target, async () => {
+            throw new UpdateCommandFailure(failedUpdate);
+          }),
+        ).rejects.toMatchObject({ code: 1 });
+      }),
+    );
+
+    await expect(fs.readFile(triageReceipt, "utf8")).resolves.toBe("called");
+    expect(defaultRuntime.error).toHaveBeenCalledWith(
+      expect.stringContaining("report storage unavailable"),
+    );
+  });
+
   it.each([
     "already-current",
     "managed-service-handoff-started",
