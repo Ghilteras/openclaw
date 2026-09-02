@@ -5,6 +5,12 @@ import { canonicalizePath } from "../../agents/utils/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { RunCronAgentTurnParams } from "../../cron/isolated-agent/run-prepare-runtime.js";
 import type { RunCronAgentTurnResult } from "../../cron/isolated-agent/run.types.js";
+import type { PluginHookSkillArtifact } from "../../plugins/hook-types.js";
+import {
+  dispatchCommittedSkillChangeBestEffort,
+  hasCommittedSkillChangeHooks,
+  snapshotCommittedSkillArtifactBestEffort,
+} from "../lifecycle/skill-change-hook.js";
 import { bumpSkillsSnapshotVersion } from "../runtime/refresh-state.js";
 import { scanSkillContent, scanSource } from "../security/scanner.js";
 import {
@@ -34,6 +40,12 @@ type ReviewTurn = (params: {
 }) => Promise<RunCronAgentTurnResult>;
 
 type ReviewSkill = ReturnType<typeof listWritableWorkshopSkillSummaries>[number];
+type ReviewChange = {
+  action: "created" | "updated" | "removed";
+  before?: PluginHookSkillArtifact;
+  after?: PluginHookSkillArtifact;
+};
+type ReviewCommit = { result: RunCronAgentTurnResult; changes: ReviewChange[] };
 
 export async function runSkillCollectionReviewForAgent(params: {
   config: OpenClawConfig;
@@ -53,7 +65,7 @@ export async function runSkillCollectionReviewForAgent(params: {
     params.abortSignal?.throwIfAborted();
   };
   try {
-    return await withSkillCollectionReviewClaim(async (lease) => {
+    const commit: ReviewCommit = await withSkillCollectionReviewClaim(async (lease) => {
       const attemptedAtMs = Date.now();
       assertCurrent(lease);
       recordSkillCollectionReviewStatus({ attemptedAtMs }, stateOptions);
@@ -65,6 +77,21 @@ export async function runSkillCollectionReviewForAgent(params: {
         skillDirs: before.map((skill) => path.relative(skillsRoot, skill.baseDir)),
         env: params.env,
       });
+      const shouldDispatch = hasCommittedSkillChangeHooks();
+      const beforeArtifacts = new Map<string, PluginHookSkillArtifact | undefined>();
+      if (shouldDispatch) {
+        for (const skill of before) {
+          assertCurrent(lease);
+          beforeArtifacts.set(
+            skill.name,
+            await snapshotCommittedSkillArtifactBestEffort({
+              skillDir: skill.baseDir,
+              skillKey: skill.name,
+              source: "workshop",
+            }),
+          );
+        }
+      }
       try {
         assertCurrent(lease);
         const message = buildCollectionReviewPrompt(before, params.env);
@@ -154,16 +181,47 @@ export async function runSkillCollectionReviewForAgent(params: {
           stateOptions,
         );
         assertCurrent(lease);
-        if (reviewErrors.length > 0) {
-          const error = `Skill collection review completed with errors: ${reviewErrors.join("; ")}`;
+        const turnError =
+          turnResult.status === "ok"
+            ? undefined
+            : (turnResult.error ??
+              `Skill collection review turn ended with status: ${turnResult.status}`);
+        const scanError =
+          reviewErrors.length > 0
+            ? `Skill collection review completed with errors: ${reviewErrors.join("; ")}`
+            : undefined;
+        if (turnError || scanError) {
+          const error = turnError
+            ? `Skill collection review failed: ${turnError}${scanError ? `; ${scanError}` : ""}`
+            : scanError;
           recordSkillCollectionReviewStatus({ attemptedAtMs, error }, stateOptions);
-          return { ...turnResult, status: "error", error, summary: error };
+          return {
+            result: { ...turnResult, status: "error", error, summary: error },
+            changes: shouldDispatch
+              ? await collectReviewChanges({
+                  before,
+                  beforeArtifacts,
+                  finalSkills,
+                  assertCurrent: () => assertCurrent(lease),
+                })
+              : [],
+          };
         }
         recordSkillCollectionReviewStatus(
           { attemptedAtMs, succeededAtMs: Date.now() },
           stateOptions,
         );
-        return turnResult;
+        return {
+          result: turnResult,
+          changes: shouldDispatch
+            ? await collectReviewChanges({
+                before,
+                beforeArtifacts,
+                finalSkills,
+                assertCurrent: () => assertCurrent(lease),
+              })
+            : [],
+        };
       } catch (error) {
         assertCurrent(lease);
         recordSkillCollectionReviewStatus({ attemptedAtMs, error }, stateOptions);
@@ -171,10 +229,50 @@ export async function runSkillCollectionReviewForAgent(params: {
         throw error;
       }
     }, stateOptions);
+    for (const change of commit.changes) {
+      await dispatchCommittedSkillChangeBestEffort({
+        ...change,
+        source: "workshop",
+        workspaceDir: skillsRoot,
+      });
+    }
+    return commit.result;
   } catch (error) {
     const summary = `Skill collection review failed: ${String(error)}`;
     return { status: "error", error: summary, summary };
   }
+}
+
+async function collectReviewChanges(params: {
+  before: readonly (ReviewSkill & { treeHash: string })[];
+  beforeArtifacts: ReadonlyMap<string, PluginHookSkillArtifact | undefined>;
+  finalSkills: readonly (ReviewSkill & { treeHash: string })[];
+  assertCurrent: () => void;
+}): Promise<ReviewChange[]> {
+  const beforeByName = new Map(params.before.map((skill) => [skill.name, skill]));
+  const finalByName = new Map(params.finalSkills.map((skill) => [skill.name, skill]));
+  const names = new Set([...beforeByName.keys(), ...finalByName.keys()]);
+  const changes: ReviewChange[] = [];
+  for (const name of [...names].toSorted()) {
+    const before = beforeByName.get(name);
+    const after = finalByName.get(name);
+    if (before && after && before.treeHash === after.treeHash) {
+      continue;
+    }
+    params.assertCurrent();
+    changes.push({
+      action: before ? (after ? "updated" : "removed") : "created",
+      before: params.beforeArtifacts.get(name),
+      after: after
+        ? await snapshotCommittedSkillArtifactBestEffort({
+            skillDir: after.baseDir,
+            skillKey: after.name,
+            source: "workshop",
+          })
+        : undefined,
+    });
+  }
+  return changes;
 }
 
 async function resolveReviewSkills(

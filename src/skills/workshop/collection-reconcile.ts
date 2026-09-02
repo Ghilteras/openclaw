@@ -1,6 +1,14 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { pathExists } from "../../infra/fs-safe.js";
+import type { PluginHookSkillArtifact } from "../../plugins/hook-types.js";
+import {
+  dispatchCommittedSkillChangeBestEffort,
+  hasCommittedSkillChangeHooks,
+  snapshotCommittedSkillArtifactBestEffort,
+} from "../lifecycle/skill-change-hook.js";
+import { loadSingleSkillDirectory } from "../loading/local-loader.js";
 import { bumpSkillsSnapshotVersion } from "../runtime/refresh-state.js";
 import { latestCommittedBackupId, readCollectionBackupManifest } from "./collection-backup.js";
 import type { SkillCollectionRestoreResult } from "./collection-contracts.js";
@@ -14,14 +22,14 @@ import { listWritableWorkshopSkillSummaries } from "./workspace-skill-read.js";
 export async function restoreLatestSkillCollectionBackup(params: {
   workspaceDir: string;
   config: OpenClawConfig;
-  agentId: string;
+  agentId?: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<SkillCollectionRestoreResult> {
   if (!params.agentId) {
     throw new Error("Skill Workshop collection restore requires the active agent id.");
   }
   const agentId = params.agentId;
-  return await withSkillCollectionReviewClaim(
+  const commit = await withSkillCollectionReviewClaim(
     async (lease) => {
       const skillsRoot = resolveWorkshopSkillsDir(params.config, agentId, params.env);
       const backupRoot = resolveSkillCollectionBackupRoot(params.config, agentId, params.env);
@@ -55,6 +63,47 @@ export async function restoreLatestSkillCollectionBackup(params: {
         env: params.env,
       });
       lease.assertOwned();
+      const affectedDirs = [...new Set([...manifest.skillDirs, ...manifest.resultSkillDirs])];
+      const shouldDispatch = hasCommittedSkillChangeHooks();
+      const before = new Map<string, PluginHookSkillArtifact | undefined>();
+      const affectedSkills: Array<{
+        relativeDir: string;
+        skillDir: string;
+        skillKey: string;
+        liveExists: boolean;
+      }> = [];
+      for (const relativeDir of affectedDirs) {
+        lease.assertOwned();
+        const skillDir = path.join(skillsRoot, relativeDir);
+        const liveExists = await pathExists(skillDir);
+        const keySourceDir = liveExists ? skillDir : path.join(backupDir, "skills", relativeDir);
+        const loaded = loadSingleSkillDirectory({
+          skillDir: keySourceDir,
+          source: "openclaw-workshop",
+          rootRealPath: await fs.realpath(keySourceDir),
+        });
+        if (!loaded) {
+          throw new Error(`Could not load Workshop skill: ${relativeDir}`);
+        }
+        const affectedSkill = {
+          relativeDir,
+          skillDir,
+          skillKey: loaded.skill.name,
+          liveExists,
+        };
+        affectedSkills.push(affectedSkill);
+        if (shouldDispatch) {
+          before.set(
+            relativeDir,
+            await snapshotCommittedSkillArtifactBestEffort({
+              skillDir,
+              skillKey: affectedSkill.skillKey,
+              source: "workshop",
+            }),
+          );
+        }
+      }
+      lease.assertOwned();
       await restoreSkillCollectionBackupTransaction({ skillsRoot, backupDir });
       lease.assertOwned();
       bumpSkillsSnapshotVersion({ reason: "workshop" });
@@ -64,20 +113,58 @@ export async function restoreLatestSkillCollectionBackup(params: {
         agentId,
         env: params.env,
       });
+      const changes: Array<{
+        action: "created" | "updated" | "removed";
+        before?: PluginHookSkillArtifact;
+        after?: PluginHookSkillArtifact;
+      }> = [];
+      if (shouldDispatch) {
+        for (const affectedSkill of affectedSkills) {
+          lease.assertOwned();
+          const afterExists = await pathExists(affectedSkill.skillDir);
+          if (!affectedSkill.liveExists && !afterExists) {
+            continue;
+          }
+          changes.push({
+            action: !affectedSkill.liveExists ? "created" : afterExists ? "updated" : "removed",
+            before: before.get(affectedSkill.relativeDir),
+            after: afterExists
+              ? await snapshotCommittedSkillArtifactBestEffort({
+                  skillDir: affectedSkill.skillDir,
+                  skillKey: affectedSkill.skillKey,
+                  source: "workshop",
+                })
+              : undefined,
+          });
+        }
+      }
       return {
-        backupId,
-        restored: restoredSkills
-          .filter((skill) => manifest.skillDirs.includes(path.relative(skillsRoot, skill.baseDir)))
-          .map((skill) => skill.name),
-        removed: currentSkills
-          .filter(
-            (skill) =>
-              manifest.resultSkillDirs.includes(path.relative(skillsRoot, skill.baseDir)) &&
-              !manifest.skillDirs.includes(path.relative(skillsRoot, skill.baseDir)),
-          )
-          .map((skill) => skill.name),
+        result: {
+          backupId,
+          restored: restoredSkills
+            .filter((skill) =>
+              manifest.skillDirs.includes(path.relative(skillsRoot, skill.baseDir)),
+            )
+            .map((skill) => skill.name),
+          removed: currentSkills
+            .filter(
+              (skill) =>
+                manifest.resultSkillDirs.includes(path.relative(skillsRoot, skill.baseDir)) &&
+                !manifest.skillDirs.includes(path.relative(skillsRoot, skill.baseDir)),
+            )
+            .map((skill) => skill.name),
+        },
+        changes,
       };
     },
     params.env ? { env: params.env } : {},
   );
+  for (const change of commit.changes) {
+    await dispatchCommittedSkillChangeBestEffort({
+      ...change,
+      source: "workshop",
+      workspaceDir: params.workspaceDir,
+    });
+  }
+  return commit.result;
 }
