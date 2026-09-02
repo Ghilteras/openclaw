@@ -135,6 +135,7 @@ export async function ensureProviderLocalService(
   }
   try {
     await target.reconcile({ baseUrl: target.baseUrl, signal: signal ?? undefined });
+    throwIfAborted(signal);
   } catch (error) {
     lease.release();
     throw error;
