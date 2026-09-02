@@ -65,6 +65,18 @@ function nativeTranscript(text: string) {
   return { type: "turn.done", turn: { role: "user", transcript: text } };
 }
 
+function nativeBackgroundItems(session: {
+  instructions: string;
+  initial_items?: unknown;
+}): unknown {
+  expect(session).not.toHaveProperty("initial_items");
+  const records = session.instructions.match(
+    /<shared_session_history>\n(.*)\n<\/shared_session_history>$/s,
+  )?.[1];
+  expect(records).toBeDefined();
+  return JSON.parse(records!);
+}
+
 function spokenMessages(frames: string[]): string[] {
   return frames.flatMap((frame) => {
     const event: unknown = JSON.parse(frame);
@@ -219,7 +231,37 @@ describe("native Talk action ownership through public plugin registration", () =
         await vi.waitFor(() =>
           expect(spokenMessages(socket.sent)).toContain("Both labels are preserved."),
         );
+        // A returned readback is a distinct voice record, not a deduplication signal.
+        const readback = "Both labels are preserved.";
+        const dialogue = "OpenClaw is waiting on the model.";
+        for (const text of [readback, dialogue]) {
+          socket.serverEvent({ type: "turn.done", turn: { role: "assistant", transcript: text } });
+          await flushNativeTranscript(result);
+        }
         await Promise.all(publications);
+        const retained = [
+          { role: "user", text: spoken },
+          { role: "assistant", text: readback },
+          { role: "assistant", text: readback },
+          { role: "assistant", text: dialogue },
+        ];
+        const completed = await readSessionMessagesAsync(scope, {
+          mode: "full",
+          reason: "native history",
+        });
+        expect(projectChatDisplayMessages(completed).map(extractText)).toEqual(
+          retained.map((item) => item.text),
+        );
+        const assistantRecords = readSessionTranscriptMessageEvents(scope).flatMap(({ event }) =>
+          isRecord(event) && isRecord(event.message) && event.message.role === "assistant"
+            ? [event.message]
+            : [],
+        );
+        expect(assistantRecords).toHaveLength(3);
+        expect(assistantRecords.slice(1)).toEqual([
+          expect.objectContaining({ api: "realtime", content: [{ type: "text", text: readback }] }),
+          expect.objectContaining({ api: "realtime", content: [{ type: "text", text: dialogue }] }),
+        ]);
         await fixture.invoke("talk.client.close", { voiceSessionId: result.voiceSessionId });
         const rawCompleted = rawTranscriptRows();
         expect(
@@ -229,11 +271,8 @@ describe("native Talk action ownership through public plugin registration", () =
         const body = upstream.fetch.mock.calls.at(-1)?.[1]?.body;
         expect(typeof body).toBe("string");
         const request = JSON.parse(body as string);
-        expect.soft(JSON.stringify(request.session.initial_items)).not.toContain(delegated);
-        expect(JSON.stringify(request.session.initial_items)).toContain(spoken);
-        expect(JSON.stringify(request.session.initial_items)).toContain(
-          "Both labels are preserved.",
-        );
+        expect.soft(request.session.instructions).not.toContain(delegated);
+        expect(nativeBackgroundItems(request.session)).toEqual(retained);
         expect(request.session.delegation.ack_filler).toBe(false);
         expect(rawTranscriptRows()).toEqual(rawCompleted);
       } finally {
@@ -274,11 +313,10 @@ describe("native Talk action ownership through public plugin registration", () =
       const body = upstream.fetch.mock.calls.at(-1)?.[1]?.body;
       expect(typeof body).toBe("string");
       const request = JSON.parse(body as string);
-      expect(
-        request.session.initial_items?.map(
-          (item: { content: Array<{ text: string }> }) => item.content[0]?.text,
-        ),
-      ).toEqual(["ordinary", "context only"]);
+      expect(nativeBackgroundItems(request.session)).toEqual([
+        { role: "user", text: "ordinary" },
+        { role: "user", text: "context only" },
+      ]);
       expect(rawTranscriptRows()).toEqual(raw);
       // Reset retention is intentional model context, even for a hidden/excluded user row.
       const kept = append("reset-kept", { display: false, excludeFromContext: true });
@@ -293,11 +331,9 @@ describe("native Talk action ownership through public plugin registration", () =
       expect(readSessionPreviewItemsFromTranscript(scope, 16, 800)).toEqual([]);
       await connectNativeSession(fixture);
       const resetRequest = JSON.parse(upstream.fetch.mock.calls.at(-1)![1]!.body as string);
-      expect(
-        resetRequest.session.initial_items.map(
-          (item: { content: Array<{ text: string }> }) => item.content[0]?.text,
-        ),
-      ).toEqual(["reset-kept"]);
+      expect(nativeBackgroundItems(resetRequest.session)).toEqual([
+        { role: "user", text: "reset-kept" },
+      ]);
       expect(rawTranscriptRows()).toEqual(resetRaw);
       for (let index = 0; index < 20; index++) {
         append(`${index}:` + "x".repeat(30));

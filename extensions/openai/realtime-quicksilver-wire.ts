@@ -8,7 +8,10 @@ import { readResponseTextPrefix } from "openclaw/plugin-sdk/response-limit-runti
 import { redactSensitiveText } from "openclaw/plugin-sdk/security-runtime";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { z } from "zod";
-import { OPENAI_QUICKSILVER_HOST_CONTROL_INSTRUCTIONS } from "./realtime-quicksilver-instructions.js";
+import {
+  buildOpenAIQuicksilverBackgroundContext,
+  OPENAI_QUICKSILVER_HOST_CONTROL_INSTRUCTIONS,
+} from "./realtime-quicksilver-instructions.js";
 import {
   isOpenAIGptLiveModel,
   resolveOpenAIQuicksilverVoice,
@@ -152,26 +155,35 @@ export function buildOpenAIQuicksilverSession(params: {
   voice?: string;
   initialItems?: readonly OpenAIQuicksilverInitialItem[];
 }): OpenAIQuicksilverSession {
-  const initialItems = boundOpenAIQuicksilverContextItems(params.initialItems ?? []).map(
-    (item) => ({
-      type: "message" as const,
-      role: item.role,
-      content: [
-        {
-          type: item.role === "assistant" ? ("output_text" as const) : ("input_text" as const),
-          text: item.text,
-        },
-      ],
-    }),
-  );
+  const history = boundOpenAIQuicksilverContextItems(params.initialItems ?? []);
+  const instructions = [
+    params.instructions?.trim(),
+    params.hostControlsInput ? OPENAI_QUICKSILVER_HOST_CONTROL_INSTRUCTIONS : undefined,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  // Negotiated host-controlled calls receive shared history as background, not
+  // as the new call's own speech. Explicit legacy conversation seeds stay native.
+  const initialItems = (params.hostControlsInput ? [] : history).map((item) => ({
+    type: "message" as const,
+    role: item.role,
+    content: [
+      {
+        type: item.role === "assistant" ? ("output_text" as const) : ("input_text" as const),
+        text: item.text,
+      },
+    ],
+  }));
   return {
     model: params.model,
-    instructions: [
-      params.instructions?.trim(),
-      params.hostControlsInput ? OPENAI_QUICKSILVER_HOST_CONTROL_INSTRUCTIONS : undefined,
-    ]
-      .filter(Boolean)
-      .join("\n\n"),
+    instructions:
+      instructions +
+      (params.hostControlsInput
+        ? buildOpenAIQuicksilverBackgroundContext(
+            history,
+            OPENAI_QUICKSILVER_CONTEXT_MAX_UTF8_BYTES,
+          )
+        : ""),
     audio: { output: { voice: resolveOpenAIQuicksilverVoice(params.voice) } },
     // Set at call creation: an attached sideband cannot change existing-call configuration.
     delegation: params.hostControlsInput

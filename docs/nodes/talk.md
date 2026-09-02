@@ -69,6 +69,15 @@ remain failures rather than being silently treated as cancellations.
 
 Finalized realtime user and assistant utterances are always appended live to the active agent session, so later chat and voice turns share one history. Client-owned transports report their finalized transcripts with stable entry ids; Gateway relay and Gateway-controlled WebRTC sessions append the same events server-side. Provider sessions also receive the bounded realtime profile context used by Discord voice.
 
+Gateway-controlled native WebRTC calls receive shared-session history as quoted
+historical background in their instructions, not as the new call's own user or
+assistant messages. This background can include prior calls and backing-agent
+answers; it does not establish the current call's live task state. It retains
+the newest history within 16 entries, 800 characters per entry, and 8,000 UTF-8
+bytes including labels and quoting. This changes neither saved transcripts nor
+chat display. Native calls without negotiated host input control and direct
+WebSocket conversation seeds keep their existing representation.
+
 Generated agent-consult prompts are internal input, not spoken user turns. New
 consult records are hidden from chat and excluded from later model context, while
 the active consult still receives the full question, context, and response style.
