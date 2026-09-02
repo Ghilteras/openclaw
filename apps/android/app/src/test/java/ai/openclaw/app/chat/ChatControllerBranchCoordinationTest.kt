@@ -1075,6 +1075,8 @@ class ChatControllerBranchCoordinationTest {
 
     suspend fun admit(): ChatOutboxItem {
       assertTrue(controller.sendMessageAwaitAcceptance("retained input", "off", listOf(attachment)))
+      val admitted = outbox.load("gateway-a").single()
+      awaitBranchProgress { controller.outboxItems.value.any { it.id == admitted.id } }
       return controller.outboxItems.value.single().also {
         assertEquals(ChatOutboxStatus.Queued, it.status)
         assertEquals("retained input", it.text)
