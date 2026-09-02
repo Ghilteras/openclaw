@@ -119,9 +119,15 @@ describe("skill collection restore", () => {
         },
       });
       dispatchCommittedSkillChangeBestEffort.mockClear();
+      await fs.mkdir(path.join(skillsRoot, "late"), { recursive: true });
+      await fs.writeFile(
+        path.join(skillsRoot, "late", "SKILL.md"),
+        "---\nname: late\ndescription: Late procedure\n---\n\n# Late\n",
+      );
 
       await restoreLatestSkillCollectionBackup({ workspaceDir, env: testState.env });
 
+      await expect(fs.access(path.join(skillsRoot, "late", "SKILL.md"))).resolves.toBeUndefined();
       expect(dispatchCommittedSkillChangeBestEffort).toHaveBeenCalledWith(
         expect.objectContaining({ action: "updated", source: "workshop", workspaceDir }),
       );

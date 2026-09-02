@@ -7,6 +7,8 @@ import { logWarn } from "../../logger.js";
 export async function restoreSkillCollectionBackupTransaction(params: {
   skillsRoot: string;
   backupDir: string;
+  skillDirs: readonly string[];
+  resultSkillDirs: readonly string[];
 }): Promise<void> {
   const rollbackDir = path.join(params.backupDir, `.restore-${Date.now()}`);
   await fs.mkdir(rollbackDir, { recursive: true });
@@ -19,10 +21,20 @@ export async function restoreSkillCollectionBackupTransaction(params: {
         preserveTimestamps: true,
       });
     }
-    await replaceSkillCollectionTree(params.skillsRoot, path.join(params.backupDir, "skills"));
+    await restoreTrackedSkillCollection({
+      skillsRoot: params.skillsRoot,
+      snapshotRoot: path.join(params.backupDir, "skills"),
+      restoreDirs: params.skillDirs,
+      removeDirs: params.resultSkillDirs.filter((dir) => !params.skillDirs.includes(dir)),
+    });
   } catch (error) {
     try {
-      await replaceSkillCollectionTree(params.skillsRoot, path.join(rollbackDir, "skills"));
+      await restoreTrackedSkillCollection({
+        skillsRoot: params.skillsRoot,
+        snapshotRoot: path.join(rollbackDir, "skills"),
+        restoreDirs: [...new Set([...params.skillDirs, ...params.resultSkillDirs])],
+        removeDirs: [],
+      });
     } catch (rollbackError) {
       const failure = new Error(
         "Skill collection restore failed and the current collection was not restored.",
@@ -70,22 +82,43 @@ export async function restoreSkillCollectionDirectoryFromBackup(params: {
   }
 }
 
-async function replaceSkillCollectionTree(skillsRoot: string, snapshotRoot: string): Promise<void> {
-  await fs.mkdir(skillsRoot, { recursive: true });
-  for (const entry of await fs.readdir(skillsRoot)) {
-    await removePathWithinRoot({
-      rootDir: skillsRoot,
-      relativePath: entry,
-      recursive: true,
-      force: true,
-    });
+async function restoreTrackedSkillCollection(params: {
+  skillsRoot: string;
+  snapshotRoot: string;
+  restoreDirs: readonly string[];
+  removeDirs: readonly string[];
+}): Promise<void> {
+  await fs.mkdir(params.skillsRoot, { recursive: true });
+  for (const relativeDir of params.restoreDirs) {
+    const liveDir = path.join(params.skillsRoot, relativeDir);
+    if (await pathExists(liveDir)) {
+      await removePathWithinRoot({
+        rootDir: params.skillsRoot,
+        relativePath: relativeDir,
+        recursive: true,
+        force: true,
+      });
+    }
+    const snapshotDir = path.join(params.snapshotRoot, relativeDir);
+    if (await pathExists(snapshotDir)) {
+      await fs.mkdir(path.dirname(liveDir), { recursive: true });
+      await fs.cp(snapshotDir, liveDir, {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        preserveTimestamps: true,
+      });
+    }
   }
-  if (await pathExists(snapshotRoot)) {
-    await fs.cp(snapshotRoot, skillsRoot, {
+  for (const relativeDir of params.removeDirs) {
+    if (!(await pathExists(path.join(params.skillsRoot, relativeDir)))) {
+      continue;
+    }
+    await removePathWithinRoot({
+      rootDir: params.skillsRoot,
+      relativePath: relativeDir,
       recursive: true,
-      errorOnExist: false,
       force: true,
-      preserveTimestamps: true,
     });
   }
 }

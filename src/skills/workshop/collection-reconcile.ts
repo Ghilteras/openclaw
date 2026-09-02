@@ -104,7 +104,12 @@ export async function restoreLatestSkillCollectionBackup(params: {
         }
       }
       lease.assertOwned();
-      await restoreSkillCollectionBackupTransaction({ skillsRoot, backupDir });
+      await restoreSkillCollectionBackupTransaction({
+        skillsRoot,
+        backupDir,
+        skillDirs: manifest.skillDirs,
+        resultSkillDirs: manifest.resultSkillDirs,
+      });
       lease.assertOwned();
       bumpSkillsSnapshotVersion({ reason: "workshop" });
       lease.assertOwned();
