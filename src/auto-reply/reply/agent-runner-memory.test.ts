@@ -3594,151 +3594,121 @@ describe("runMemoryFlushIfNeeded", () => {
     expect(directTranscriptStats).toEqual([]);
   });
 
-  it("triggers preflight compaction when the active transcript exceeds the configured byte threshold", async () => {
-    const sessionFile = path.join(rootDir, "large-session.jsonl");
-    await writeTestSessionTranscript({
-      rootDir,
-      events: [{ type: "message", message: { role: "user", content: "x".repeat(256) } }],
-    });
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+  it.each([
+    {
+      name: "compacts an oversized embedded transcript on an interactive turn",
+      runtime: "embedded",
+      heartbeat: false,
+      overCap: true,
       totalTokens: 10,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
-      compactionCount: 0,
-    };
-    const sessionStore = { main: sessionEntry };
-    const replyOperation = createReplyOperation();
-
-    const entry = await runSessionCompactionIfNeeded({
-      cfg: {
-        agents: {
-          defaults: {
-            compaction: {
-              maxActiveTranscriptBytes: "10b",
-            },
-          },
-        },
-      },
-      followupRun: createTestFollowupRun({
-        sessionId: "session",
-        sessionFile,
-        sessionKey: "main",
-      }),
-      defaultModel: "anthropic/claude-opus-4-6",
-      modelContextTokens: 100_000,
-      sessionEntry,
-      sessionStore,
-      sessionKey: "main",
-      storePath: path.join(rootDir, "sessions.json"),
-      isHeartbeat: false,
-      ...createCompactionLifecycle(replyOperation),
-    });
-
-    expect(entry?.compactionCount).toBe(1);
-    expect(replyOperation.setPhase).toHaveBeenCalledWith("preflight_compacting");
-    const compactCall = requireCompactEmbeddedAgentSessionCall();
-    expect(compactCall.sessionId).toBe("session");
-    expect(compactCall.trigger).toBe("budget");
-    expect(compactCall.currentTokenCount).toBe(12);
-    expect(compactCall.sessionFile).toBe("main");
-  });
-
-  it("enforces the transcript byte fuse during heartbeat runs", async () => {
-    const sessionFile = path.join(rootDir, "heartbeat-byte-fuse-session.jsonl");
-    await writeTestSessionTranscript({
-      rootDir,
-      events: [{ type: "message", message: { role: "user", content: "x".repeat(256) } }],
-    });
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+      expectedCompaction: true,
+    },
+    {
+      name: "compacts an oversized embedded transcript on a heartbeat",
+      runtime: "embedded",
+      heartbeat: true,
+      overCap: true,
       totalTokens: 10,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
-      compactionCount: 0,
-    };
-    const sessionStore = { main: sessionEntry };
-    const replyOperation = createReplyOperation();
-
-    const entry = await runSessionCompactionIfNeeded({
-      cfg: {
-        agents: {
-          defaults: {
-            compaction: {
-              maxActiveTranscriptBytes: "10b",
-            },
-          },
-        },
-      },
-      followupRun: createTestFollowupRun({
-        sessionId: "session",
-        sessionFile,
-        sessionKey: "main",
-      }),
-      defaultModel: "anthropic/claude-opus-4-6",
-      modelContextTokens: 100_000,
-      sessionEntry,
-      sessionStore,
-      sessionKey: "main",
-      storePath: path.join(rootDir, "sessions.json"),
-      isHeartbeat: true,
-      ...createCompactionLifecycle(replyOperation),
-    });
-
-    expect(entry?.compactionCount).toBe(1);
-    expect(replyOperation.setPhase).toHaveBeenCalledWith("preflight_compacting");
-    const compactCall = requireCompactEmbeddedAgentSessionCall();
-    expect(compactCall.sessionId).toBe("session");
-    expect(compactCall.trigger).toBe("budget");
-    expect(compactCall.preflightCompactionTrigger).toBe("transcript_bytes");
-  });
-
-  it("keeps heartbeat token maintenance skipped while the transcript is below the byte fuse", async () => {
-    const sessionFile = path.join(rootDir, "heartbeat-under-byte-fuse-session.jsonl");
-    await writeTestSessionTranscript({
-      rootDir,
-      events: [{ type: "message", message: { role: "user", content: "x".repeat(256) } }],
-    });
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+      expectedCompaction: true,
+    },
+    {
+      name: "skips token maintenance for an under-cap embedded heartbeat",
+      runtime: "embedded",
+      heartbeat: true,
+      overCap: false,
       totalTokens: 90_000,
+      expectedCompaction: false,
+    },
+    {
+      name: "requires native preflight for an oversized Codex heartbeat transcript",
+      runtime: "codex",
+      heartbeat: true,
+      overCap: true,
+      totalTokens: 10,
+      expectedCompaction: true,
+    },
+    {
+      name: "leaves an under-cap Codex heartbeat to native token maintenance",
+      runtime: "codex",
+      heartbeat: true,
+      overCap: false,
+      totalTokens: 90_000,
+      expectedCompaction: false,
+    },
+  ] as const)("$name", async ({ runtime, heartbeat, overCap, totalTokens, expectedCompaction }) => {
+    const storePath = path.join(rootDir, "sessions.json");
+    const sessionKey = runtime === "codex" ? "agent:main:main" : "main";
+    const scope = { agentId: "main", sessionId: "session", sessionKey, storePath };
+    await upsertSessionEntryCore(scope, { sessionId: "session", updatedAt: 10 });
+    await replaceTranscriptEvents(scope, [
+      { type: "message", message: { role: "user", content: "x".repeat(256) } },
+    ]);
+    const maxActiveTranscriptBytes = overCap ? "10b" : "10kb";
+    const activeTranscriptBytes = readSessionTranscriptActiveStats(scope).sizeBytes;
+    if (overCap) {
+      expect(activeTranscriptBytes).toBeGreaterThanOrEqual(10);
+    } else {
+      expect(activeTranscriptBytes).toBeLessThan(10 * 1024);
+    }
+
+    const sessionEntry: SessionEntry = {
+      sessionId: "session",
+      updatedAt: Date.now(),
+      totalTokens,
       totalTokensFresh: true,
       totalTokensVersion: 1,
       compactionCount: 0,
+      ...(runtime === "codex"
+        ? { agentRuntimeOverride: "codex", agentHarnessId: "openclaw" }
+        : {}),
     };
+    const sessionStore = { [sessionKey]: sessionEntry };
     const replyOperation = createReplyOperation();
 
     const entry = await runSessionCompactionIfNeeded({
       cfg: {
         agents: {
           defaults: {
-            compaction: {
-              maxActiveTranscriptBytes: "10mb",
-            },
+            compaction: { maxActiveTranscriptBytes },
           },
         },
       },
       followupRun: createTestFollowupRun({
+        provider: runtime === "codex" ? "openai" : undefined,
+        model: runtime === "codex" ? "gpt-5.5" : undefined,
         sessionId: "session",
-        sessionFile,
-        sessionKey: "main",
+        sessionKey,
       }),
-      defaultModel: "anthropic/claude-opus-4-6",
+      defaultModel: runtime === "codex" ? "gpt-5.5" : "anthropic/claude-opus-4-6",
       modelContextTokens: 100_000,
       sessionEntry,
-      sessionStore: { main: sessionEntry },
-      sessionKey: "main",
-      storePath: path.join(rootDir, "sessions.json"),
-      isHeartbeat: true,
+      sessionStore,
+      sessionKey,
+      storePath,
+      isHeartbeat: heartbeat,
       ...createCompactionLifecycle(replyOperation),
     });
 
-    expect(entry).toBe(sessionEntry);
-    expect(replyOperation.setPhase).not.toHaveBeenCalled();
-    expect(compactEmbeddedAgentSessionMock).not.toHaveBeenCalled();
+    if (!expectedCompaction) {
+      expect(entry).toBe(sessionEntry);
+      expect(replyOperation.setPhase).not.toHaveBeenCalled();
+      expect(compactEmbeddedAgentSessionMock).not.toHaveBeenCalled();
+      expect(incrementCompactionCountMock).not.toHaveBeenCalled();
+      return;
+    }
+
+    expect(entry?.compactionCount).toBe(1);
+    expect(replyOperation.setPhase).toHaveBeenCalledWith("preflight_compacting");
+    expect(compactEmbeddedAgentSessionMock).toHaveBeenCalledOnce();
+    const compactCall = requireCompactEmbeddedAgentSessionCall();
+    expect(compactCall).toMatchObject({
+      sessionId: "session",
+      sessionKey,
+      sessionFile: sessionKey,
+      trigger: "budget",
+      preflightCompactionTrigger: "transcript_bytes",
+      ...(runtime === "codex" ? { agentHarnessId: "codex", preflightRequired: true } : {}),
+    });
   });
 
   it("does not repeat byte-triggered compaction until an oversized successor grows by one threshold", async () => {
