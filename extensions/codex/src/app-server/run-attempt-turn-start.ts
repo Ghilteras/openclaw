@@ -18,6 +18,7 @@ import {
 } from "./attempt-results.js";
 import { isCodexContextRestartSelectionChangedError } from "./attempt-startup.js";
 import type { EmbeddedRunAttemptResult } from "./attempt-terminal.js";
+import { buildPluginAppPolicyContext } from "./plugin-thread-config.js";
 import type { CodexTurnStartResponse } from "./protocol.js";
 import { emitCodexAppServerEvent, runCodexAgentEndHook } from "./run-attempt-lifecycle.js";
 import type { CodexAttemptNotificationController } from "./run-attempt-notification-controller.js";
@@ -313,11 +314,12 @@ export async function startCodexAttemptTurn(
     throw new Error("codex app-server turn/start failed without an error");
   }
   const authoritySourceRef = context.attemptTools.scheduledAppAuthoritySourceRef;
-  if (resourceState.thread.pluginAppPolicyContext) {
+  if (resourceState.thread.pluginAppPolicyContext || runtime.nativeToolSurfaceEnabled) {
     authoritySourceRef.current = {
       client: resourceState.client,
       threadId: resourceState.thread.threadId,
-      policyContext: resourceState.thread.pluginAppPolicyContext,
+      policyContext:
+        resourceState.thread.pluginAppPolicyContext ?? buildPluginAppPolicyContext({}, {}),
       configCwd: connection.effectiveCwd,
     };
   }

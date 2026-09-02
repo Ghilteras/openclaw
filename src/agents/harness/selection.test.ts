@@ -1482,12 +1482,15 @@ describe("runAgentHarnessAttempt", () => {
     const received: Array<{
       conversationToolPolicy: EmbeddedRunAttemptParams["conversationToolPolicy"];
       pluginHarnessToolPolicyRestricted: boolean | undefined;
+      pluginHarnessConfiguredToolPolicyRestricted: boolean | undefined;
       toolsAllow: string[] | undefined;
     }> = [];
     const runAttempt = vi.fn<AgentHarness["runAttempt"]>(async (attempt) => {
       received.push({
         conversationToolPolicy: attempt.conversationToolPolicy,
         pluginHarnessToolPolicyRestricted: attempt.pluginHarnessToolPolicyRestricted,
+        pluginHarnessConfiguredToolPolicyRestricted:
+          attempt.pluginHarnessConfiguredToolPolicyRestricted,
         toolsAllow: attempt.toolsAllow,
       });
       return createAttemptResult("codex");
@@ -1516,14 +1519,37 @@ describe("runAgentHarnessAttempt", () => {
       {
         conversationToolPolicy: { deny: ["exec"] },
         pluginHarnessToolPolicyRestricted: true,
+        pluginHarnessConfiguredToolPolicyRestricted: true,
         toolsAllow: undefined,
       },
       {
         conversationToolPolicy: { deny: ["exec"] },
         pluginHarnessToolPolicyRestricted: true,
+        pluginHarnessConfiguredToolPolicyRestricted: true,
         toolsAllow: ["Read", "Bash"],
       },
     ]);
+  });
+
+  it("distinguishes a saved tool cap from independently configured native restrictions", async () => {
+    const runAttempt = vi.fn<AgentHarness["runAttempt"]>(async () => createAttemptResult("codex"));
+    registerAgentHarness(
+      {
+        id: "codex",
+        label: "Codex",
+        conversationToolPolicySupport: "exact",
+        supports: (ctx) =>
+          ctx.provider === "codex" ? { supported: true, priority: 100 } : { supported: false },
+        runAttempt,
+      },
+      { ownerPluginId: "codex" },
+    );
+    await runAgentHarnessAttempt({ ...createAttemptParams(), toolsAllow: ["message"] });
+    expect(runAttempt.mock.calls[0]?.[0]).toMatchObject({
+      toolsAllow: ["message"],
+      pluginHarnessToolPolicyRestricted: true,
+      pluginHarnessConfiguredToolPolicyRestricted: false,
+    });
   });
 
   it("isolates native tools unless every exact deny is explicitly safe", async () => {

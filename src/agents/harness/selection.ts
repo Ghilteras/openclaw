@@ -166,6 +166,7 @@ type ResolvedPluginHarnessToolPolicies = {
   runtimePolicies: Array<PluginHarnessToolPolicy | undefined>;
   safeDeniedToolNames: string[];
   toolPolicyRestricted: boolean;
+  configuredToolPolicyRestricted: boolean;
 };
 
 function listPluginAgentHarnesses(): AgentHarness[] {
@@ -686,6 +687,7 @@ function preparePluginHarnessParams(
       pluginHarnessToolPolicySafeDeniedTools:
         policies.safeDeniedToolNames.length > 0 ? policies.safeDeniedToolNames : undefined,
       pluginHarnessToolPolicyRestricted: policies.toolPolicyRestricted,
+      pluginHarnessConfiguredToolPolicyRestricted: policies.configuredToolPolicyRestricted,
     },
     policies,
   );
@@ -835,7 +837,7 @@ export function resolvePluginHarnessToolPolicies(
     : params.toolsAllow
       ? { allow: params.toolsAllow }
       : undefined;
-  const explicitPolicies = [
+  const configuredPolicies = [
     policy.globalPolicy,
     policy.globalProviderPolicy,
     policy.agentPolicy,
@@ -846,8 +848,8 @@ export function resolvePluginHarnessToolPolicies(
     policy.subagentPolicy,
     policy.inheritedToolPolicy,
     policy.runtimeToolPolicyForInheritance,
-    requestedToolPolicy,
   ];
+  const explicitPolicies = [...configuredPolicies, requestedToolPolicy];
   const safeDenyToolNameSet = safeDenyToolNames
     ? new Set(safeDenyToolNames.map(normalizeToolPolicyName))
     : undefined;
@@ -872,6 +874,14 @@ export function resolvePluginHarnessToolPolicies(
       requestedToolPolicy,
     ],
     safeDeniedToolNames: collectHarnessSafeDeniedToolNames(explicitPolicies, safeDenyToolNameSet),
+    // A saved job may also carry independently captured harness capabilities.
+    // Keep the configured/requester ceiling separate so a harness can honor that
+    // capture without treating the job's core-tool list as a new global policy.
+    configuredToolPolicyRestricted:
+      params.swarmCollector === true ||
+      configuredPolicies.some((explicitPolicy) =>
+        toolPolicyRestrictsHarnessNativeTools(explicitPolicy, safeDenyToolNameSet),
+      ),
     // Native tools bypass the collector's noninteractive OpenClaw wrappers.
     // Keep policy-allowed host replacements, without ambient input or approval surfaces.
     toolPolicyRestricted:

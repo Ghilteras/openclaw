@@ -24,6 +24,20 @@ import { withAbortableTimeout } from "./timeout.js";
 
 const CODEX_SCHEDULED_APP_AUTHORITY_NAMESPACE = "codex.apps";
 const CODEX_APPS_MCP_SERVER = "codex_apps";
+// A persisted capability, never an executable tool. A name alone grants nothing:
+// replay also requires the host-owned authority captured on the exact creator run.
+export const CODEX_SCHEDULED_NATIVE_TOOLS_CAPABILITY = "codex_native";
+export const CODEX_SCHEDULED_APPS_CAPABILITY = "codex_apps";
+
+export function readScheduledCodexCapabilityNames(
+  authority: EmbeddedRunAttemptParams["scheduledRuntimeAuthority"],
+): string[] {
+  const captured = parseScheduledCodexAppAuthority(authority);
+  return [
+    ...(captured?.apps.length ? [CODEX_SCHEDULED_APPS_CAPABILITY] : []),
+    ...(captured?.nativeTools ? [CODEX_SCHEDULED_NATIVE_TOOLS_CAPABILITY] : []),
+  ];
+}
 const MCP_STATUS_PAGE_SIZE = 100;
 const MCP_STATUS_MAX_PAGES = 100;
 const CODEX_APP_AUTHORITY_CAPTURE_TIMEOUT_MS = 60_000;
@@ -39,6 +53,7 @@ type CodexScheduledAppTool = {
 export type CurrentCodexScheduledAppPolicy = {
   config: Record<string, unknown>;
   toolsByApp: ReadonlyMap<string, ReadonlyMap<string, CodexScheduledAppTool>>;
+  mcpServerNames?: readonly string[];
 };
 
 export type ScheduledCodexAppCreatorAuth =
@@ -74,13 +89,14 @@ export function buildScheduledCodexAppServerConnectionIdentity(
 
 export function resolveScheduledCodexAppCreatorCaptureDecision(params: {
   appsMayBeVisible: boolean;
+  nativeToolsMayBeVisible?: boolean;
   authenticatedScheduledMode: boolean;
   usesSupervisionConnection: boolean;
   homeScope: string | undefined;
   hasPreparedAccountIdentity: boolean;
   hasConfiguredAppServerIdentity: boolean;
 }): { required: boolean; supported: boolean; unavailableReason?: string } {
-  if (!params.appsMayBeVisible) {
+  if (!params.appsMayBeVisible && !params.nativeToolsMayBeVisible) {
     return { required: false, supported: false };
   }
   const unavailableReason = params.authenticatedScheduledMode
@@ -116,6 +132,7 @@ type ScheduledCodexAppAuthorityAuth =
 type ScheduledCodexAppAuthorityPayload = {
   version: 1;
   auth: ScheduledCodexAppAuthorityAuth;
+  nativeTools?: { mcpServers: string[] };
   apps: Array<{
     id: string;
     allowDestructiveActions: boolean;
@@ -212,7 +229,43 @@ function parseScheduledCodexAppAuthority(
       tools,
     };
   });
-  return { version: 1, auth: parsedAuth, apps };
+  let nativeTools: ScheduledCodexAppAuthorityPayload["nativeTools"];
+  if (payload.nativeTools !== undefined) {
+    const native = asOptionalRecord(payload.nativeTools);
+    if (
+      !native ||
+      !Array.isArray(native.mcpServers) ||
+      native.mcpServers.some(
+        (name) => typeof name !== "string" || !name.trim() || name !== name.trim(),
+      )
+    ) {
+      throw new Error(
+        "Stored Codex native tool authority is invalid; reauthorize this automation.",
+      );
+    }
+    nativeTools = { mcpServers: [...new Set<string>(native.mcpServers)].toSorted() };
+  }
+  return { version: 1, auth: parsedAuth, apps, ...(nativeTools ? { nativeTools } : {}) };
+}
+
+/** Current config remains the ceiling; the cron cap only selects captured runtime authority. */
+export function hasScheduledCodexNativeToolAuthority(
+  params: Pick<
+    EmbeddedRunAttemptParams,
+    | "trigger"
+    | "scheduledToolPolicy"
+    | "pluginHarnessConfiguredToolPolicyRestricted"
+    | "toolsAllow"
+    | "scheduledRuntimeAuthority"
+  >,
+): boolean {
+  return (
+    params.trigger === "cron" &&
+    params.scheduledToolPolicy !== undefined &&
+    params.pluginHarnessConfiguredToolPolicyRestricted === false &&
+    params.toolsAllow?.includes(CODEX_SCHEDULED_NATIVE_TOOLS_CAPABILITY) === true &&
+    parseScheduledCodexAppAuthority(params.scheduledRuntimeAuthority)?.nativeTools !== undefined
+  );
 }
 
 type CodexScheduledAppPolicyRequest = (
@@ -223,8 +276,12 @@ type CodexScheduledAppPolicyRequest = (
 async function readCodexScheduledAppToolsByApp(params: {
   request: CodexScheduledAppPolicyRequest;
   threadId?: string;
-}): Promise<Map<string, Map<string, CodexScheduledAppTool>>> {
+}): Promise<{
+  toolsByApp: Map<string, Map<string, CodexScheduledAppTool>>;
+  mcpServerNames: string[];
+}> {
   const toolsByApp = new Map<string, Map<string, CodexScheduledAppTool>>();
+  const mcpServerNames = new Set<string>();
   const seenCursors = new Set<string>();
   let cursor: string | null | undefined;
   for (let page = 0; page < MCP_STATUS_MAX_PAGES; page += 1) {
@@ -242,6 +299,10 @@ async function readCodexScheduledAppToolsByApp(params: {
         throw new Error("Codex scheduled app inventory contained an invalid server status");
       }
       if (status.name !== CODEX_APPS_MCP_SERVER) {
+        const name = normalizeOptionalString(status.name);
+        if (name && Object.keys(status.tools).length > 0) {
+          mcpServerNames.add(name);
+        }
         continue;
       }
       for (const [toolName, tool] of Object.entries(status.tools)) {
@@ -268,7 +329,7 @@ async function readCodexScheduledAppToolsByApp(params: {
     }
     cursor = response.nextCursor;
     if (!cursor) {
-      return toolsByApp;
+      return { toolsByApp, mcpServerNames: [...mcpServerNames].toSorted() };
     }
     if (seenCursors.has(cursor)) {
       throw new Error("Codex app connector inventory repeated its pagination cursor");
@@ -284,7 +345,7 @@ export async function readCurrentCodexScheduledAppPolicy(params: {
   configCwd?: string;
   threadId?: string;
 }): Promise<CurrentCodexScheduledAppPolicy> {
-  const [configResponse, toolsByApp] = await Promise.all([
+  const [configResponse, inventory] = await Promise.all([
     params.request("config/read", {
       includeLayers: false,
       ...(params.configCwd ? { cwd: params.configCwd } : {}),
@@ -296,7 +357,7 @@ export async function readCurrentCodexScheduledAppPolicy(params: {
   }
   return {
     config: isJsonObject(configResponse.config) ? configResponse.config : {},
-    toolsByApp,
+    ...inventory,
   };
 }
 
@@ -355,6 +416,7 @@ export async function captureScheduledCodexAppAuthority(params: {
   threadId: string;
   policyContext: PluginAppPolicyContext;
   auth: ScheduledCodexAppCreatorAuth;
+  captureNativeTools?: boolean;
   configCwd?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -453,7 +515,7 @@ export async function captureScheduledCodexAppAuthority(params: {
       ),
     }))
     .toSorted((left, right) => left.id.localeCompare(right.id));
-  if (apps.length === 0) {
+  if (apps.length === 0 && !params.captureNativeTools) {
     return undefined;
   }
   return {
@@ -464,6 +526,9 @@ export async function captureScheduledCodexAppAuthority(params: {
       version: 1,
       auth,
       apps,
+      ...(params.captureNativeTools
+        ? { nativeTools: { mcpServers: [...(currentPolicy.mcpServerNames ?? [])] } }
+        : {}),
     },
   };
 }
@@ -582,6 +647,24 @@ export function intersectCodexPluginThreadConfigWithScheduledAuthority(
   );
   const policyContext = buildPluginAppPolicyContext(apps, pluginAppIds);
   const configPatch = buildCodexPluginAppsConfigPatchFromPolicyContext(policyContext);
+  if (scheduled.nativeTools) {
+    const capturedServers = new Set(scheduled.nativeTools.mcpServers);
+    const currentServers = new Set([
+      ...Object.keys(asOptionalRecord(currentPolicy.config.mcp_servers) ?? {}),
+      ...(currentPolicy.mcpServerNames ?? []),
+    ]);
+    // Restoring native execution must not silently admit a plugin installed
+    // after this job was authorized. Never enable a currently disabled server;
+    // the current Codex configuration still owns transport and authentication.
+    const deniedServers = [...currentServers].filter(
+      (name) => name !== CODEX_APPS_MCP_SERVER && !capturedServers.has(name),
+    );
+    if (deniedServers.length > 0) {
+      configPatch.mcp_servers = Object.fromEntries(
+        deniedServers.toSorted().map((name) => [name, { enabled: false }]),
+      );
+    }
+  }
   const appsPatch = asOptionalRecord(configPatch.apps);
   for (const [appId, captured] of capturedById) {
     const appPatch = asOptionalRecord(appsPatch?.[appId]);

@@ -9,6 +9,7 @@ const mcpMocks = vi.hoisted(() => ({
     (options?: { signal?: AbortSignal }) => Promise<{
       tools: readonly (string | { name: string; pluginId?: string })[];
       provenance: { version: 1; source: "final-executable-surface" };
+      runtimeAuthority?: NonNullable<ReturnType<typeof createParams>["scheduledRuntimeAuthority"]>;
     }>
   >,
   captureCalls: [] as Array<{
@@ -231,6 +232,73 @@ function admitLocalOperatorCronAuthority(params: ReturnType<typeof createParams>
 }
 
 describe("runCodexAppServerAttempt configured MCP ownership", () => {
+  it("captures native authority on the creator and keeps native tools on scheduled replay", async () => {
+    const pluginConfig = {
+      appServer: {
+        transport: "websocket" as const,
+        url: "wss://codex.example.test/app-server",
+        homeScope: "agent" as const,
+        authToken: "fixture-token",
+      },
+      codexPlugins: { enabled: false },
+    };
+    const inventory = async (method: string) => {
+      if (method === "app/installed") {
+        return { apps: [] };
+      }
+      if (method === "mcpServerStatus/list") {
+        return { data: [{ name: "docs", tools: { search: {} } }], nextCursor: null };
+      }
+      return undefined;
+    };
+    const creator = createParams(
+      path.join(tempDir, "creator.jsonl"),
+      path.join(tempDir, "workspace"),
+    );
+    setCodexTestModelSupportsTools(creator, true);
+    creator.runtimePlan = createCodexRuntimePlanFixture();
+    creator.trigger = "user";
+    admitLocalOperatorCronAuthority(creator);
+    const creatorHarness = createStartedThreadHarness(inventory);
+    const creatorRun = runCodexAppServerAttempt(creator, { pluginConfig });
+    await creatorHarness.waitForMethod("turn/start");
+    await vi.waitFor(() => expect(mcpMocks.authorityResolvers.length).toBeGreaterThan(0));
+    const captured = await mcpMocks.authorityResolvers[0]!();
+    expect(captured.tools).toContain("codex_native");
+    expect(captured.runtimeAuthority?.payload).toMatchObject({
+      apps: [],
+      nativeTools: { mcpServers: ["docs"] },
+    });
+    // The provisional dynamic catalog cannot independently authorize this name.
+    expect(mcpMocks.captureCalls[0]?.storedNames).not.toContain("codex_native");
+    await creatorHarness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+    await creatorRun;
+
+    const scheduled = createParams(
+      path.join(tempDir, "scheduled.jsonl"),
+      path.join(tempDir, "workspace"),
+      { sessionId: "scheduled", sessionKey: "agent:main:cron:fixture", runId: "scheduled-run" },
+    );
+    setCodexTestModelSupportsTools(scheduled, true);
+    scheduled.runtimePlan = createCodexRuntimePlanFixture();
+    scheduled.trigger = "cron";
+    scheduled.toolsAllow = ["message", "codex_native"];
+    scheduled.scheduledToolPolicy = { version: 1, mode: "trusted" };
+    scheduled.scheduledRuntimeAuthority = captured.runtimeAuthority;
+    scheduled.pluginHarnessToolPolicyRestricted = true;
+    scheduled.pluginHarnessConfiguredToolPolicyRestricted = false;
+    const replayHarness = createStartedThreadHarness(inventory);
+    const replay = runCodexAppServerAttempt(scheduled, { pluginConfig });
+    await replayHarness.waitForMethod("turn/start");
+    const request = replayHarness.requests.find((request) => request.method === "thread/start")
+      ?.params as { config?: Record<string, unknown> };
+    expect(request.config?.["features.shell_tool"]).not.toBe(false);
+    expect(request.config?.["features.unified_exec"]).not.toBe(false);
+    expect(scheduled.toolsAllow).toEqual(["message", "codex_native"]);
+    await replayHarness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+    await expect(replay).resolves.toBeDefined();
+  });
+
   it("does not replace bundle discovery with partial prepared plugin metadata", async () => {
     const sessionFile = path.join(tempDir, "session-partial-manifest-registry.jsonl");
     const params = createParams(sessionFile, path.join(tempDir, "workspace-partial-registry"));

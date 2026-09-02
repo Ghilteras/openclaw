@@ -362,6 +362,43 @@ describe("Codex app-server dynamic tool build", () => {
     expect(shouldEnableCodexAppServerNativeToolSurface(params)).toBe(false);
   });
 
+  it("retains captured native execution for scheduled jobs without widening their core tool cap", () => {
+    const params = createParams("/tmp/session.jsonl", "/tmp/workspace");
+    Object.assign(params, {
+      disableTools: false,
+      trigger: "cron",
+      toolsAllow: ["message", "codex_native"],
+      scheduledToolPolicy: { version: 1, mode: "trusted" },
+      pluginHarnessToolPolicyRestricted: true,
+      pluginHarnessConfiguredToolPolicyRestricted: false,
+      scheduledRuntimeAuthority: {
+        version: 1,
+        runtimeId: "codex",
+        namespace: "codex.apps",
+        payload: {
+          version: 1,
+          auth: { profileId: "codex:work", accountId: "account-1" },
+          apps: [],
+          nativeTools: { mcpServers: [] },
+        },
+      },
+    });
+
+    // A saved list of OpenClaw tools does not describe the native shell on the
+    // Codex host. Losing that distinction silently moves work to the gateway.
+    expect(shouldEnableCodexAppServerNativeToolSurface(params)).toBe(true);
+    expect(params.toolsAllow).toEqual(["message", "codex_native"]);
+
+    Object.assign(params, { pluginHarnessConfiguredToolPolicyRestricted: true });
+    expect(shouldEnableCodexAppServerNativeToolSurface(params)).toBe(false);
+    Object.assign(params, { pluginHarnessConfiguredToolPolicyRestricted: false });
+    params.toolsAllow = ["message"];
+    expect(shouldEnableCodexAppServerNativeToolSurface(params)).toBe(false);
+    params.toolsAllow = ["message", "codex_native"];
+    params.scheduledRuntimeAuthority = undefined;
+    expect(shouldEnableCodexAppServerNativeToolSurface(params)).toBe(false);
+  });
+
   it("keeps policy-filterable OpenClaw coding replacements when native tools are disabled", () => {
     const tools = [
       "read",

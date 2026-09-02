@@ -234,7 +234,7 @@ export function prepareCodexAttemptResources(prompt: CodexAttemptPrompt) {
     decision: { action: "resume"; binding: CodexAppServerThreadBinding } | { action: "start" },
   ) => {
     state.nativeHookRelay?.unregister();
-    if (params.pluginHarnessToolPolicyRestricted === true) {
+    if (runtime.runtimeParams.pluginHarnessToolPolicyRestricted === true) {
       state.nativeHookRelay = undefined;
       return {
         configPatch: buildCodexNativeHookRelayDisabledConfig(),

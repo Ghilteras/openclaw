@@ -186,6 +186,24 @@ that authority; the next run reports that app access requires reauthorization.
 An update from a fresh authenticated owner turn can instead capture and store a
 new app ceiling for the updated job.
 
+When the same creator has Codex native execution, a default agent-turn job also
+captures that runtime capability. Its saved `toolsAllow` contains `codex_native`
+beside the ordinary OpenClaw tools. This is an authorization marker, not a tool
+to call: the marker alone grants nothing. Replay requires the captured runtime
+identity, current policy, and a compatible sandbox. Inherited MCP servers are
+limited to those callable on the creator thread; newly connected servers are
+not silently added to an existing job.
+
+To repair an older job that previously used native execution, update it from a
+fresh authenticated owner turn, retaining its existing tool names and adding
+`codex_native`. The update captures current runtime authority before saving.
+Keep its schedule, prompt, delivery target, and enabled state unchanged. Do not
+replace a deliberately narrow cap with `*`, and do not manually insert an
+authority envelope into storage. For a job that only needs connected apps, add
+`codex_apps` instead; it triggers the same authenticated capture without
+selecting native execution. Neither name can manufacture authority through a
+raw CLI or Gateway API write.
+
 ## Manage plugins from chat
 
 `/codex plugins` inspects or changes configured native Codex plugins from the

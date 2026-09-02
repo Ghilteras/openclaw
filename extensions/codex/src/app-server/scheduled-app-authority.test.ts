@@ -13,6 +13,7 @@ import {
   captureScheduledCodexAppAuthority,
   intersectCodexPluginThreadConfigWithScheduledAuthority,
   readCurrentCodexScheduledAppPolicy,
+  readScheduledCodexCapabilityNames,
   resolveScheduledCodexAppCreatorCaptureDecision,
 } from "./scheduled-app-authority.js";
 import { readCodexManagedRequirementsFingerprint } from "./thread-requests.js";
@@ -97,6 +98,73 @@ function threadConfig(): CodexPluginThreadConfig {
 }
 
 describe("scheduled Codex app authority", () => {
+  it("captures app and native capabilities independently without upgrading an older envelope", () => {
+    expect(readScheduledCodexCapabilityNames(undefined)).toEqual([]);
+    expect(readScheduledCodexCapabilityNames(authority())).toEqual(["codex_apps"]);
+    expect(
+      readScheduledCodexCapabilityNames(authority({ nativeTools: { mcpServers: [] } })),
+    ).toEqual(["codex_apps", "codex_native"]);
+    expect(() =>
+      readScheduledCodexCapabilityNames(authority({ nativeTools: { mcpServers: [false] } })),
+    ).toThrow("native tool authority is invalid");
+  });
+  it("captures the active native runtime even when it has no connected apps", async () => {
+    const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === "app/installed") {
+        return { apps: [] };
+      }
+      if (method === "config/read") {
+        return { config: {} };
+      }
+      if (method === "mcpServerStatus/list") {
+        expect(params.threadId).toBe("native-creator");
+        return {
+          data: [
+            { name: "docs", tools: { search: {} } },
+            { name: "unavailable", tools: {} },
+          ],
+          nextCursor: null,
+        };
+      }
+      throw new Error(`unexpected method ${method}`);
+    });
+    await expect(
+      captureScheduledCodexAppAuthority({
+        client: { request } as never,
+        threadId: "native-creator",
+        policyContext: buildPluginAppPolicyContext({}, {}),
+        auth: { kind: "prepared-profile", profileId: "codex:work", accountId: "account-1" },
+        captureNativeTools: true,
+      }),
+    ).resolves.toEqual(
+      authority({
+        auth: { profileId: "codex:work", accountId: "account-1" },
+        apps: [],
+        nativeTools: { mcpServers: ["docs"] },
+      }),
+    );
+  });
+
+  it("does not admit inherited MCP servers added after native authority was captured", () => {
+    const intersected = intersectCodexPluginThreadConfigWithScheduledAuthority(
+      threadConfig(),
+      authority({ apps: [], nativeTools: { mcpServers: ["docs"] } }),
+      {
+        config: { mcp_servers: { docs: {}, newly_connected: {}, unavailable: {} } },
+        toolsByApp: new Map(),
+        mcpServerNames: ["docs", "newly_connected"],
+      },
+    );
+    expect(intersected.configPatch).toMatchObject({
+      mcp_servers: {
+        newly_connected: { enabled: false },
+        unavailable: { enabled: false },
+      },
+    });
+    expect(intersected.configPatch.mcp_servers).not.toHaveProperty("docs");
+    expect(intersected.provisionalAppIds).toEqual([]);
+  });
+
   it.each([
     {
       name: "scheduled continuation",

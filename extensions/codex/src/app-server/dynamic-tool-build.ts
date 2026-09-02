@@ -45,6 +45,7 @@ import {
 import type { CodexSandboxPolicy, CodexTurnEnvironmentParams } from "./protocol.js";
 import { mapCodexAppServerRemoteWorkspacePath } from "./remote-workspace-path.js";
 import type { CodexSandboxExecEnvironment } from "./sandbox-exec-server.js";
+import { hasScheduledCodexNativeToolAuthority } from "./scheduled-app-authority.js";
 import type { CodexEffectiveSessionPermissionPolicy } from "./session-permission-policy.js";
 import {
   CODEX_GATEWAY_EXEC_DYNAMIC_TOOL_NAME,
@@ -670,7 +671,8 @@ export function shouldEnableCodexAppServerNativeToolSurface(
     sandboxExecServerEnabled?: boolean;
   } = {},
 ): boolean {
-  if (params.pluginHarnessToolPolicyRestricted === true) {
+  const capturedNativeTools = hasScheduledCodexNativeToolAuthority(params);
+  if (params.pluginHarnessToolPolicyRestricted === true && !capturedNativeTools) {
     return false;
   }
   if (isCodexMemoryFlushRun(params)) {
@@ -696,7 +698,7 @@ export function shouldEnableCodexAppServerNativeToolSurface(
   // capability, so narrow OpenClaw allowlists must fail closed rather than
   // widening `message` or `web_search` into shell access.
   return (
-    hasWildcardCodexToolsAllow(toolsAllow) &&
+    (hasWildcardCodexToolsAllow(toolsAllow) || capturedNativeTools) &&
     canCodexAppServerNativeToolSurfaceHonorSandbox(sandbox, options)
   );
 }

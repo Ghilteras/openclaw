@@ -123,7 +123,7 @@ export async function startCodexAttemptRuntime(resources: CodexAttemptResources)
       buildFinalConfigPatch: buildNativeHookRelayFinalConfigPatch,
       nativeHookRelayRequired:
         connection.options.nativeHookRelay?.enabled !== false &&
-        params.pluginHarnessToolPolicyRestricted !== true &&
+        runtimeParams.pluginHarnessToolPolicyRestricted !== true &&
         connection.nativeHookRelayEvents.includes("pre_tool_use") &&
         (hasBeforeToolCallPolicy() ||
           (appServer.loopDetectionPreToolUseRelay &&

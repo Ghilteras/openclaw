@@ -115,7 +115,7 @@ export async function prepareCodexAttemptRuntime(connection: CodexAttemptConnect
     maxTokens: undefined,
   } as unknown as EmbeddedRunAttemptParams["model"];
   const legacyScheduledAppRecoveryPrompt = buildLegacyScheduledCodexAppRecoveryPrompt(params);
-  const runtimeParams: EmbeddedRunAttemptParams = usesSupervisionConnection
+  let runtimeParams: EmbeddedRunAttemptParams = usesSupervisionConnection
     ? {
         ...paramsWithoutOuterNativeOwnership,
         provider: "codex",
@@ -224,6 +224,13 @@ export async function prepareCodexAttemptRuntime(connection: CodexAttemptConnect
     sandbox,
     { agentId: policyAgentId, runtimeSessionKey: sandboxSessionKey, sandboxExecServerEnabled },
   );
+  if (nativeToolSurfaceEnabled && runtimeParams.pluginHarnessToolPolicyRestricted === true) {
+    // Native eligibility above requires captured authority, an unrestricted
+    // current configured policy, and a compatible execution sandbox. Only the
+    // plugin's effective native-policy fact changes; the saved OpenClaw tool cap
+    // stays intact. All subsequent thread setup and native hooks use this view.
+    runtimeParams = { ...runtimeParams, pluginHarnessToolPolicyRestricted: false };
+  }
   preDynamicStartupStages.mark("native-tool-surface");
   const nativeProviderWebSearchSupport =
     resolveCodexWebSearchPlan({

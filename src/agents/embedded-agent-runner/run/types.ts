@@ -126,6 +126,8 @@ export type EmbeddedRunAttemptParams = EmbeddedRunAttemptBase & {
   operation?: EmbeddedRunAttemptOperation;
   /** Core-prepared fact that explicit requester/config policy restricts plugin-native tools. */
   pluginHarnessToolPolicyRestricted?: boolean;
+  /** Same fact before the per-run tool cap; captured runtime authority cannot override it. */
+  pluginHarnessConfiguredToolPolicyRestricted?: boolean;
   /** Audited exact denies that the plugin harness must enforce against native equivalents. */
   pluginHarnessToolPolicySafeDeniedTools?: readonly string[];
   preparedModelRuntime?: PreparedModelRuntimeSnapshot;

@@ -34,6 +34,7 @@ import {
   buildScheduledCodexAppServerConnectionIdentity,
   captureScheduledCodexAppAuthority,
   resolveScheduledCodexAppCreatorCaptureDecision,
+  readScheduledCodexCapabilityNames,
 } from "./scheduled-app-authority.js";
 import { releaseLeasedSharedCodexAppServerClient } from "./shared-client.js";
 
@@ -174,12 +175,18 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
         }
       : undefined;
   const scheduledCodexAppAuth = preparedChatgptAuth ?? configuredAppServerAuth;
+  const captureNativeTools =
+    nativeToolSurfaceEnabled &&
+    scheduledCodexAppAuth !== undefined &&
+    !connection.usesSupervisionConnection &&
+    connection.appServer.start.homeScope !== "user";
   const appPolicy = resolveCodexPluginsPolicy(pluginConfig);
   const codexAppsMayBeVisible =
     appPolicy.enabled &&
     (appPolicy.allowAllPlugins || appPolicy.pluginPolicies.some((entry) => entry.enabled));
   const appCreatorCapture = resolveScheduledCodexAppCreatorCaptureDecision({
     appsMayBeVisible: codexAppsMayBeVisible,
+    nativeToolsMayBeVisible: captureNativeTools,
     authenticatedScheduledMode,
     usesSupervisionConnection: connection.usesSupervisionConnection,
     homeScope: connection.appServer.start.homeScope,
@@ -517,6 +524,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
               ? await captureScheduledCodexAppAuthority({
                   ...appSource,
                   auth: scheduledCodexAppAuth,
+                  captureNativeTools,
                   signal: options?.signal,
                 })
               : (() => {
@@ -525,7 +533,14 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
                   );
                 })()
             : undefined;
+        // Add this only after exact-run authority resolution, not to the initial
+        // dynamic tool list. An explicit update requesting the capability must
+        // invoke the authenticated resolver rather than save an unbacked marker.
+        const appendCapturedRuntimeCapabilities = () => {
+          authorityTools.push(...readScheduledCodexCapabilityNames(runtimeAuthority));
+        };
         if (!canResolveScheduledConfiguredMcpCreatorAuthority) {
+          appendCapturedRuntimeCapabilities();
           options?.signal?.throwIfAborted();
           return Object.freeze({
             tools: Object.freeze(authorityTools.map((entry) => Object.freeze(entry))),
@@ -578,6 +593,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
             ...toolBridge.availableTools,
             ...projectedConfiguredMcp.availableTools,
           ]);
+          appendCapturedRuntimeCapabilities();
           if (!captureRef.value) {
             throw new Error("configured MCP authority snapshot did not produce provenance");
           }
