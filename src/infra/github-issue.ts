@@ -11,7 +11,13 @@ export type SanitizedGithubIssue = {
 export type GithubIssueCreateResult =
   | { ok: true; url: string }
   | { ambiguous: true; message: string; ok: false }
-  | { ambiguous?: false; fallbackUrl: string; message: string; ok: false };
+  | {
+      ambiguous?: false;
+      fallbackUrl: string;
+      issueCreateStarted: false;
+      message: string;
+      ok: false;
+    };
 
 type SpawnGh = (args: readonly string[], options: { input: string }) => GithubCliResult;
 
@@ -133,6 +139,7 @@ function resolveGithubAuthPreflightFailure(
 ): GithubIssueCreateResult {
   return {
     fallbackUrl: issue.url,
+    issueCreateStarted: false,
     message: githubCliFailureMessage(result),
     ok: false,
   };
@@ -167,7 +174,7 @@ function resolveGithubIssueCreateResult(
     result.started === false &&
     (errorCode === "ENOENT" || errorCode === "EACCES" || errorCode === "EPERM");
   return definitelyDidNotStart
-    ? { fallbackUrl: issue.url, message: error, ok: false }
+    ? { fallbackUrl: issue.url, issueCreateStarted: false, message: error, ok: false }
     : { ambiguous: true, message: error, ok: false };
 }
 
@@ -200,6 +207,20 @@ async function defaultRunGhAsync(
     let error: Error | undefined;
     let settled = false;
     let started = false;
+    const settle = (status: number | null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve({
+        ...(error ? { error } : {}),
+        status,
+        started,
+        stderr: Buffer.concat(stderr),
+        stdout: Buffer.concat(stdout),
+      });
+    };
     const appendBounded = (chunks: Buffer[], chunk: Buffer, currentBytes: number): number => {
       const remaining = 1024 * 1024 - currentBytes;
       if (remaining <= 0) {
@@ -227,22 +248,14 @@ async function defaultRunGhAsync(
           : "GitHub issue creation timed out";
       error = Object.assign(new Error(message), { code: "ETIMEDOUT" });
       child.kill("SIGKILL");
+      settle(null);
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      child.unref();
     }, GITHUB_ISSUE_CREATE_TIMEOUT_MS);
     timeout.unref?.();
-    child.on("close", (status) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      resolve({
-        ...(error ? { error } : {}),
-        status,
-        started,
-        stderr: Buffer.concat(stderr),
-        stdout: Buffer.concat(stdout),
-      });
-    });
+    child.on("close", settle);
     child.stdin.on("error", () => {
       // The process result owns the actionable error and fallback.
     });

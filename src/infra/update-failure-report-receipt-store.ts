@@ -140,6 +140,46 @@ export function reserveUpdateFailureReportReceiptRowSync(
     : { receipt: readReceipt(db, attemptId), reserved: false };
 }
 
+/** Renews one owned preparation before publishing a known-no-submission fallback. */
+export function refreshUpdateFailureReportReceiptPreparationRowSync(
+  db: DatabaseSync,
+  attemptId: string,
+  reservationId: string,
+): boolean {
+  const sentinelKey = receiptKey(attemptId);
+  const current = readRestartSentinelRowForKeySync(db, sentinelKey);
+  const currentReceipt = parseReceipt(current.kind === "valid" ? current.sentinel : null);
+  if (
+    current.kind !== "valid" ||
+    !currentReceipt ||
+    currentReceipt.status !== "preparing" ||
+    currentReceipt.reservationId !== reservationId
+  ) {
+    return false;
+  }
+  const nowMs = Date.now();
+  const refreshed: UpdateFailureReportReceipt = {
+    preparingSinceMs: nowMs,
+    reservationId,
+    status: "preparing",
+  };
+  const row = buildRestartSentinelRow(
+    buildReceiptPayload(refreshed),
+    nextRevision(current.sentinel.revision),
+    sentinelKey,
+  );
+  const stateDb = getNodeSqliteKysely<GatewayRestartSentinelDatabase>(db);
+  const result = executeSqliteQuerySync(
+    db,
+    stateDb
+      .updateTable("gateway_restart_sentinel")
+      .set(row)
+      .where("sentinel_key", "=", sentinelKey)
+      .where("updated_at_ms", "=", current.sentinel.revision),
+  );
+  return result.numAffectedRows === 1n;
+}
+
 /** Makes one preparation ambiguity-safe immediately before issue creation starts. */
 export function markUpdateFailureReportReceiptPendingRowSync(
   db: DatabaseSync,

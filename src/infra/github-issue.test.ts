@@ -84,6 +84,7 @@ describe("createGithubIssue", () => {
       }),
     ).resolves.toEqual({
       fallbackUrl,
+      issueCreateStarted: false,
       message: "External GitHub issue creation is disabled in test processes.",
       ok: false,
     });
@@ -93,14 +94,19 @@ describe("createGithubIssue", () => {
   it("returns a fallback when the async auth preflight times out", async () => {
     vi.useFakeTimers();
     const child = new EventEmitter() as EventEmitter & {
-      stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
-      stdout: EventEmitter;
-      stderr: EventEmitter;
+      stdin: EventEmitter & {
+        destroy: ReturnType<typeof vi.fn>;
+        end: ReturnType<typeof vi.fn>;
+      };
+      stdout: EventEmitter & { destroy: ReturnType<typeof vi.fn> };
+      stderr: EventEmitter & { destroy: ReturnType<typeof vi.fn> };
       kill: ReturnType<typeof vi.fn>;
+      unref: ReturnType<typeof vi.fn>;
     };
-    child.stdin = Object.assign(new EventEmitter(), { end: vi.fn() });
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
+    child.stdin = Object.assign(new EventEmitter(), { destroy: vi.fn(), end: vi.fn() });
+    child.stdout = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+    child.stderr = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+    child.unref = vi.fn();
     child.kill = vi.fn(() => {
       queueMicrotask(() => child.emit("close", null));
       return true;
@@ -117,6 +123,7 @@ describe("createGithubIssue", () => {
 
     await expect(result).resolves.toEqual({
       fallbackUrl,
+      issueCreateStarted: false,
       message: "GitHub CLI authentication check timed out",
       ok: false,
     });
@@ -127,18 +134,23 @@ describe("createGithubIssue", () => {
     expect(child.kill).toHaveBeenCalledWith("SIGKILL");
   });
 
-  it("keeps an async issue-create timeout pending after a successful auth preflight", async () => {
+  it("settles an async issue-create timeout when process termination fails", async () => {
     vi.useFakeTimers();
     const createChild = () => {
       const child = new EventEmitter() as EventEmitter & {
-        stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
-        stdout: EventEmitter;
-        stderr: EventEmitter;
+        stdin: EventEmitter & {
+          destroy: ReturnType<typeof vi.fn>;
+          end: ReturnType<typeof vi.fn>;
+        };
+        stdout: EventEmitter & { destroy: ReturnType<typeof vi.fn> };
+        stderr: EventEmitter & { destroy: ReturnType<typeof vi.fn> };
         kill: ReturnType<typeof vi.fn>;
+        unref: ReturnType<typeof vi.fn>;
       };
-      child.stdin = Object.assign(new EventEmitter(), { end: vi.fn() });
-      child.stdout = new EventEmitter();
-      child.stderr = new EventEmitter();
+      child.stdin = Object.assign(new EventEmitter(), { destroy: vi.fn(), end: vi.fn() });
+      child.stdout = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+      child.stderr = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+      child.unref = vi.fn();
       child.kill = vi.fn(() => {
         queueMicrotask(() => child.emit("close", null));
         return true;
@@ -153,6 +165,7 @@ describe("createGithubIssue", () => {
       });
     });
     const issueChild = createChild();
+    issueChild.kill = vi.fn(() => false);
     issueChild.stdin.end.mockImplementation(() => {
       queueMicrotask(() => issueChild.emit("spawn"));
     });
@@ -184,6 +197,10 @@ describe("createGithubIssue", () => {
       "-",
     ]);
     expect(issueChild.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(issueChild.stdin.destroy).toHaveBeenCalledOnce();
+    expect(issueChild.stdout.destroy).toHaveBeenCalledOnce();
+    expect(issueChild.stderr.destroy).toHaveBeenCalledOnce();
+    expect(issueChild.unref).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -245,6 +262,7 @@ describe("createGithubIssue", () => {
         ),
       ).resolves.toEqual({
         fallbackUrl,
+        issueCreateStarted: false,
         message,
         ok: false,
       });
@@ -397,6 +415,7 @@ describe("createGithubIssue", () => {
       }),
     ).toEqual({
       fallbackUrl,
+      issueCreateStarted: false,
       message: "External GitHub issue creation is disabled in test processes.",
       ok: false,
     });
@@ -655,6 +674,7 @@ describe("createGithubIssue", () => {
       createGithubIssue({ body: "sanitized body", title: "Update failed", url: fallbackUrl }),
     ).toEqual({
       fallbackUrl,
+      issueCreateStarted: false,
       message,
       ok: false,
     });

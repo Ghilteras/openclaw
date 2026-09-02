@@ -2,7 +2,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { isRecord as isPlainRecord } from "@openclaw/normalization-core/record-coerce";
 import { resolveStateDir } from "../config/paths.js";
 import { redactSupportString } from "../logging/diagnostic-support-redaction.js";
 import { classifyUpdateOutcome } from "../shared/update-outcome.js";
@@ -19,14 +18,23 @@ import {
   finalizeUpdateFailureReportReceipt,
   markUpdateFailureReportReceiptPending,
   readUpdateFailureReportReceipt,
+  refreshUpdateFailureReportReceiptPreparation,
   releaseUpdateFailureReportReceipt,
   reserveUpdateFailureReportReceipt,
   type UpdateFailureReportReceipt,
 } from "./restart-sentinel.js";
 import {
   assertUpdateReportPreCreateState,
+  retryUpdateReportStateWrite,
   UpdateReportPreCreateGuardError,
 } from "./update-failure-report-precreate.js";
+import {
+  discardUpdateFailureReportRecoveryBestEffort,
+  readUpdateFailureReportRecovery,
+  tryMatchUpdateFailureReportRecovery,
+  writeUpdateFailureReportRecovery,
+  type UpdateFailureReportRecovery,
+} from "./update-failure-report-recovery.js";
 import type { UpdateRunResult } from "./update-runner.js";
 
 const UPDATE_REPORT_BODY_MAX_BYTES = 16_000;
@@ -263,12 +271,6 @@ type SavedUpdateFailureReport = {
   reportDirCreated: boolean;
 };
 
-type CreatedUpdateFailureReportRecovery = {
-  reservationId: string;
-  status: "created";
-  url: string;
-};
-
 function hasErrorCode(error: unknown, ...codes: string[]): boolean {
   return (
     error instanceof Error &&
@@ -313,94 +315,6 @@ async function discardSavedUpdateFailureReportBestEffort(
   removeExistingReport = false,
 ): Promise<void> {
   await discardSavedUpdateFailureReport(prepared, saved, removeExistingReport).catch(() => {});
-}
-
-function terminalRecoveryPath(prepared: PreparedUpdateFailureReport): string {
-  return `${prepared.savedReportPath}.result.json`;
-}
-
-function isSafeCreatedIssueUrl(value: unknown): value is string {
-  if (typeof value !== "string") {
-    return false;
-  }
-  try {
-    const parsed = new URL(value);
-    return (
-      parsed.protocol === "https:" &&
-      parsed.hostname === "github.com" &&
-      /^\/openclaw\/openclaw\/issues(?:\/\d+)?$/u.test(parsed.pathname)
-    );
-  } catch {
-    return false;
-  }
-}
-
-async function readCreatedReportRecovery(
-  prepared: PreparedUpdateFailureReport,
-): Promise<CreatedUpdateFailureReportRecovery | null> {
-  let raw: string;
-  try {
-    raw = await fs.readFile(terminalRecoveryPath(prepared), "utf8");
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) {
-      return null;
-    }
-    throw error;
-  }
-  const value: unknown = JSON.parse(raw);
-  if (
-    !isPlainRecord(value) ||
-    value.status !== "created" ||
-    typeof value.reservationId !== "string" ||
-    !isSafeCreatedIssueUrl(value.url)
-  ) {
-    throw new Error("Saved update report recovery is invalid.");
-  }
-  return { reservationId: value.reservationId, status: "created", url: value.url };
-}
-
-async function writeCreatedReportRecovery(
-  prepared: PreparedUpdateFailureReport,
-  recovery: CreatedUpdateFailureReportRecovery,
-): Promise<boolean> {
-  const recoveryPath = terminalRecoveryPath(prepared);
-  const temporaryPath = `${recoveryPath}.${randomUUID()}.tmp`;
-  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
-  try {
-    handle = await fs.open(temporaryPath, "wx", 0o600);
-    await handle.writeFile(JSON.stringify(recovery), "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await fs.link(temporaryPath, recoveryPath);
-    await fs.rm(temporaryPath, { force: true });
-    if (process.platform !== "win32") {
-      const directory = await fs.open(path.dirname(recoveryPath), "r");
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
-      }
-    }
-    return true;
-  } catch (error) {
-    if (hasErrorCode(error, "EEXIST")) {
-      const existing = await readCreatedReportRecovery(prepared).catch(() => null);
-      if (existing?.reservationId === recovery.reservationId && existing.url === recovery.url) {
-        return true;
-      }
-    }
-    return false;
-  } finally {
-    await handle?.close().catch(() => {});
-    await fs.rm(temporaryPath, { force: true }).catch(() => {});
-  }
-}
-
-async function discardCreatedReportRecoveryBestEffort(
-  prepared: PreparedUpdateFailureReport,
-): Promise<void> {
-  await fs.rm(terminalRecoveryPath(prepared), { force: true }).catch(() => {});
 }
 
 /** Persists one reviewed body while rechecking the caller's live authority around every write. */
@@ -486,24 +400,6 @@ function resultFromExistingReceipt(
   };
 }
 
-function finalizeReceiptWithRetry(
-  finalizeReceipt: typeof finalizeUpdateFailureReportReceipt,
-  attemptId: string,
-  receipt: UpdateFailureReportReceipt,
-  env: NodeJS.ProcessEnv,
-): boolean {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      if (finalizeReceipt(attemptId, receipt, env)) {
-        return true;
-      }
-    } catch {
-      // A transient state-database failure gets one retry before preserving the local fallback.
-    }
-  }
-  return false;
-}
-
 /** Consumes one reviewed preview and invokes the shared GitHub issue creator at most once. */
 export async function submitUpdateFailureReport(
   prepared: PreparedUpdateFailureReport,
@@ -518,9 +414,11 @@ export async function submitUpdateFailureReport(
     hasCurrentAuthority?: () => boolean;
     markPending?: typeof markUpdateFailureReportReceiptPending;
     readReceipt?: typeof readUpdateFailureReportReceipt;
+    refreshPreparation?: typeof refreshUpdateFailureReportReceiptPreparation;
     releaseReceipt?: typeof releaseUpdateFailureReportReceipt;
     stateDir?: string;
     validateCurrentAttempt?: () => boolean | Promise<boolean>;
+    writeRecovery?: typeof writeUpdateFailureReportRecovery;
   } = {},
 ): Promise<UpdateFailureReportSubmitResult> {
   if (previewDigest !== prepared.previewDigest) {
@@ -534,16 +432,40 @@ export async function submitUpdateFailureReport(
     throw new Error("Update report submission requires a current authenticated client.");
   }
   const finalizeReceipt = options.finalizeReceipt ?? finalizeUpdateFailureReportReceipt;
-  const recovered = await readCreatedReportRecovery(prepared);
+  const readReceipt = options.readReceipt ?? readUpdateFailureReportReceipt;
+  const recovered = await readUpdateFailureReportRecovery(prepared.savedReportPath);
   if (recovered) {
-    const finalized = finalizeReceiptWithRetry(
-      finalizeReceipt,
-      prepared.attemptId,
-      recovered,
-      stateEnv,
+    if (recovered.status === "fallback" && recovered.fallbackUrl !== prepared.url) {
+      throw new Error("Saved update report fallback does not match the reviewed report.");
+    }
+    let currentReceipt: UpdateFailureReportReceipt | null = null;
+    try {
+      currentReceipt = readReceipt(prepared.attemptId, stateEnv);
+    } catch {
+      // A durable terminal record remains authoritative while the state database is unavailable.
+    }
+    if (currentReceipt && currentReceipt.reservationId !== recovered.reservationId) {
+      await discardUpdateFailureReportRecoveryBestEffort(prepared.savedReportPath);
+      return resultFromExistingReceipt(currentReceipt, prepared.savedReportPath);
+    }
+    const finalized = retryUpdateReportStateWrite(() =>
+      finalizeReceipt(prepared.attemptId, recovered, stateEnv),
     );
-    if (finalized) {
-      await discardCreatedReportRecoveryBestEffort(prepared);
+    if (
+      finalized ||
+      tryMatchUpdateFailureReportRecovery(recovered, () =>
+        readReceipt(prepared.attemptId, stateEnv),
+      )
+    ) {
+      await discardUpdateFailureReportRecoveryBestEffort(prepared.savedReportPath);
+    }
+    if (recovered.status === "fallback") {
+      return {
+        fallbackUrl: recovered.fallbackUrl,
+        message: "A saved prefilled browser report is ready.",
+        savedReportPath: prepared.savedReportPath,
+        status: "fallback",
+      };
     }
     await discardSavedUpdateFailureReportBestEffort(
       prepared,
@@ -556,10 +478,7 @@ export async function submitUpdateFailureReport(
       url: recovered.url,
     };
   }
-  const existingReceipt = (options.readReceipt ?? readUpdateFailureReportReceipt)(
-    prepared.attemptId,
-    stateEnv,
-  );
+  const existingReceipt = readReceipt(prepared.attemptId, stateEnv);
   if (existingReceipt && existingReceipt.status !== "preparing") {
     if (existingReceipt.status === "created") {
       await discardSavedUpdateFailureReportBestEffort(
@@ -653,7 +572,7 @@ export async function submitUpdateFailureReport(
     }
     if (error.reason === "reservation") {
       return resultFromExistingReceipt(
-        (options.readReceipt ?? readUpdateFailureReportReceipt)(prepared.attemptId, stateEnv),
+        readReceipt(prepared.attemptId, stateEnv),
         prepared.savedReportPath,
       );
     }
@@ -673,22 +592,22 @@ export async function submitUpdateFailureReport(
     throw error;
   }
   if (created.ok) {
-    const receipt: CreatedUpdateFailureReportRecovery = {
+    const receipt: UpdateFailureReportRecovery = {
       reservationId,
       status: "created",
       url: created.url,
     };
-    const finalized = finalizeReceiptWithRetry(
-      finalizeReceipt,
-      prepared.attemptId,
-      receipt,
-      stateEnv,
+    const finalized = retryUpdateReportStateWrite(() =>
+      finalizeReceipt(prepared.attemptId, receipt, stateEnv),
     );
     if (finalized) {
-      await discardCreatedReportRecoveryBestEffort(prepared);
+      await discardUpdateFailureReportRecoveryBestEffort(prepared.savedReportPath);
       await discardSavedUpdateFailureReportBestEffort(prepared, saved, true);
     } else {
-      const recoverySaved = await writeCreatedReportRecovery(prepared, receipt);
+      const recoverySaved = await (options.writeRecovery ?? writeUpdateFailureReportRecovery)(
+        prepared.savedReportPath,
+        receipt,
+      ).catch(() => false);
       if (recoverySaved) {
         await discardSavedUpdateFailureReportBestEffort(prepared, saved, true);
       } else {
@@ -712,12 +631,44 @@ export async function submitUpdateFailureReport(
     };
   }
   const message = sanitizeReportField(created.message, context);
-  const receipt: UpdateFailureReportReceipt = {
+  const preparationRefreshed = retryUpdateReportStateWrite(() =>
+    (options.refreshPreparation ?? refreshUpdateFailureReportReceiptPreparation)(
+      prepared.attemptId,
+      reservationId,
+      stateEnv,
+    ),
+  );
+  if (!preparationRefreshed) {
+    let replacement: UpdateFailureReportReceipt | null = null;
+    try {
+      replacement = readReceipt(prepared.attemptId, stateEnv);
+    } catch {
+      // Without an authoritative owner, a browser link must not be published or persisted.
+    }
+    return resultFromExistingReceipt(replacement, prepared.savedReportPath);
+  }
+  const receipt: UpdateFailureReportRecovery = {
     fallbackUrl: created.fallbackUrl,
     reservationId,
     status: "fallback",
   };
-  finalizeReceiptWithRetry(finalizeReceipt, prepared.attemptId, receipt, stateEnv);
+  const fallbackFinalized = retryUpdateReportStateWrite(() =>
+    finalizeReceipt(prepared.attemptId, receipt, stateEnv),
+  );
+  const fallbackRecovered =
+    fallbackFinalized ||
+    (await (options.writeRecovery ?? writeUpdateFailureReportRecovery)(
+      prepared.savedReportPath,
+      receipt,
+    ).catch(() => false));
+  if (!fallbackRecovered) {
+    return {
+      message:
+        "The browser report handoff could not be saved safely. No issue submission was started; retry this action later.",
+      savedReportPath: prepared.savedReportPath,
+      status: "pending",
+    };
+  }
   return {
     fallbackUrl: created.fallbackUrl,
     message,

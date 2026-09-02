@@ -47,7 +47,7 @@ function mockCreatedIssue(url: string) {
 function mockFallbackIssue(fallbackUrl: string, message = "GitHub CLI unavailable") {
   return vi.fn(async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
     await hooks.afterAuthPreflight?.();
-    return { fallbackUrl, message, ok: false as const };
+    return { fallbackUrl, issueCreateStarted: false as const, message, ok: false as const };
   });
 }
 
@@ -320,14 +320,24 @@ describe("update failure report", () => {
       stateDir,
       validateCurrentAttempt: () => validationGate,
     });
-    const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
+    const fallbackUrl = prepared.url;
     let finishFallback!: () => void;
     const createIssue = vi.fn(
       async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
         await hooks.afterAuthPreflight?.();
-        return await new Promise<{ fallbackUrl: string; message: string; ok: false }>((resolve) => {
+        return await new Promise<{
+          fallbackUrl: string;
+          issueCreateStarted: false;
+          message: string;
+          ok: false;
+        }>((resolve) => {
           finishFallback = () =>
-            resolve({ fallbackUrl, message: "GitHub CLI unavailable", ok: false });
+            resolve({
+              fallbackUrl,
+              issueCreateStarted: false,
+              message: "GitHub CLI unavailable",
+              ok: false,
+            });
         });
       },
     );
@@ -400,6 +410,59 @@ describe("update failure report", () => {
       url: "https://github.com/openclaw/openclaw/issues/123",
     });
     expect(issueCreateCalls).toBe(0);
+  });
+
+  it("does not publish a fallback after its preparation lease is replaced", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-expired-fallback-preparation", result: failedUpdate() },
+      { stateDir },
+    );
+    let nowMs = 1_800_000_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    let releaseOldFallback!: () => void;
+    const oldFallbackGate = new Promise<void>((resolve) => {
+      releaseOldFallback = resolve;
+    });
+    const oldFallback = vi.fn(
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        await hooks.afterAuthPreflight?.();
+        await oldFallbackGate;
+        return {
+          fallbackUrl: prepared.url,
+          issueCreateStarted: false as const,
+          message: "GitHub CLI unavailable",
+          ok: false as const,
+        };
+      },
+    );
+    const oldSubmission = submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue: oldFallback,
+      stateDir,
+    });
+    await vi.waitFor(() => expect(oldFallback).toHaveBeenCalledOnce());
+
+    nowMs += 10 * 60_000;
+    const replacement = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue: mockCreatedIssue("https://github.com/openclaw/openclaw/issues/123"),
+      stateDir,
+    });
+    releaseOldFallback();
+    const oldResult = await oldSubmission;
+    now.mockRestore();
+
+    expect(replacement).toMatchObject({
+      status: "created",
+      url: "https://github.com/openclaw/openclaw/issues/123",
+    });
+    expect(oldResult).toMatchObject({
+      status: "duplicate",
+      url: "https://github.com/openclaw/openclaw/issues/123",
+    });
+    expect(oldResult).not.toHaveProperty("fallbackUrl");
+    await expect(fs.stat(`${prepared.savedReportPath}.result.json`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it.each([
@@ -559,32 +622,155 @@ describe("update failure report", () => {
     expect(createIssue).toHaveBeenCalledOnce();
   });
 
-  it("keeps an unresolved fallback receipt from replaying transport", async () => {
+  it("recovers an unresolved fallback receipt without replaying transport", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(
       { attemptId: "attempt-fallback-finalize-unavailable", result: failedUpdate() },
       { stateDir },
     );
-    const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
+    const fallbackUrl = prepared.url;
     const createIssue = mockFallbackIssue(fallbackUrl);
     const finalizeReceipt = vi.fn(() => false);
+    let nowMs = 1_800_000_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
 
     const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
       createIssue,
       finalizeReceipt,
       stateDir,
     });
+    const recoveryPath = `${prepared.savedReportPath}.result.json`;
+    expect(JSON.parse(await fs.readFile(recoveryPath, "utf8"))).toEqual({
+      fallbackUrl,
+      reservationId: expect.any(String),
+      status: "fallback",
+    });
+    if (process.platform !== "win32") {
+      expect((await fs.stat(recoveryPath)).mode & 0o777).toBe(0o600);
+    }
+    nowMs += 10 * 60_000;
     const second = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
       createIssue,
       stateDir,
     });
+    now.mockRestore();
 
     expect(first).toMatchObject({ status: "fallback", fallbackUrl });
-    expect(second).toMatchObject({ status: "pending" });
-    expect(second).not.toHaveProperty("fallbackUrl");
+    expect(second).toMatchObject({ status: "fallback", fallbackUrl });
     expect(createIssue).toHaveBeenCalledOnce();
     expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
+    await expect(fs.stat(recoveryPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("rejects a tampered fallback recovery without invoking transport", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-tampered-fallback", result: failedUpdate() },
+      { stateDir },
+    );
+    await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue: mockFallbackIssue(prepared.url),
+      finalizeReceipt: () => false,
+      stateDir,
+    });
+    const recoveryPath = `${prepared.savedReportPath}.result.json`;
+    const recovery = JSON.parse(await fs.readFile(recoveryPath, "utf8")) as {
+      fallbackUrl: string;
+      reservationId: string;
+      status: "fallback";
+    }; // SAFETY: test-owned recovery fixture written by the production serializer above.
+    recovery.fallbackUrl =
+      "https://github.com/openclaw/openclaw/issues/new?body=token%3Dprivate-test-secret";
+    await fs.writeFile(recoveryPath, JSON.stringify(recovery), "utf8");
+    const createIssue = mockCreatedIssue("https://github.com/openclaw/openclaw/issues/123");
+
+    await expect(
+      submitUpdateFailureReport(prepared, prepared.previewDigest, { createIssue, stateDir }),
+    ).rejects.toThrow("does not match the reviewed report");
+    expect(createIssue).not.toHaveBeenCalled();
+  });
+
+  it.each(["created", "fallback"] as const)(
+    "returns a durable %s recovery when receipt finalization and reads are unavailable",
+    async (terminalStatus) => {
+      const stateDir = tempDirs.make("openclaw-update-report-");
+      const prepared = await prepareUpdateFailureReport(
+        { attemptId: `attempt-recovery-read-failure-${terminalStatus}`, result: failedUpdate() },
+        { stateDir },
+      );
+      const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
+      const createIssue =
+        terminalStatus === "created" ? mockCreatedIssue(issueUrl) : mockFallbackIssue(prepared.url);
+      await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue,
+        finalizeReceipt: () => false,
+        stateDir,
+      });
+      const recoveryPath = `${prepared.savedReportPath}.result.json`;
+
+      const recovered = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue,
+        finalizeReceipt: () => false,
+        readReceipt: () => {
+          throw new Error("state database unavailable");
+        },
+        stateDir,
+      });
+
+      expect(recovered).toMatchObject(
+        terminalStatus === "created"
+          ? { status: "created", url: issueUrl }
+          : { fallbackUrl: prepared.url, status: "fallback" },
+      );
+      expect(createIssue).toHaveBeenCalledOnce();
+      await expect(fs.stat(recoveryPath)).resolves.toBeDefined();
+    },
+  );
+
+  it.each([
+    ["returns false", () => false],
+    [
+      "throws",
+      () => {
+        throw new Error("pending fence unavailable");
+      },
+    ],
+  ])(
+    "withholds a fallback and permits retry after terminal recovery %s",
+    async (_, failRecovery) => {
+      const stateDir = tempDirs.make("openclaw-update-report-");
+      const prepared = await prepareUpdateFailureReport(
+        { attemptId: "attempt-unfenced-fallback", result: failedUpdate() },
+        { stateDir },
+      );
+      const fallbackIssue = mockFallbackIssue(
+        "https://github.com/openclaw/openclaw/issues/new?title=update",
+      );
+      let nowMs = 1_800_000_000_000;
+      const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+
+      const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue: fallbackIssue,
+        finalizeReceipt: () => false,
+        stateDir,
+        writeRecovery: async () => failRecovery(),
+      });
+      expect(first).toMatchObject({ status: "pending" });
+      expect(first).not.toHaveProperty("fallbackUrl");
+
+      nowMs += 10 * 60_000;
+      const createdIssue = mockCreatedIssue("https://github.com/openclaw/openclaw/issues/123");
+      const second = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue: createdIssue,
+        stateDir,
+      });
+      now.mockRestore();
+
+      expect(second).toMatchObject({ status: "created" });
+      expect(fallbackIssue).toHaveBeenCalledOnce();
+      expect(createdIssue).toHaveBeenCalledOnce();
+    },
+  );
 
   it("keeps the event loop responsive while issue creation is pending", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");

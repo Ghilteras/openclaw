@@ -11,6 +11,19 @@ export class UpdateReportPreCreateGuardError extends Error {
   }
 }
 
+export function retryUpdateReportStateWrite(write: () => boolean): boolean {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      if (write()) {
+        return true;
+      }
+    } catch {
+      // One retry covers a transient state-database failure without replaying transport.
+    }
+  }
+  return false;
+}
+
 export async function assertUpdateReportPreCreateState(options: {
   hasCurrentAuthority?: () => boolean;
   validateCurrentAttempt?: () => boolean | Promise<boolean>;

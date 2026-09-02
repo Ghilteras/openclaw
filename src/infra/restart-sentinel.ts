@@ -28,6 +28,7 @@ import {
   finalizeUpdateFailureReportReceiptRowSync,
   markUpdateFailureReportReceiptPendingRowSync,
   readUpdateFailureReportReceiptRowSync,
+  refreshUpdateFailureReportReceiptPreparationRowSync,
   releaseUpdateFailureReportReceiptRowSync,
   reserveUpdateFailureReportReceiptRowSync,
   type UpdateFailureReportReceipt,
@@ -90,6 +91,18 @@ export function readUpdateFailureReportReceipt(
       ({ db }) => readUpdateFailureReportReceiptRowSync(db, attemptId),
       { env },
     ) ?? null
+  );
+}
+
+export function refreshUpdateFailureReportReceiptPreparation(
+  attemptId: string,
+  reservationId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return runOpenClawStateWriteTransaction(
+    ({ db }) => refreshUpdateFailureReportReceiptPreparationRowSync(db, attemptId, reservationId),
+    { env },
+    { operationLabel: "update-failure-report.refresh-preparation" },
   );
 }
 
