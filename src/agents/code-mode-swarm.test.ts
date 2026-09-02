@@ -10,6 +10,7 @@ import { applyCodeModeCatalog, resolveCodeModeConfig } from "./code-mode.js";
 import {
   createCodeModeHarness,
   fakeTool,
+  mcpTool,
   resetCodeModeTestState,
   resultDetails,
   runUntilCompleted,
@@ -456,20 +457,74 @@ describe("Code Mode swarm host bridge", () => {
     });
   });
 
-  it("refuses swarm globals when the run executes only an allowlist", async () => {
-    const harness = createSwarmHarness();
-    Object.assign(harness.ctx, { toolExecutionAllow: ["skill_workshop"] });
+  it.each([
+    {
+      name: "default with native spawn",
+      swarm: undefined,
+      catalog: "native",
+      allow: undefined,
+      enabled: true,
+    },
+    {
+      name: "limits-only config",
+      swarm: { maxConcurrent: 2 },
+      catalog: "native",
+      allow: undefined,
+      enabled: true,
+    },
+    { name: "explicit opt-out", swarm: false, catalog: "native", allow: undefined, enabled: false },
+    { name: "missing spawn", swarm: true, catalog: "empty", allow: undefined, enabled: false },
+    { name: "MCP lookalike", swarm: true, catalog: "mcp", allow: undefined, enabled: false },
+    {
+      name: "execution denied",
+      swarm: true,
+      catalog: "native",
+      allow: ["skill_workshop"],
+      enabled: false,
+    },
+    {
+      name: "execution allowed",
+      swarm: true,
+      catalog: "native",
+      allow: ["sessions_spawn"],
+      enabled: true,
+    },
+  ])(
+    "aligns the prompt and guest surface for $name",
+    async ({ swarm, catalog, allow, enabled }) => {
+      const harness = createCodeModeHarness();
+      if (swarm !== undefined) {
+        (harness.config as { tools: Record<string, unknown> }).tools.swarm = swarm;
+      }
+      const ctx = Object.assign(harness.ctx, { toolExecutionAllow: allow });
+      const spawn =
+        catalog === "mcp"
+          ? mcpTool({ name: "sessions_spawn", serverName: "lookalike", toolName: "sessions_spawn" })
+          : fakeTool("sessions_spawn", "Spawn a collector");
+      applyCodeModeCatalog({
+        ...ctx,
+        tools: [...harness.tools, ...(catalog === "empty" ? [] : [spawn])],
+      });
+      const execTool = harness.tools[0]!;
+      expect(execTool.description.includes("Swarm globals")).toBe(enabled);
+      harness.catalogRef.onChange?.();
+      expect(execTool.description.includes("Swarm globals")).toBe(enabled);
 
-    // Guest phase/log are fire-and-forget, so the refusal shows as no foreground event.
-    const noted = await runSwarmCode(harness, 'phase("Plan"); return "ok";');
-    const spawned = await runSwarmCode(harness, 'return await agents.run("Research");');
-
-    expect(noted).toMatchObject({ status: "completed", value: "ok" });
-    expect(spawned).toMatchObject({ status: "failed" });
-    expect(String(spawned.error)).toContain("Unavailable during skill review");
-    expect(swarmMocks.emitSessionLifecycleEvent).not.toHaveBeenCalled();
-    expect(harness.spawnTool.execute).not.toHaveBeenCalled();
-  });
+      const result = await runUntilCompleted({
+        execTool,
+        waitTool: harness.tools[1]!,
+        code: 'return [typeof agents, typeof phase, typeof log, (await API.list()).files.some(file => file.path === "agents.d.ts")];',
+      });
+      expect(result).toMatchObject({
+        status: "completed",
+        value: enabled
+          ? ["object", "function", "function", true]
+          : ["undefined", "undefined", "undefined", false],
+      });
+      expect(swarmMocks.emitSessionLifecycleEvent).not.toHaveBeenCalled();
+      expect(spawn.execute).not.toHaveBeenCalled();
+    },
+  );
 
   it("re-settles a persisted collector after restart without double-spawn", async () => {
     let persisted: SubagentRunRecord | undefined;

@@ -27,7 +27,7 @@ import {
   registerTrustedToolNoStartError,
 } from "./tool-result-error.js";
 import type { ToolSearchRuntime } from "./tool-search-runtime.js";
-import type { ToolSearchToolContext } from "./tool-search-types.js";
+import type { ToolSearchCatalogEntry, ToolSearchToolContext } from "./tool-search-types.js";
 import { ToolInputError } from "./tools/common.js";
 
 const loadSwarmHandlers = createLazyRuntimeNamedExport(
@@ -175,6 +175,20 @@ export function codeModeReplayIdForToolCall(
   ]);
   const digest = createHash("sha256").update(identity).digest("hex").slice(0, 24);
   return `cm_replay_${digest}`;
+}
+
+export function isCodeModeSwarmAvailable(
+  ctx: ToolSearchToolContext,
+  catalog: readonly Pick<ToolSearchCatalogEntry, "source" | "name">[] | undefined,
+): boolean {
+  // Detached runs retain denied schemas; only an executable spawn capability
+  // may advertise Swarm declarations or install its guest globals.
+  return (
+    resolveSwarmConfig(ctx.runtimeConfig ?? ctx.config, ctx.agentId).enabled &&
+    (!ctx.toolExecutionAllow || isToolExecutionAllowed(ctx.toolExecutionAllow, "sessions_spawn")) &&
+    catalog?.some((entry) => entry.source === "openclaw" && entry.name === "sessions_spawn") ===
+      true
+  );
 }
 
 function requireCodeModeSwarmEnabled(ctx: ToolSearchToolContext): void {

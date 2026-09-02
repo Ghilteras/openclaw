@@ -383,7 +383,10 @@ describe("sessions_spawn tool", () => {
   });
 
   it("hides and rejects swarm parameters while tools.swarm is disabled", async () => {
-    const tool = createSessionsSpawnTool({ agentSessionKey: "agent:main:main" });
+    const tool = createSessionsSpawnTool({
+      agentSessionKey: "agent:main:main",
+      config: { tools: { swarm: false } },
+    });
     const schema = tool.parameters as { properties?: Record<string, unknown> };
 
     expect(schema.properties?.collect).toBeUndefined();
@@ -422,11 +425,10 @@ describe("sessions_spawn tool", () => {
     });
   });
 
-  it("forwards collector parameters and requesting run identity when enabled", async () => {
+  it("forwards collector parameters and requesting run identity by default", async () => {
     const tool = createSessionsSpawnTool({
       agentSessionKey: "agent:main:main",
       requesterRunId: "parent-run",
-      config: { tools: { swarm: true } },
     });
     const schema = tool.parameters as {
       properties?: Record<string, { description?: string } | undefined>;

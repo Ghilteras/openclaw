@@ -153,6 +153,7 @@ export function prepareEmbeddedAttemptToolCatalog(input: {
       runId: attempt.runId,
       catalogRef: preparedToolBase.toolSearchCatalogRef,
       toolHookContext: catalogToolHookContext,
+      toolExecutionAllow: attempt.toolExecutionAllow,
       codeModeSkills,
     });
     const projectedToolSearchTools = filterLocalModelLeanTools({
