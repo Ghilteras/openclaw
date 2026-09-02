@@ -13,6 +13,10 @@ import {
 } from "./run-attempt-test-harness.js";
 
 const registrations = vi.hoisted(() => vi.fn());
+type QuestionDispatcher = Extract<
+  Parameters<typeof runAgentHarnessGatewayQuestion>[0]["gatewayCall"],
+  { version: 2 }
+>;
 
 vi.mock("openclaw/plugin-sdk/agent-harness-runtime", async (importOriginal) => {
   const actual = await importOriginal<typeof import("openclaw/plugin-sdk/agent-harness-runtime")>();
@@ -69,7 +73,15 @@ describe("Codex source-bound pending input", () => {
         sessionKey: params.sessionKey!,
         questions: [{ id: "mode", header: "Mode", question: "Continue?", options: [] }],
         timeoutMs: 60_000,
-        gatewayCall,
+        gatewayCall: {
+          version: 2,
+          call: ({ method, options, params: requestParams, authority }) => {
+            if (authority.kind === "source-bound") {
+              authority.assertCurrent();
+            }
+            return gatewayCall(method, options, requestParams);
+          },
+        } satisfies QuestionDispatcher,
         delivery: {},
         signal: questionAbort.signal,
       });
@@ -88,6 +100,7 @@ describe("Codex source-bound pending input", () => {
                 );
               }
             },
+            "source-bound",
           )
           .then(
             () => "accepted",
@@ -105,6 +118,7 @@ describe("Codex source-bound pending input", () => {
             "independent answer",
             { isInboundUserMessage: true },
             () => {},
+            "source-bound",
           );
         }
         await expect(questionOutcome).resolves.toMatchObject({

@@ -167,6 +167,16 @@ capture their target before queue or transcript waits; they never move to a task
 that starts later. A control received before backend registration returns a visible
 no-active-run response rather than waiting for an unrelated future task.
 
+When a source-bound native control is routed to a pending question, its answer
+or image-triggered cancellation is checked again immediately before Gateway
+dispatch, after registration, input persistence, and connection preparation.
+Closing or reassigning the source before that check rejects the stale input
+without cancelling the independent backing question or run; a later valid
+answer can still use the same question. An answer already consumed by the
+question remains accepted if the source closes while its response returns.
+This applies to controls routed through pending-question input, not universal
+interception of spoken answers by every voice provider.
+
 Managed-room handoffs do not yet supply current-speaker tool authority. Room
 attachment alone cannot authorize steering; status and cancellation remain available.
 

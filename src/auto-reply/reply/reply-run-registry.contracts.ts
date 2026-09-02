@@ -121,13 +121,19 @@ export type ReplyBackendMessageInjectionV2 = {
     text: string,
     options: ReplyBackendQueueMessageOptions | undefined,
     assertCurrent: () => void,
+    authorityKind: "run" | "source-bound",
   ): Promise<void | ReplyBackendQueueMessageResult>;
   claimPendingUserInputAnswer?(
     text: string,
     options: ReplyBackendQueueMessageOptions | undefined,
     assertCurrent: () => void,
+    authorityKind: "run" | "source-bound",
   ): Promise<boolean>;
-  cancelPendingUserInput?(resolvedBy: string, assertCurrent: () => void): Promise<boolean>;
+  cancelPendingUserInput?(
+    resolvedBy: string,
+    assertCurrent: () => void,
+    authorityKind: "run" | "source-bound",
+  ): Promise<boolean>;
 };
 
 export type ReplyBackendHandle = {

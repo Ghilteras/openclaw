@@ -87,12 +87,13 @@ function resolveReplyBackendMessageInjection(
     const assertCurrent = createMessageInjectionAuthority(canInject);
     return {
       isAvailable: () => guarded.isAvailable(),
-      queueMessage: (text, options) => guarded.queueMessage(text, options, assertCurrent),
+      queueMessage: (text, options) => guarded.queueMessage(text, options, assertCurrent, "run"),
       claimPendingUserInputAnswer: guarded.claimPendingUserInputAnswer
-        ? (text, options) => guarded.claimPendingUserInputAnswer!(text, options, assertCurrent)
+        ? (text, options) =>
+            guarded.claimPendingUserInputAnswer!(text, options, assertCurrent, "run")
         : undefined,
       cancelPendingUserInput: guarded.cancelPendingUserInput
-        ? (resolvedBy) => guarded.cancelPendingUserInput!(resolvedBy, assertCurrent)
+        ? (resolvedBy) => guarded.cancelPendingUserInput!(resolvedBy, assertCurrent, "run")
         : undefined,
     };
   }

@@ -529,15 +529,30 @@ export function prepareEmbeddedAttemptStream(input: {
       ACTIVE_EMBEDDED_RUNS_BY_RUN_ID.get(attempt.runId) === queueHandle
     );
   };
-  const composeInjectionGuard = (assertCurrent: () => void) => () => {
-    assertCurrent();
+  type InputAuthority = NonNullable<
+    Parameters<typeof cancelPendingAgentQuestionForSession>[0]["authority"]
+  >;
+  const composeInjectionGuard = (assertCurrent?: () => void) => () => {
+    assertCurrent?.();
     return canInject();
   };
+  const questionAuthority = (
+    assertCurrent: (() => void) | undefined,
+    kind: InputAuthority["kind"],
+  ): InputAuthority => ({
+    kind,
+    assertCurrent: () => {
+      if (!composeInjectionGuard(assertCurrent)()) {
+        throw new Error("active session is finalizing");
+      }
+    },
+  });
   // The shipped V1 entry retains backend-only authority; V2 requires the host assertion.
   const queueMessage = async (
     text: string,
     options?: EmbeddedAgentQueueMessageOptions,
-    assertCurrent: () => void = () => {},
+    assertCurrent?: () => void,
+    authorityKind: InputAuthority["kind"] = assertCurrent ? "source-bound" : "run",
   ) => {
     const canInjectMessage = composeInjectionGuard(assertCurrent);
     if (!canInjectMessage()) {
@@ -554,6 +569,7 @@ export function prepareEmbeddedAttemptStream(input: {
         options,
         attempt.sessionKey,
         canInjectMessage,
+        questionAuthority(assertCurrent, authorityKind),
       );
     } finally {
       activeQueueAdmissions--;
@@ -562,19 +578,25 @@ export function prepareEmbeddedAttemptStream(input: {
   const claimPendingUserInputAnswer = (
     text: string,
     options?: EmbeddedAgentQueueMessageOptions,
-    assertCurrent: () => void = () => {},
+    assertCurrent?: () => void,
+    authorityKind: InputAuthority["kind"] = assertCurrent ? "source-bound" : "run",
   ) =>
     claimEmbeddedPendingUserInputAnswer(
       text,
       options,
       attempt.sessionKey,
       composeInjectionGuard(assertCurrent),
+      questionAuthority(assertCurrent, authorityKind),
     );
-  const cancelPendingUserInput = (resolvedBy: string, assertCurrent: () => void = () => {}) =>
+  const cancelPendingUserInput = (
+    resolvedBy: string,
+    assertCurrent?: () => void,
+    authorityKind: InputAuthority["kind"] = assertCurrent ? "source-bound" : "run",
+  ) =>
     cancelPendingAgentQuestionForSession({
       sessionKey: attempt.sessionKey,
       resolvedBy,
-      canClaim: composeInjectionGuard(assertCurrent),
+      authority: questionAuthority(assertCurrent, authorityKind),
     });
   const messageInjection = {
     version: 2 as const,

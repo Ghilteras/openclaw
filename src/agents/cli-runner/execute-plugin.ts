@@ -21,7 +21,6 @@ import { runStructuredInput } from "../harness/structured-input-execution.js";
 import { compileStructuredInputQuestions } from "../harness/structured-input.js";
 import { resolveToolLoopDetectionConfig } from "../tool-loop-detection-config.js";
 import { normalizeToolPolicyName } from "../tool-policy.js";
-import { callGatewayTool } from "../tools/gateway.js";
 import {
   closeCliLiveSession,
   createCliLiveSessionCapability,
@@ -304,7 +303,6 @@ function createPluginUserInputHandler(params: {
         agentId: run.agentId,
         runId: run.runId,
         timeoutMs: run.timeoutMs,
-        gatewayCall: callGatewayTool,
         delivery: {
           onBlockReply: run.onBlockReply,
           onPartialReply: run.onPartialReply,

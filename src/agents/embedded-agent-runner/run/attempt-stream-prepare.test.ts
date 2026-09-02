@@ -33,6 +33,11 @@ import { SessionManager } from "../../sessions/session-manager.js";
 import { isToolResultError } from "../../tool-result-error.js";
 import { ACTIVE_EMBEDDED_RUNS, ACTIVE_EMBEDDED_RUN_REGISTRATIONS } from "../run-state.js";
 
+type QuestionDispatcher = Extract<
+  Parameters<typeof registerPendingAgentQuestion>[0]["gatewayCall"],
+  { version: 2 }
+>;
+
 const mocks = vi.hoisted(() => ({
   clearActiveRun: vi.fn(),
   notifyToolActivity: vi.fn(),
@@ -237,7 +242,15 @@ describe("prepareEmbeddedAttemptStream", () => {
                     questions: [
                       { id: "answer", header: "Answer", question: "Continue?", options: [] },
                     ],
-                    gatewayCall,
+                    gatewayCall: {
+                      version: 2,
+                      call: ({ authority }) => {
+                        if (authority.kind === "source-bound") {
+                          authority.assertCurrent();
+                        }
+                        return gatewayCall();
+                      },
+                    } satisfies QuestionDispatcher,
                     answer: Promise.resolve({ status: "pending" }),
                   })
                 : undefined;
@@ -266,6 +279,7 @@ describe("prepareEmbeddedAttemptStream", () => {
               "redirect the original",
               { isInboundUserMessage: true, userTurnTranscriptRecorder: recorder },
               assertCurrent,
+              "source-bound",
             );
             const outcome = delivery.then(
               () => "accepted",

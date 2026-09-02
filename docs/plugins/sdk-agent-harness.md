@@ -362,9 +362,13 @@ Backends that accept source-bound controls advertise `messageInjectionV2` on
 their active-run handle. The capability is contextually typed by
 `setActiveEmbeddedRun` from `openclaw/plugin-sdk/agent-harness-runtime`; its type
 can also be derived from that function's handle parameter. It requires
-`version: 2`, `isAvailable()`, and `queueMessage(text, options, assertCurrent)`.
+`version: 2`, `isAvailable()`, and
+`queueMessage(text, options, assertCurrent, authorityKind)`.
 The required third argument is a host-owned assertion for that individual
-injection, not a run ID, fingerprint, or diagnostic identity.
+injection, not a run ID, fingerprint, or diagnostic identity. The required
+`authorityKind` is `"run"` for ordinary input or `"source-bound"` for input
+whose source lifetime also constrains dispatch. Both retain the backing-run
+check; a source-bound input must never be relabeled as ordinary input.
 
 Invoke `assertCurrent()` alongside the backend's own live-run check after
 awaited preparation and immediately before queue mutation or provider dispatch.
@@ -375,9 +379,9 @@ backends retain and revalidate each item's assertion, including before retries;
 omit revoked items without cancelling independently accepted work or poisoning
 later authorized controls.
 
-Optional V2 `claimPendingUserInputAnswer(text, options, assertCurrent)` and
-`cancelPendingUserInput(resolvedBy, assertCurrent)` methods require the same
-assertion. Carry it through question registration and persistence to the final
+Optional V2 `claimPendingUserInputAnswer(text, options, assertCurrent, authorityKind)`
+and `cancelPendingUserInput(resolvedBy, assertCurrent, authorityKind)` methods
+require the same assertion and authority kind. Carry it through question registration and persistence to the final
 claim or cancellation boundary. Do not implement V2 by checking only before
 calling an SDK method that itself awaits before dispatch. If the sink cannot
 enforce the assertion, leave V2 unsupported.
@@ -483,6 +487,44 @@ secret-input, timeout, and cancellation fencing. Harnesses keep ownership of
 their protocol envelope and must pass the exact turn signal and active-owner
 check; `run(...)` returns an answered, declined, cancelled, or unsupported
 outcome for the adapter to translate.
+
+Omit `gatewayCall` in `runAgentHarnessGatewayQuestion(...)` or
+`agentHarnessStructuredInput.run(...)` to use the core-owned Gateway transport.
+It carries each input's source and backing-run assertion through registration,
+persistence, connection preparation, and hello, then checks synchronously
+immediately before the resolve request is sent. A refused input releases only
+its own reservation: the question remains pending and its prompt and later
+valid input remain usable. Persistence and a local reservation are not an
+answered transition. Closure after dispatch does not make an accepted answer
+replayable; issued requests retain committed-answer recovery when the response
+is lost. Backing-run abort, timeout, and error cleanup retain independent authority.
+
+The shipped `AgentHarnessQuestionGatewayCall` function type is unchanged.
+Legacy function overrides remain valid for ordinary, unscoped input, including
+run-lifetime checks. Source-bound input with only a legacy callback fails before
+input persistence or resolution I/O. Function arity or the presence of a callback
+does not establish guarded transport support.
+
+A custom guarded transport instead supplies an explicit object:
+
+```typescript
+type QuestionDispatcher = Exclude<
+  Parameters<typeof agentHarnessStructuredInput.run>[0]["gatewayCall"],
+  AgentHarnessQuestionGatewayCall | undefined
+>;
+```
+
+That object has `version: 2` and `call(request)`. The request contains `method`,
+`options` (`timeoutMs?`), `params?`, `signal?`, and a required `authority`:
+`{ kind: "unscoped" }` or `{ kind: "source-bound", assertCurrent }`.
+The source-bound variant requires a synchronous assertion. Invoke it after all
+awaited preparation and immediately before every dispatch or retry, without an
+intervening await. Never substitute an observer or an after-response check.
+When delegating to `callGatewayTool`, forward the protected assertion in its
+existing extra bag as
+`dispatchAuthority: { version: 2, kind: "source-bound", assertCurrent }`.
+The same bag accepts `kind: "run"` for run-only assertions. These are local code
+contracts, not Gateway wire fields, operator settings, or new SDK exports.
 
 Each prepared attempt also receives a versioned `params.hostCapabilities`
 object. Use `bindToolSurface(...)` before exposing plugin-built OpenClaw tools,

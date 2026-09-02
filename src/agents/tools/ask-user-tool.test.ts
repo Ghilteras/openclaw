@@ -15,7 +15,10 @@ import {
 } from "./ask-user-tool.js";
 import { resetPendingAskUserQuestionsForTest } from "./ask-user-tool.test-support.js";
 
-type GatewayCall = NonNullable<Parameters<typeof createAskUserTool>[0]["gatewayCall"]>;
+type GatewayCall = Extract<
+  NonNullable<Parameters<typeof createAskUserTool>[0]["gatewayCall"]>,
+  (...args: never[]) => unknown
+>;
 
 const replyDispatchOutcomeModuleUrl = new URL(
   "../../auto-reply/reply/reply-dispatch-outcome.ts",

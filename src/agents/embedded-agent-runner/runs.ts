@@ -411,15 +411,18 @@ function resolveEmbeddedInjection(
               getAttachedBackend(ownedOperation) === handle))
         );
       });
+      const authorityKind = sourceCanInject ? "source-bound" : "run";
       return guarded.isAvailable()
         ? {
-            queueMessage: (text, options) => guarded.queueMessage(text, options, assertCurrent),
+            queueMessage: (text, options) =>
+              guarded.queueMessage(text, options, assertCurrent, authorityKind),
             claimPendingUserInputAnswer: guarded.claimPendingUserInputAnswer
               ? (text, options) =>
-                  guarded.claimPendingUserInputAnswer!(text, options, assertCurrent)
+                  guarded.claimPendingUserInputAnswer!(text, options, assertCurrent, authorityKind)
               : undefined,
             cancelPendingUserInput: guarded.cancelPendingUserInput
-              ? (resolvedBy) => guarded.cancelPendingUserInput!(resolvedBy, assertCurrent)
+              ? (resolvedBy) =>
+                  guarded.cancelPendingUserInput!(resolvedBy, assertCurrent, authorityKind)
               : undefined,
           }
         : undefined;
