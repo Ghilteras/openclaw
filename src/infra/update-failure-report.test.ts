@@ -228,6 +228,55 @@ describe("update failure report", () => {
     expect(issueCreateCalls).toBe(1);
   });
 
+  it("releases the reservation when the post-preflight attempt refresh throws", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-auth-preflight-refresh-error", result: failedUpdate() },
+      { stateDir },
+    );
+    let issueCreateCalls = 0;
+    const validateCurrentAttempt = vi
+      .fn<() => boolean>()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockImplementationOnce(() => {
+        throw new Error("restart sentinel refresh unavailable");
+      });
+    const createIssue = vi.fn(
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        await hooks.afterAuthPreflight?.();
+        issueCreateCalls += 1;
+        return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/123" };
+      },
+    );
+
+    await expect(
+      submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue,
+        stateDir,
+        validateCurrentAttempt,
+      }),
+    ).rejects.toThrow("could not be rechecked");
+    expect(issueCreateCalls).toBe(0);
+    await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const retryCreateIssue = vi.fn(
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        await hooks.afterAuthPreflight?.();
+        issueCreateCalls += 1;
+        return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/124" };
+      },
+    );
+    await expect(
+      submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue: retryCreateIssue,
+        stateDir,
+        validateCurrentAttempt: () => true,
+      }),
+    ).resolves.toMatchObject({ status: "created" });
+    expect(issueCreateCalls).toBe(1);
+  });
+
   it("does not let a pending-reservation loser delete the winner's fallback report", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(

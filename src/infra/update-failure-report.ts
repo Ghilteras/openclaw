@@ -499,9 +499,10 @@ function finalizeReceiptWithRetry(
 class UpdateReportPreCreateGuardError extends Error {
   constructor(
     message: string,
-    readonly reason: "authority" | "stale",
+    readonly reason: "authority" | "stale" | "validation",
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "UpdateReportPreCreateGuardError";
   }
 }
@@ -636,11 +637,23 @@ export async function submitUpdateFailureReport(
         "authority",
       );
     }
-    if (options.validateCurrentAttempt && !(await options.validateCurrentAttempt())) {
-      throw new UpdateReportPreCreateGuardError(
-        "This failed update attempt is stale or unavailable.",
-        "stale",
-      );
+    if (options.validateCurrentAttempt) {
+      let currentAttempt: boolean;
+      try {
+        currentAttempt = await options.validateCurrentAttempt();
+      } catch (error) {
+        throw new UpdateReportPreCreateGuardError(
+          "Update report status could not be rechecked before submission.",
+          "validation",
+          { cause: error },
+        );
+      }
+      if (!currentAttempt) {
+        throw new UpdateReportPreCreateGuardError(
+          "This failed update attempt is stale or unavailable.",
+          "stale",
+        );
+      }
     }
     if (options.hasCurrentAuthority && !options.hasCurrentAuthority()) {
       throw new UpdateReportPreCreateGuardError(
