@@ -82,7 +82,6 @@ describe("createGithubIssue", () => {
 
     await expect(result).resolves.toEqual({
       ambiguous: true,
-      fallbackUrl,
       message: "gh issue creation timed out",
       ok: false,
     });
@@ -105,37 +104,43 @@ describe("createGithubIssue", () => {
 
   it.each([
     {
+      ambiguous: false,
       label: "missing gh",
       result: {
         error: Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" }),
         status: null,
+        started: false,
         stderr: Buffer.alloc(0),
         stdout: Buffer.alloc(0),
       },
       message: "spawn gh ENOENT",
     },
     {
+      ambiguous: true,
       label: "unauthenticated gh",
       result: {
         status: 4,
+        started: true,
         stderr: Buffer.from("To get started with GitHub CLI, run: gh auth login"),
         stdout: Buffer.alloc(0),
       },
       message: "To get started with GitHub CLI, run: gh auth login",
     },
-  ])(
-    "returns the prefilled handoff from the async transport for $label",
-    async ({ result, message }) => {
-      const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
+  ])("classifies the async transport for $label", async ({ ambiguous, result, message }) => {
+    const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
 
-      await expect(
-        createGithubIssueAsync(
-          { body: "sanitized body", title: "Update failed", url: fallbackUrl },
-          async () => result,
-        ),
-      ).resolves.toEqual({ fallbackUrl, message, ok: false });
-    },
-  );
+    await expect(
+      createGithubIssueAsync(
+        { body: "sanitized body", title: "Update failed", url: fallbackUrl },
+        async () => result,
+      ),
+    ).resolves.toEqual({
+      ...(ambiguous ? { ambiguous: true } : {}),
+      ...(!ambiguous ? { fallbackUrl } : {}),
+      message,
+      ok: false,
+    });
+  });
 
   it.each([
     ["VITEST", "true"],
@@ -174,7 +179,7 @@ describe("createGithubIssue", () => {
     ).toEqual({ ok: true, url: "https://github.com/openclaw/openclaw/issues/123" });
   });
 
-  it("does not expose an unexpected successful CLI output as a browser link", () => {
+  it("keeps a successful exit with malformed output ambiguous", () => {
     spawnSyncMock.mockReturnValue({
       status: 0,
       stderr: Buffer.alloc(0),
@@ -187,10 +192,76 @@ describe("createGithubIssue", () => {
         title: "Update failed",
         url: "https://github.com/openclaw/openclaw/issues/new?title=update",
       }),
-    ).toEqual({ ok: true, url: "https://github.com/openclaw/openclaw/issues" });
+    ).toEqual({
+      ambiguous: true,
+      message: "gh completed without a validated GitHub issue URL",
+      ok: false,
+    });
   });
 
-  it("bounds GitHub CLI issue creation and preserves the fallback URL on timeout", () => {
+  it("accepts a validated issue URL retained alongside a later transport error", () => {
+    const timeoutError = Object.assign(new Error("spawnSync gh ETIMEDOUT"), {
+      code: "ETIMEDOUT",
+    });
+    const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
+    expect(
+      createGithubIssue(
+        {
+          body: "sanitized body",
+          title: "Update failed",
+          url: "https://github.com/openclaw/openclaw/issues/new?title=update",
+        },
+        () => ({
+          error: timeoutError,
+          status: null,
+          started: true,
+          stderr: Buffer.alloc(0),
+          stdout: Buffer.from(`${issueUrl}\n`),
+        }),
+      ),
+    ).toEqual({ ok: true, url: issueUrl });
+  });
+
+  it.each([
+    {
+      label: "signal after spawn",
+      result: {
+        status: null,
+        started: true,
+        stderr: Buffer.from("gh terminated by signal"),
+        stdout: Buffer.alloc(0),
+      },
+    },
+    {
+      label: "nonzero after create",
+      result: {
+        status: 1,
+        started: true,
+        stderr: Buffer.from("post-create response failed"),
+        stdout: Buffer.alloc(0),
+      },
+    },
+    {
+      label: "post-spawn EPERM",
+      result: {
+        error: Object.assign(new Error("kill EPERM"), { code: "EPERM" }),
+        status: null,
+        started: true,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.alloc(0),
+      },
+    },
+  ])("keeps $label ambiguous without a validated issue URL", ({ result }) => {
+    const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
+    expect(
+      createGithubIssue(
+        { body: "sanitized body", title: "Update failed", url: fallbackUrl },
+        () => result,
+      ),
+    ).toMatchObject({ ambiguous: true, ok: false });
+  });
+
+  it("bounds GitHub CLI issue creation and marks timeout as ambiguous", () => {
     const timeoutError = Object.assign(new Error("spawnSync gh ETIMEDOUT"), {
       code: "ETIMEDOUT",
     });
@@ -228,7 +299,6 @@ describe("createGithubIssue", () => {
     );
     expect(result).toEqual({
       ambiguous: true,
-      fallbackUrl: "https://github.com/openclaw/openclaw/issues/new?title=recovery",
       message: "spawnSync gh ETIMEDOUT",
       ok: false,
     });
@@ -236,30 +306,63 @@ describe("createGithubIssue", () => {
 
   it.each([
     {
+      ambiguous: false,
       label: "missing gh",
       result: {
         error: Object.assign(new Error("spawnSync gh ENOENT"), { code: "ENOENT" }),
         status: null,
+        started: false,
         stderr: Buffer.alloc(0),
         stdout: Buffer.alloc(0),
       },
       message: "spawnSync gh ENOENT",
     },
     {
+      ambiguous: false,
+      label: "unexecutable gh",
+      result: {
+        error: Object.assign(new Error("spawnSync gh EACCES"), { code: "EACCES" }),
+        status: null,
+        started: false,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.alloc(0),
+      },
+      message: "spawnSync gh EACCES",
+    },
+    {
+      ambiguous: false,
+      label: "test-blocked gh",
+      result: {
+        error: Object.assign(new Error("spawnSync gh EPERM"), { code: "EPERM" }),
+        status: null,
+        started: false,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.alloc(0),
+      },
+      message: "spawnSync gh EPERM",
+    },
+    {
+      ambiguous: true,
       label: "unauthenticated gh",
       result: {
         status: 4,
+        started: true,
         stderr: Buffer.from("To get started with GitHub CLI, run: gh auth login"),
         stdout: Buffer.alloc(0),
       },
       message: "To get started with GitHub CLI, run: gh auth login",
     },
-  ])("returns the prefilled handoff for $label", ({ result, message }) => {
+  ])("classifies the sync transport for $label", ({ ambiguous, result, message }) => {
     spawnSyncMock.mockReturnValue(result);
     const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
 
     expect(
       createGithubIssue({ body: "sanitized body", title: "Update failed", url: fallbackUrl }),
-    ).toEqual({ fallbackUrl, message, ok: false });
+    ).toEqual({
+      ...(ambiguous ? { ambiguous: true } : {}),
+      ...(!ambiguous ? { fallbackUrl } : {}),
+      message,
+      ok: false,
+    });
   });
 });

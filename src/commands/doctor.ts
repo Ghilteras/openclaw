@@ -195,6 +195,18 @@ async function maybeCreateSessionSqliteGithubIssue(
     }
     return;
   }
+  if (created.ambiguous) {
+    report.supportIssue.github = {
+      message: created.message,
+      status: "failed",
+    };
+    if (shouldLog) {
+      runtime.log(
+        `session-sqlite recover: GitHub issue submission outcome is unknown: ${created.message}`,
+      );
+    }
+    return;
+  }
   report.supportIssue.github = {
     fallbackUrl: created.fallbackUrl,
     message: created.message,

@@ -10,14 +10,14 @@ export type SanitizedGithubIssue = {
 
 export type GithubIssueCreateResult =
   | { ok: true; url: string }
-  | { ambiguous?: true; fallbackUrl: string; message: string; ok: false };
+  | { ambiguous: true; message: string; ok: false }
+  | { ambiguous?: false; fallbackUrl: string; message: string; ok: false };
 
-type SpawnGh = (
-  args: readonly string[],
-  options: { input: string },
-) => Pick<SpawnSyncReturns<Buffer>, "error" | "status" | "stderr" | "stdout">;
+type SpawnGh = (args: readonly string[], options: { input: string }) => GithubCliResult;
 
-type GithubCliResult = Pick<SpawnSyncReturns<Buffer>, "error" | "status" | "stderr" | "stdout">;
+type GithubCliResult = Pick<SpawnSyncReturns<Buffer>, "error" | "status" | "stderr" | "stdout"> & {
+  started?: boolean;
+};
 type RunGhAsync = (args: readonly string[], options: { input: string }) => Promise<GithubCliResult>;
 
 const GITHUB_ISSUE_CREATE_TIMEOUT_MS = 30_000;
@@ -26,8 +26,6 @@ const GITHUB_PREFILL_TITLE_MAX_BYTES = 512;
 const GITHUB_PREFILL_URL_MAX_CHARS = 16_384;
 const GITHUB_PREFILL_TRUNCATED_SUFFIX =
   "\n\n...(truncated for URL; see the saved sanitized report for the complete body)";
-const REPOSITORY_ISSUES_URL = "https://github.com/openclaw/openclaw/issues";
-
 function buildPrefilledGithubIssueUrl(title: string, body: string): string {
   const params = new URLSearchParams({ body, title });
   return `https://github.com/openclaw/openclaw/issues/new?${params.toString()}`;
@@ -113,40 +111,36 @@ function resolveGithubIssueCreateResult(
   issue: SanitizedGithubIssue,
   result: GithubCliResult,
 ): GithubIssueCreateResult {
-  if (!result.error && result.status === 0) {
-    const outputUrl = String(result.stdout).trim().split(/\r?\n/).at(-1);
-    let url = REPOSITORY_ISSUES_URL;
-    try {
-      const parsed = new URL(outputUrl ?? "");
-      if (
-        parsed.protocol === "https:" &&
-        parsed.hostname === "github.com" &&
-        /^\/openclaw\/openclaw\/issues\/\d+$/u.test(parsed.pathname)
-      ) {
-        url = parsed.toString();
-      }
-    } catch {
-      // A successful gh exit without its normal issue URL still means the issue was created.
+  const outputUrl = String(result.stdout).trim().split(/\r?\n/).at(-1);
+  try {
+    const parsed = new URL(outputUrl ?? "");
+    if (
+      parsed.protocol === "https:" &&
+      parsed.hostname === "github.com" &&
+      /^\/openclaw\/openclaw\/issues\/\d+$/u.test(parsed.pathname)
+    ) {
+      return { ok: true, url: parsed.toString() };
     }
-    return { ok: true, url };
+  } catch {
+    // A child that started without returning a validated issue URL remains ambiguous.
   }
   const stderr = String(result.stderr).trim();
   const error = result.error
     ? result.error.message
-    : stderr || `gh exited ${result.status ?? "unknown"}`;
+    : stderr ||
+      (result.status === 0
+        ? "gh completed without a validated GitHub issue URL"
+        : `gh exited ${result.status ?? "unknown"}`);
   const errorCode =
     result.error && "code" in result.error && typeof result.error.code === "string"
       ? result.error.code
       : undefined;
   const definitelyDidNotStart =
-    errorCode === "ENOENT" || errorCode === "EACCES" || errorCode === "EPERM";
-  const ambiguous = result.status === null && !definitelyDidNotStart;
-  return {
-    ...(ambiguous ? { ambiguous: true as const } : {}),
-    fallbackUrl: issue.url,
-    message: error,
-    ok: false,
-  };
+    result.started === false &&
+    (errorCode === "ENOENT" || errorCode === "EACCES" || errorCode === "EPERM");
+  return definitelyDidNotStart
+    ? { fallbackUrl: issue.url, message: error, ok: false }
+    : { ambiguous: true, message: error, ok: false };
 }
 
 function testProcessBlockResult(): GithubCliResult {
@@ -156,6 +150,7 @@ function testProcessBlockResult(): GithubCliResult {
       { code: "EPERM" },
     ),
     status: null,
+    started: false,
     stderr: Buffer.alloc(0),
     stdout: Buffer.alloc(0),
   };
@@ -176,6 +171,7 @@ async function defaultRunGhAsync(
     let stderrBytes = 0;
     let error: Error | undefined;
     let settled = false;
+    let started = false;
     const appendBounded = (chunks: Buffer[], chunk: Buffer, currentBytes: number): number => {
       const remaining = 1024 * 1024 - currentBytes;
       if (remaining <= 0) {
@@ -193,6 +189,9 @@ async function defaultRunGhAsync(
     child.on("error", (spawnError) => {
       error = spawnError;
     });
+    child.on("spawn", () => {
+      started = true;
+    });
     const timeout = setTimeout(() => {
       error = Object.assign(new Error("gh issue creation timed out"), { code: "ETIMEDOUT" });
       child.kill("SIGKILL");
@@ -207,6 +206,7 @@ async function defaultRunGhAsync(
       resolve({
         ...(error ? { error } : {}),
         status,
+        started,
         stderr: Buffer.concat(stderr),
         stdout: Buffer.concat(stdout),
       });
@@ -218,17 +218,18 @@ async function defaultRunGhAsync(
   });
 }
 
-function defaultSpawnGh(
-  args: readonly string[],
-  options: { input: string },
-): Pick<SpawnSyncReturns<Buffer>, "error" | "status" | "stderr" | "stdout"> {
+function defaultSpawnGh(args: readonly string[], options: { input: string }): GithubCliResult {
   if (process.env.VITEST || process.env.NODE_ENV === "test") {
     return testProcessBlockResult();
   }
-  return spawnSync("gh", [...args], {
+  const result = spawnSync("gh", [...args], {
     input: options.input,
     killSignal: "SIGKILL",
     maxBuffer: 1024 * 1024,
     timeout: GITHUB_ISSUE_CREATE_TIMEOUT_MS,
   });
+  return {
+    ...result,
+    started: typeof result.pid === "number" && Number.isInteger(result.pid) && result.pid > 0,
+  };
 }

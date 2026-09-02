@@ -341,6 +341,64 @@ describe("doctorCommand", () => {
     expect(runtime.exit).toHaveBeenCalledWith(0);
   });
 
+  it("does not expose a prefilled replay URL for an ambiguous recovery issue submission", async () => {
+    const supportIssue = {
+      body: "sanitized body",
+      title: "Session SQLite migration recovery report (run-1)",
+      url: "https://github.com/openclaw/openclaw/issues/new?title=run-1",
+    };
+    const report = {
+      mode: "recover",
+      supportIssue,
+      targets: [],
+      totals: {
+        archivedTranscriptFiles: 0,
+        archivedUnreferencedJsonlFiles: 0,
+        importedEntries: 0,
+        importedTranscriptEvents: 0,
+        issues: 0,
+        legacyEntries: 0,
+        sqliteEntries: 0,
+        targets: 0,
+        unreferencedJsonlFiles: 0,
+        validatedEntries: 0,
+        validatedTranscriptEvents: 0,
+      },
+    };
+    mocks.runDoctorSessionSqlite.mockResolvedValueOnce(report);
+    mocks.createGithubIssue.mockReturnValueOnce({
+      ambiguous: true,
+      message: "gh issue creation timed out",
+      ok: false,
+    });
+    const runtime = {
+      log: vi.fn(),
+      error: vi.fn(),
+      writeStdout: vi.fn(),
+      writeJson: vi.fn(),
+      exit: vi.fn((code: number) => {
+        throw new Error(`exit:${code}`);
+      }),
+    };
+
+    await expect(
+      doctorCommand(runtime, {
+        sessionSqlite: "recover",
+        sessionSqliteGithubIssue: true,
+        yes: true,
+      }),
+    ).rejects.toThrow("exit:0");
+
+    expect(supportIssue).toMatchObject({
+      github: {
+        message: "gh issue creation timed out",
+        status: "failed",
+      },
+    });
+    expect((supportIssue as { github?: unknown }).github).not.toHaveProperty("fallbackUrl");
+    expect(runtime.log).not.toHaveBeenCalledWith(expect.stringContaining("prefilled issue URL"));
+  });
+
   it("keeps session sqlite recovery GitHub status inside JSON output", async () => {
     const report = {
       mode: "recover",

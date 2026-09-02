@@ -403,10 +403,8 @@ describe("update failure report", () => {
       { attemptId: "attempt-timeout", result: failedUpdate() },
       { stateDir },
     );
-    const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
     const createIssue = vi.fn(() => ({
       ambiguous: true as const,
-      fallbackUrl,
       message: "spawnSync gh ETIMEDOUT",
       ok: false as const,
     }));
