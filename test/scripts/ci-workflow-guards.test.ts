@@ -3779,7 +3779,8 @@ NODE
     expect(result.outputs).not.toHaveProperty("eligible");
   });
 
-  it("resolves trusted correction evidence before candidate scope code can run", () => {
+  // Native Windows Node cannot execute this fixture's POSIX gh child shim.
+  it.skipIf(process.platform === "win32")("protects correction credentials", () => {
     const root = tempDirs.make("openclaw-ci-correction-order-");
     const trusted = path.join(root, ".ci-harness/scripts/lib");
     const eventsPath = path.join(root, "events");
