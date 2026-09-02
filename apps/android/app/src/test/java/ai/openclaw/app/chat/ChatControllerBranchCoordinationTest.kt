@@ -1363,6 +1363,117 @@ class ChatControllerBranchCoordinationTest {
   }
 
   @Test
+  fun olderBranchReconciliationCannotStrandReconnectHealth() =
+    runTest {
+      val key = "main"
+      val branchScope = ChatOutboxScope(key, "main")
+      val initialBranch = requireNotNull(outbox.branchState("gateway-a", branchScope))
+      assertTrue(outbox.recordTranscriptTip("gateway-a", branchScope, "entry-before", initialBranch))
+      val admitted = enqueue("queued", sessionKey = key)
+      val reconciliationEntered = CompletableDeferred<Job>()
+      val releaseReconciliation = CompletableDeferred<Unit>()
+      val holdReconciliation = AtomicBoolean(true)
+      val observedOutbox =
+        object : ChatCommandOutbox by outbox {
+          override suspend fun branchState(
+            gatewayId: String,
+            scope: ChatOutboxScope,
+          ): ChatOutboxBranchState? {
+            val state = outbox.branchState(gatewayId, scope)
+            if (holdReconciliation.compareAndSet(true, false)) {
+              reconciliationEntered.complete(requireNotNull(currentCoroutineContext()[Job]))
+              // The database operation has completed; no connection is held at this gate.
+              releaseReconciliation.await()
+            }
+            return state
+          }
+        }
+      val gateway = ScriptedGateway(json)
+      val historyCalls = AtomicInteger()
+      val reconnectHistoryEntered = CompletableDeferred<Job>()
+      val releaseReconnectHistory = CompletableDeferred<Unit>()
+      val sendId = AtomicReference<String?>(null)
+      val confirmationRequested = CompletableDeferred<Unit>()
+      val releaseConfirmation = CompletableDeferred<Unit>()
+      gateway.respond("chat.history") {
+        val id = sendId.get()
+        if (historyCalls.incrementAndGet() == 1) {
+          reconnectHistoryEntered.complete(requireNotNull(currentCoroutineContext()[Job]))
+          releaseReconnectHistory.await()
+        }
+        if (id != null) {
+          confirmationRequested.complete(Unit)
+          releaseConfirmation.await()
+        }
+        historyResponse(
+          sessionId = "reconnect-generation-proof",
+          messages =
+            listOf(ReplayHistoryMessage("assistant", "before", 1, entryId = "entry-before")) +
+              if (id == null) {
+                emptyList()
+              } else {
+                listOf(ReplayHistoryMessage("user", "queued", 2, idempotencyKey = "$id:user", entryId = "entry-input"))
+              },
+        )
+      }
+      gateway.respondWith(
+        "sessions.branches.list",
+        """{"branches":[{"leafEntryId":"entry-before","headline":"Current","messageCount":1,"active":true}]}""",
+      )
+      gateway.respond("chat.send") { paramsJson ->
+        val id =
+          json
+            .parseToJsonElement(requireNotNull(paramsJson))
+            .jsonObject
+            .getValue("idempotencyKey")
+            .jsonPrimitive
+            .content
+        sendId.set(id)
+        """{"runId":"$id","status":"started"}"""
+      }
+      val controller = controller(gateway, StandardTestDispatcher(testScheduler), commandOutbox = observedOutbox)
+      controller.awaitOutboxRestore()
+      try {
+        controller.handleGatewayEvent("health", null)
+        val reconciliationJob = reconciliationEntered.await()
+        assertTrue(controller.healthOk.value)
+        assertEquals(0, gateway.callCount("chat.send"))
+
+        controller.onDisconnected("Reconnecting during branch reconciliation")
+        controller.onGatewayConnected()
+        val reconnectHistoryJob = reconnectHistoryEntered.await()
+        assertFalse(controller.healthOk.value)
+        assertEquals(ChatOutboxStatus.Queued, outbox.load("gateway-a").single().status)
+
+        // The old reconciliation resumes only after reconnect has captured its history.
+        releaseReconciliation.complete(Unit)
+        reconciliationJob.join()
+        releaseReconnectHistory.complete(Unit)
+        reconnectHistoryJob.join()
+
+        assertTrue(
+          "Completed branch/reconnect history must restore health without another tick; " +
+            "historyCalls=${historyCalls.get()}, sends=${gateway.callCount("chat.send")}, " +
+            "loading=${controller.historyLoading.value}",
+          controller.healthOk.value,
+        )
+        confirmationRequested.await()
+        val acknowledged = outbox.load("gateway-a").single()
+        assertEquals(admitted.id, acknowledged.id)
+        assertEquals(admitted.attemptVersion, acknowledged.attemptVersion)
+        assertEquals(ChatOutboxStatus.Accepted, acknowledged.status)
+        assertEquals(1, gateway.callCount("chat.send"))
+        releaseConfirmation.complete(Unit)
+        awaitBranchProgress { outbox.load("gateway-a").isEmpty() }
+        assertEquals(1, gateway.callCount("chat.send"))
+      } finally {
+        releaseReconciliation.complete(Unit)
+        releaseReconnectHistory.complete(Unit)
+        releaseConfirmation.complete(Unit)
+      }
+    }
+
+  @Test
   fun reconnectAckPublishesAcceptedUntilHistoryConfirmsDelivery() =
     runTest {
       val key = "agent:main:ack-proof"

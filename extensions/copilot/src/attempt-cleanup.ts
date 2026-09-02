@@ -1,4 +1,4 @@
-import type { Result } from "@openclaw/normalization-core/result";
+import type { Result } from "openclaw/plugin-sdk/agent-core";
 import {
   awaitAgentEndSideEffects,
   formatErrorMessage,
