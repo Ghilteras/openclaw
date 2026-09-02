@@ -136,6 +136,7 @@ export async function runCiGitStep(options: {
   checkoutResults?: number[];
   mergeSnapshots?: { sha: string; head: string }[];
   prepare?: boolean;
+  checkoutBeforeStep?: boolean;
   cancelDuringCleanup?: boolean;
   cleanupCancelMatch?: string;
   startupDelay?: { tree: number };
@@ -195,7 +196,7 @@ export async function runCiGitStep(options: {
             ? {
                 file: ".github/workflows/workflow-sanity.yml",
                 job: "actionlint",
-                step: "Prepare trusted workflow audit configs",
+                step: "Prepare trusted workflow audit policy",
               }
             : options.workflow,
         )
@@ -398,7 +399,7 @@ def main():`,
           releaseAdmission,
           checkoutResults: options.checkoutResults,
           mergeSnapshots: options.mergeSnapshots,
-          consumers: Boolean(options.prepare || externalOwner),
+          consumers: Boolean(options.prepare || options.checkoutBeforeStep || externalOwner),
           cancelDuringCleanup: options.cancelDuringCleanup,
           cleanupCancelMatch: options.cleanupCancelMatch,
           baseAvailableAfter: options.baseAvailableAfter,
@@ -447,6 +448,11 @@ ${run}`;
         writeFileSync(path.join(root, "prepare.sh"), renderGitTestClock(prepare.run, clock));
         // Run the actual prepare body in its own shell: its exec must not replace the caller.
         run = `CHECKOUT_KIND=${prepareEnv.CHECKOUT_KIND} bash --noprofile --norc -eo pipefail "$TMPDIR/prepare.sh"\n${run}`;
+      }
+      if (options.checkoutBeforeStep) {
+        const checkout = readCiCheckoutStep(options.job ?? "checks-fast-core");
+        writeFileSync(path.join(root, "bootstrap.sh"), renderGitTestClock(checkout.run, clock));
+        run = `bash --noprofile --norc -eo pipefail "$TMPDIR/bootstrap.sh"\n${run}`;
       }
       if (options.performance) {
         const mapfileShim =
@@ -555,7 +561,6 @@ ${run}`;
         githubEnv: readOutput("github-env"),
         githubSummary: readOutput("github-summary"),
         githubPath: readOutput("github-path"),
-        trustedConfig: readOutput("temp/pre-commit-base.yaml"),
         trustedZizmor: readOutput("temp/zizmor-base.yml"),
         runnerTemp: performanceFixture?.env.RUNNER_TEMP ?? path.join(root, "temp"),
         fetches: report.commands.filter(({ tool, args }) => tool === "git" && args[0] === "fetch"),

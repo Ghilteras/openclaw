@@ -745,120 +745,37 @@ sys.stdout.write(git_output(os.getcwd(), "rev-parse", "HEAD", env={"CI_OWNER_PRO
   55_000,
 );
 
-const lookups: { step: string; env: Record<string, string>; output: string }[] = [
-  {
-    step: "Resolve exact diff base",
-    env: { RELEASE_GATE: "false" },
-    output: `sha=${base}\nhead_sha=${head}\n`,
-  },
-  {
-    step: "Validate historical release target",
-    env: { HISTORICAL_TARGET_TAG: "v2026.8.1", EXPECTED_SHA: head },
-    output: "eligible=true\n",
-  },
-  {
-    step: "Validate release candidate target",
-    env: { RELEASE_CANDIDATE_REF: "release/2026.8.1", EXPECTED_SHA: head },
-    output: "eligible=true\n",
-  },
-  {
-    step: "Validate target context",
-    env: { TARGET_CONTEXT_REF: "release/2026.8.1", TARGET_REF: head },
-    output: "eligible=true\n",
-  },
-  {
-    step: "Classify candidate cache trust",
-    env: {
-      CHECKOUT_REVISION: head,
-      WORKFLOW_REVISION: head,
-      RELEASE_CANDIDATE_TARGET: "false",
-      TARGET_CONTEXT_TARGET: "false",
-      TARGET_REF: "",
-    },
-    output: "trust=main\ncache_mode=restore\ncache_write_allowed=true\n",
-  },
-];
-
-linuxIt.each(
-  lookups.flatMap((lookup) =>
-    ([0, 23, "cleanup-failure"] as const).map((code) => Object.assign({}, lookup, { code })),
-  ),
-)(
-  "$step drains lookup output before consumption ($code)",
-  async ({ step, env, output, code }) => {
+linuxIt.each([0, 23, "cleanup-failure"] as const)(
+  "generic Git output drains its writers before consumption (%s)",
+  async (code) => {
+    const output = `${head}\trefs/heads/main\n`;
     const report = await runCiGitStep({
-      job: "preflight",
-      step,
-      env: { GITHUB_EVENT_NAME: "workflow_dispatch", ...env },
-      prepare: true,
+      policy:
+        policyImport +
+        'import sys\nsys.stdout.write(git_output(os.getcwd(), "ls-remote", "origin", "refs/heads/main"))\n',
       fetchResults: [],
-      lsRemoteResults: [{ code, output: `${head}\trefs/heads/main\n` }],
+      lsRemoteResults: [{ code, output }],
     });
     expect(report.code, report.output).toBe(code === "cleanup-failure" ? 125 : code);
-    expect(report.githubOutput).toBe(code === 0 ? output : "");
-    expect(report.commands.filter(({ args }) => args[0] === "ls-remote")).toHaveLength(1);
-    if (code !== 0) {
-      expect(report.commands.some(({ tool }) => tool === "gh")).toBe(false);
+    expect(report.commands.map(({ args }) => args)).toEqual([
+      ["ls-remote", "origin", "refs/heads/main"],
+    ]);
+    expect(report.readyAttempts).toEqual([1]);
+    if (code === 0) {
+      expect(report.output).toBe(output);
+    } else {
+      expect(report.output).not.toContain(output);
     }
   },
   55_000,
 );
 
-linuxIt.each([0, 23, "cleanup-failure"] as const)(
-  "historical tag fallback follows only successful empty peeled lookup (%s)",
-  async (code) => {
-    const report = await runCiGitStep({
-      job: "preflight",
-      step: "Validate historical release target",
-      env: { HISTORICAL_TARGET_TAG: "v2026.8.1", EXPECTED_SHA: head },
-      prepare: true,
-      fetchResults: [],
-      lsRemoteResults: [
-        { code, output: "" },
-        { code: 0, output: `${head}\trefs/tags/v2026.8.1\n` },
-      ],
-    });
-    expect(report.code, report.output).toBe(code === "cleanup-failure" ? 125 : code);
-    expect(
-      report.commands.filter(({ args }) => args[0] === "ls-remote").map(({ args }) => args.at(-1)),
-    ).toEqual(
-      code === 0 ? ["refs/tags/v2026.8.1^{}", "refs/tags/v2026.8.1"] : ["refs/tags/v2026.8.1^{}"],
-    );
-    expect(report.githubOutput).toBe(code === 0 ? "eligible=true\n" : "");
-  },
-  55_000,
-);
-
-it("preserves no per-operation deadline on all six CI remote lookups", () => {
-  const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8")) as {
-    jobs: { preflight: { steps: { run?: string }[] } };
-  };
-  const calls = workflow.jobs.preflight.steps.flatMap(({ run }) =>
-    Array.from((run ?? "").matchAll(/--git (\S+) ls-remote/gu)),
-  );
-  expect(calls.map((call) => call[1])).toEqual(Array(6).fill("0"));
-});
-
 const posixIt = it.skipIf(process.platform === "win32").concurrent;
-const auditFiles = [".pre-commit-config.yaml", ".github/zizmor.yml"];
+const auditFile = ".github/zizmor.yml";
 const branch = "refs/remotes/origin/main";
 const auditObjects = Object.fromEntries(
-  [base, branch].flatMap((ref) =>
-    auditFiles.map((file) => [
-      `${ref}:${file}`,
-      {
-        text: `# ${ref}\n${file === auditFiles[0] ? "config: .github/zizmor.yml" : "rules: {}"}\n`,
-      },
-    ]),
-  ),
+  [base, branch].map((ref) => [`${ref}:${auditFile}`, { text: `# ${ref}\nrules: {}\n` }]),
 );
-function requireAuditObject(ref: string, file: string) {
-  const object = auditObjects[`${ref}:${file}`];
-  if (!object) {
-    throw new Error(`Missing audit fixture object: ${ref}:${file}`);
-  }
-  return object;
-}
 const sanity = (options: Omit<Parameters<typeof runCiGitStep>[0], "workflow">) =>
   runCiGitStep({
     ...options,
@@ -882,9 +799,8 @@ posixIt(
       `+${base}:refs/remotes/origin/security-base`,
       `+refs/heads/main:${branch}`,
     ]);
-    expect(report.githubEnv).toBe(
-      `PRE_COMMIT_CONFIG_PATH=${report.runnerTemp}/pre-commit-base.yaml\n`,
-    );
+    expect(report.githubEnv).toBe("");
+    expect(report.trustedZizmor).toBe(`# ${base}\nrules: {}\n`);
   },
   55_000,
 );
@@ -972,20 +888,10 @@ posixIt.each(sanityFetchCases)(
       report.commands.filter(({ args }) => args[0] === "cat-file").map(({ args }) => args),
     ).toEqual([
       ["cat-file", "-e", `${base}^{commit}`],
-      ...(code === 0 ? auditFiles.map((file) => ["cat-file", "-e", `${base}:${file}`]) : []),
+      ...(code === 0 ? [["cat-file", "-e", `${base}:${auditFile}`]] : []),
     ]);
-    expect(report.githubEnv).toBe(
-      code === 0 ? `PRE_COMMIT_CONFIG_PATH=${report.runnerTemp}/pre-commit-base.yaml\n` : "",
-    );
-    if (code === 0) {
-      expect(report.trustedConfig).toBe(
-        `# ${base}\nconfig: ${report.runnerTemp}/zizmor-base.yml\n`,
-      );
-      expect(report.trustedZizmor).toBe(`# ${base}\nrules: {}\n`);
-    } else {
-      expect(report.trustedConfig).toBe("");
-      expect(report.trustedZizmor).toBe("");
-    }
+    expect(report.githubEnv).toBe("");
+    expect(report.trustedZizmor).toBe(code === 0 ? `# ${base}\nrules: {}\n` : "");
   },
   55_000,
 );
@@ -1054,7 +960,6 @@ posixIt.each([
     expect(report.fetches).toHaveLength(options.fetchResults.length);
     expect(report.commands.filter(({ args }) => args[0] === "show")).toEqual([]);
     expect(report.githubEnv).toBe("");
-    expect(report.trustedConfig).toBe("");
     expect(report.trustedZizmor).toBe("");
     expect(report.cancelledDuringCleanup).toBe(Boolean(options.cancelDuringCleanup));
     expect(report.boundaries.some(({ name }) => name === "backoff-cancel")).toBe(
@@ -1064,92 +969,56 @@ posixIt.each([
   55_000,
 );
 
-posixIt.each([[], [0], [1], [0, 1]].map((missing) => ({ missing })))(
-  "workflow sanity selects missing exact configs independently ($missing)",
-  async ({ missing }) => {
+posixIt.each([0, 125, 143])(
+  "workflow sanity selects exact policy or branch fallback (probe=%s)",
+  async (probe) => {
     const report = await sanity({
       fetchResults: [],
       baseAvailableAfter: 0,
-      objects: Object.fromEntries(
-        missing.map((index) => {
-          const file = auditFiles[index];
-          if (!file) {
-            throw new Error(`Missing audit fixture file at index ${index}`);
-          }
-          return [
-            `${base}:${file}`,
-            { ...requireAuditObject(base, file), probe: index === 0 ? 125 : 143 },
-          ];
-        }),
-      ),
+      poisonPython: true,
+      objects: { [`${base}:${auditFile}`]: { text: `# ${base}\nrules: {}\n`, probe } },
     });
+    const selected = probe === 0 ? base : branch;
     expect(report.code, report.output).toBe(0);
     expect(report.fetches).toEqual([]);
     expect(
       report.commands.filter(({ args }) => args[0] === "show").map(({ args }) => args),
-    ).toEqual(
-      auditFiles.map((file, index) => [
-        "show",
-        `${missing.includes(index) ? branch : base}:${file}`,
-      ]),
-    );
-    for (const index of missing) {
+    ).toEqual([["show", `${selected}:${auditFile}`]]);
+    expect(report.trustedZizmor).toBe(`# ${selected}\nrules: {}\n`);
+    if (probe !== 0) {
       expect(report.output).toContain(
-        `Base SHA ${base} does not expose ${auditFiles[index]}; using origin/main instead.`,
+        `Base SHA ${base} does not expose ${auditFile}; using origin/main instead.`,
       );
     }
-    expect(report.githubEnv).toBe(
-      `PRE_COMMIT_CONFIG_PATH=${report.runnerTemp}/pre-commit-base.yaml\n`,
-    );
+    expect(report.githubEnv).toBe("");
   },
   55_000,
 );
 
-posixIt.each(
-  auditFiles.flatMap((file) => [
-    { file, fallback: false },
-    { file, fallback: true },
-  ]),
-)(
-  "workflow sanity rejects partial $file show (fallback=$fallback)",
-  async ({ file, fallback }) => {
+posixIt.each([false, true])(
+  "workflow sanity rejects partial policy show (fallback=%s)",
+  async (fallback) => {
     const report = await sanity({
       fetchResults: [],
       baseAvailableAfter: 0,
       objects: {
-        [`${base}:${file}`]: { text: "partial\n", probe: fallback ? 1 : 0, code: 23 },
-        [`${branch}:${file}`]: { text: "partial\n", code: 23 },
+        [`${base}:${auditFile}`]: { text: "partial\n", probe: fallback ? 1 : 0, code: 23 },
+        [`${branch}:${auditFile}`]: { text: "partial\n", code: 23 },
       },
     });
     expect(report.code, report.output).toBe(fallback ? 1 : 23);
     expect(report.fetches).toEqual([]);
     expect(report.githubEnv).toBe("");
-    expect(file === auditFiles[0] ? report.trustedConfig : report.trustedZizmor).toBe("");
-    const shows = report.commands
-      .filter(({ args }) => args[0] === "show")
-      .map(({ args }) => args.at(-1));
-    expect(shows.at(-1)).toBe(`${fallback ? branch : base}:${file}`);
-    expect(shows).not.toContain(`${fallback ? base : branch}:${file}`);
+    expect(report.trustedZizmor).toBe("");
+    expect(
+      report.commands.filter(({ args }) => args[0] === "show").map(({ args }) => args),
+    ).toEqual([["show", `${fallback ? branch : base}:${auditFile}`]]);
     if (fallback) {
-      expect(report.output).toContain(`Could not read ${file} from ${base} or origin/main.`);
+      expect(report.output).toContain(`Could not read ${auditFile} from ${base} or origin/main.`);
     }
   },
   55_000,
 );
-
-posixIt("workflow sanity rejects a config without the Zizmor reference", async () => {
-  const report = await sanity({
-    fetchResults: [],
-    baseAvailableAfter: 0,
-    objects: { [`${base}:${auditFiles[0]}`]: { text: "repos: []\n" } },
-    poisonPython: true,
-  });
-  expect(report.code, report.output).toBe(1);
-  expect(report.output).toContain(
-    "trusted pre-commit config does not reference .github/zizmor.yml",
-  );
-  expect(report.githubEnv).toBe("");
-});
 
 const maturityValidation = {
   file: ".github/workflows/maturity-scorecard.yml",
@@ -1340,9 +1209,11 @@ posixIt.each([0, 2, 23, 125, 143, "hang", "cleanup-failure", "cancel"] as const)
       expect(report.githubOutput).toBe("");
       expect(report.githubSummary).toBe("");
       expect(report.commands.at(-1)?.args[0]).toBe("ls-remote");
-      if (typeof code === "number" || code === "hang")
+      if (typeof code === "number" || code === "hang") {
         expect(report.output).toContain(`(status ${code === "hang" ? 124 : code})`);
-      else expect(report.output).not.toContain("Unable to determine");
+      } else {
+        expect(report.output).not.toContain("Unable to determine");
+      }
     }
   },
   55_000,
@@ -1355,7 +1226,9 @@ posixIt.each(
     { match: "^rev-parse refs/remotes", occurrence: 1 },
     { match: "^rev-parse refs/remotes", occurrence: 2 },
     { match: "^diff ", occurrence: 1 },
-  ].flatMap((site) => (["cleanup-failure", "cancel"] as const).map((code) => ({ ...site, code }))),
+  ].flatMap((site) =>
+    (["cleanup-failure", "cancel"] as const).map((code) => Object.assign({}, site, { code })),
+  ),
 )(
   "maturity $code at $match/$occurrence stops before fallback/output",
   async ({ match, occurrence, code }) => {
@@ -1425,7 +1298,7 @@ posixIt.each(
     { match: "^fetch ", occurrence: 2 },
     { match: "^ls-tree ", occurrence: 5 },
   ].flatMap((site) =>
-    ([23, "cleanup-failure", "cancel"] as const).map((code) => ({ ...site, code })),
+    ([23, "cleanup-failure", "cancel"] as const).map((code) => Object.assign({}, site, { code })),
   ),
 )(
   "generated publisher verify_publication $code at $match is terminal",
@@ -1662,7 +1535,9 @@ posixIt.each([
     expect(report.fetches).toHaveLength(fetches);
     expect(report.githubOutput).toBe("");
     expect(report.githubSummary).toBe("");
-    if (diagnostic) expect(report.output).toContain(diagnostic);
+    if (diagnostic) {
+      expect(report.output).toContain(diagnostic);
+    }
   },
   55_000,
 );

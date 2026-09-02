@@ -67,7 +67,7 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           path: .ci-harness
-          sparse-checkout: .github/actions/pre-commit
+          sparse-checkout: ".github/actions/pre-commit\n.github/zizmor.yml"
           persist-credentials: false
 
       - name: Setup Python
@@ -78,7 +78,7 @@ jobs:
       - name: Prepare Git owner
         uses: openclaw/openclaw/.github/actions/git-owner@dd4528b6393e7d00063067a080ca7241b48ce475
 
-      - name: Prepare trusted workflow audit configs
+      - name: Prepare trusted workflow audit policy
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
@@ -95,7 +95,6 @@ jobs:
           workspace = os.getcwd()
           base, branch = os.environ["BASE_SHA"], os.environ["BASE_REF"]
           remote = f"refs/remotes/origin/{branch}"
-          trusted_config = Path(os.environ["RUNNER_TEMP"]) / "pre-commit-base.yaml"
           trusted_zizmor_config = Path(os.environ["RUNNER_TEMP"]) / "zizmor-base.yml"
 
           def has_object(spec):
@@ -123,44 +122,34 @@ jobs:
               except (FetchTimeout, GitFailure):
                   fetch_base(f"refs/heads/{branch}", remote)
 
-          for source, target, label in [
-              (".pre-commit-config.yaml", trusted_config, "pre-commit"),
-              (".github/zizmor.yml", trusted_zizmor_config, "zizmor"),
-          ]:
-              exact = has_object(f"{base}:{source}")
-              # Only joined Git output may become a config; fatal ownership never selects another ref.
-              with TemporaryFile() as output:
-                  try:
-                      run_git(workspace, "show", f"{base if exact else remote}:{source}",
-                              stdout=output, stderr=None if exact else DEVNULL)
-                  except GitFailure:
-                      if exact:
-                          raise
-                      print(f"::error title=trusted {label} config unavailable::Could not read {source} from {base} or origin/{branch}.")
-                      raise SystemExit(1)
-                  output.seek(0)
-                  check_cancelled()
-                  target.write_bytes(output.read())
-              if not exact:
-                  print(f"Base SHA {base} does not expose {source}; using origin/{branch} instead.")
-
-          text = trusted_config.read_text()
-          if ".github/zizmor.yml" not in text:
-              raise SystemExit("trusted pre-commit config does not reference .github/zizmor.yml")
-          trusted_config.write_text(text.replace(".github/zizmor.yml", str(trusted_zizmor_config)))
+          source = ".github/zizmor.yml"
+          exact = has_object(f"{base}:{source}")
+          # Only joined Git output may become policy; fatal ownership never selects another ref.
+          with TemporaryFile() as output:
+              try:
+                  run_git(workspace, "show", f"{base if exact else remote}:{source}",
+                          stdout=output, stderr=None if exact else DEVNULL)
+              except GitFailure:
+                  if exact:
+                      raise
+                  print(f"::error title=trusted zizmor policy unavailable::Could not read {source} from {base} or origin/{branch}.")
+                  raise SystemExit(1)
+              output.seek(0)
+              check_cancelled()
+              trusted_zizmor_config.write_bytes(output.read())
+          if not exact:
+              print(f"Base SHA {base} does not expose {source}; using origin/{branch} instead.")
           check_cancelled()
-          with open(os.environ["GITHUB_ENV"], "a") as output:
-              output.write(f"PRE_COMMIT_CONFIG_PATH={trusted_config}\n")
           PYTHON
 
-      - name: Install pre-commit
+      - name: Install security scanners
         run: |
           set -euo pipefail
-          python3 -I -m venv "$RUNNER_TEMP/pre-commit-venv"
-          "$RUNNER_TEMP/pre-commit-venv/bin/python" -I -m pip install --disable-pip-version-check pre-commit==4.6.2
-
-      - name: Test selected pre-commit runner
-        run: '"$RUNNER_TEMP/pre-commit-venv/bin/python" -I .ci-harness/.github/actions/pre-commit/test-run-selected.py'
+          policy=".ci-harness/.github/zizmor.yml"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            policy="$RUNNER_TEMP/zizmor-base.yml"
+          fi
+          python3 -I .ci-harness/.github/actions/pre-commit/setup-scanners.py "$policy"
 
       - name: Install ShellCheck
         shell: bash
@@ -206,7 +195,8 @@ jobs:
           mapfile -t workflow_files < <(
             find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | sort
           )
-          "$RUNNER_TEMP/pre-commit-venv/bin/python" -I .ci-harness/.github/actions/pre-commit/run-selected.py "${PRE_COMMIT_CONFIG_PATH:-.pre-commit-config.yaml}" zizmor --files "${workflow_files[@]}"
+          GIT_ALLOW_PROTOCOL=file GIT_CONFIG_COUNT=0 \
+            "$RUNNER_TEMP/pre-commit-venv/bin/python" -I -m pre_commit run --config "$PRE_COMMIT_CONFIG_PATH" zizmor --files "${workflow_files[@]}"
 
       - name: Disallow direct inputs interpolation in composite run blocks
         run: python3 scripts/check-composite-action-input-interpolation.py

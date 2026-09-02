@@ -797,6 +797,17 @@ describe("scripts/test-projects changed-target routing", () => {
     });
   });
 
+  it.each([
+    ".github/actions/pre-commit/setup-scanners.py",
+    ".github/workflows/ci.yml",
+    ".github/workflows/workflow-sanity.yml",
+  ])("selects the scanner boundary proof for %s", (source) => {
+    expect(resolveChangedTestTargetPlan([source])).toEqual({
+      mode: "targets",
+      targets: expect.arrayContaining(["test/scripts/ci-security-fast-workflow.test.ts"]),
+    });
+  });
+
   it("routes QA Profile Evidence through Git lifecycle and existing workflow owners", () => {
     const plan = resolveChangedTestTargetPlan([".github/workflows/qa-profile-evidence.yml"]);
     expect(plan).toEqual({
@@ -868,6 +879,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/authorized-beta-focused-evidence.test.ts",
         "test/scripts/changed-path-facts.test.ts",
         "test/scripts/ci-changed-node-test-plan.test.ts",
+        "test/scripts/ci-security-fast-workflow.test.ts",
         "test/scripts/docker-release-artifacts.test.ts",
         "test/scripts/full-release-artifacts.test.ts",
         "test/scripts/full-release-validation-state.test.ts",

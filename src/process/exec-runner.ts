@@ -184,7 +184,18 @@ async function runCommandWithOutputEncoding(
     windowsVerbatimArguments: options.windowsVerbatimArguments,
   });
   const nodeChild = child.nodeChildProcess;
-  const releaseOutput = releaseChildProcessOutputAfterExit(nodeChild);
+  const ownsExitedProcessTree = Boolean(killProcessTree && process.platform !== "win32");
+  const shouldTrackOutputTimeout =
+    typeof noOutputTimeoutMs === "number" &&
+    Number.isFinite(noOutputTimeoutMs) &&
+    noOutputTimeoutMs > 0;
+  const resolvedNoOutputTimeoutMs = shouldTrackOutputTimeout
+    ? resolveTimerTimeoutMs(noOutputTimeoutMs, 1)
+    : undefined;
+  const ownsOutputDeadline =
+    ownsExitedProcessTree &&
+    (resolvedTimeoutMs !== undefined || resolvedNoOutputTimeoutMs !== undefined);
+  let releaseOutput: (() => void) | undefined;
   const terminationController = createCommandTerminationController({
     child: nodeChild,
     cancelController,
@@ -198,6 +209,11 @@ async function runCommandWithOutputEncoding(
   nodeChild.once("exit", (code, signalValue) => {
     childExited = true;
     childExitState = { code, signal: signalValue };
+    // Successful tree output belongs to its command deadline, not the diagnostic
+    // idle cutoff. Failed, terminated, and unowned output still gets a bounded drain.
+    if (!ownsOutputDeadline || code !== 0 || termination) {
+      releaseOutput = releaseChildProcessOutputAfterExit(nodeChild);
+    }
     // An inner timeout can become an ordinary failed exit while its descendants survive.
     // Retain the existing tree owner through its drain without changing that exit result.
     if (killProcessTree && !termination && code !== 0) {
@@ -211,7 +227,6 @@ async function runCommandWithOutputEncoding(
       noOutputTimer = undefined;
     }
   };
-  const ownsExitedProcessTree = Boolean(killProcessTree && process.platform !== "win32");
   const cancel = (reason: Exclude<CommandTerminationReason, "exit">) => {
     // Failed roots already own a drain; later deadlines must preserve their exit result.
     // Successful POSIX roots retain deadline ownership of inherited descendants.
@@ -226,18 +241,15 @@ async function runCommandWithOutputEncoding(
       return;
     }
     termination = reason;
+    if (childExited) {
+      // An escaped pipe holder can survive group termination; bound its final drain.
+      releaseOutput ??= releaseChildProcessOutputAfterExit(nodeChild);
+    }
     const abortDeferred = terminationController.terminate();
     if (!abortDeferred) {
       cancelController.abort();
     }
   };
-  const shouldTrackOutputTimeout =
-    typeof noOutputTimeoutMs === "number" &&
-    Number.isFinite(noOutputTimeoutMs) &&
-    noOutputTimeoutMs > 0;
-  const resolvedNoOutputTimeoutMs = shouldTrackOutputTimeout
-    ? resolveTimerTimeoutMs(noOutputTimeoutMs, 1)
-    : undefined;
   const armNoOutputTimer = () => {
     if (
       resolvedNoOutputTimeoutMs === undefined ||
@@ -394,7 +406,7 @@ async function runCommandWithOutputEncoding(
     }
     clearNoOutputTimer();
     signal?.removeEventListener("abort", onAbort);
-    releaseOutput();
+    releaseOutput?.();
   });
   await terminationController.settle();
   if (terminatingOutputError) {

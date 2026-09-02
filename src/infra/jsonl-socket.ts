@@ -30,7 +30,7 @@ export async function requestJsonlSocket<T>(
     let submitted = false;
     // Keep raw bytes until a line is complete so chunk boundaries cannot split
     // a UTF-8 code point before JSON parsing.
-    let lineChunks: Buffer[] = [];
+    const lineChunks: Buffer[] = [];
     let lineBytes = 0;
 
     const finish = (result: Result<T, JsonlSocketFailure>) => {
@@ -55,13 +55,6 @@ export async function requestJsonlSocket<T>(
         lineBytes += chunk.byteLength;
       }
       return true;
-    };
-
-    const takeLine = (): string => {
-      const line = Buffer.concat(lineChunks, lineBytes).toString("utf8").trim();
-      lineChunks = [];
-      lineBytes = 0;
-      return line;
     };
 
     const timer = setNodeTimeout(fail, timeoutMs);
@@ -99,7 +92,12 @@ export async function requestJsonlSocket<T>(
         if (!appendLineChunk(data.subarray(offset, newlineIndex))) {
           return;
         }
-        const line = takeLine();
+        const line =
+          (lineChunks.length > 1 ? Buffer.concat(lineChunks, lineBytes) : lineChunks[0])
+            ?.toString("utf8")
+            .trim() ?? "";
+        lineChunks.length = 0;
+        lineBytes = 0;
         offset = newlineIndex + 1;
         if (!line) {
           continue;
