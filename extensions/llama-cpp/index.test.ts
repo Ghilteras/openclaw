@@ -181,6 +181,23 @@ describe("llama.cpp provider plugin", () => {
       "llama-cpp",
       "llama-cpp-existing-server",
     ]);
+    expect(
+      provider.wrapSimpleCompletionStreamFn?.({
+        config: {
+          models: {
+            providers: {
+              [LLAMA_CPP_PROVIDER_ID]: {
+                baseUrl: "http://127.0.0.1:8080/v1",
+                models: [],
+              },
+            },
+          },
+        },
+        provider: LLAMA_CPP_PROVIDER_ID,
+        modelId: "external",
+        streamFn: vi.fn(),
+      } as never),
+    ).toBeUndefined();
     expect(provider).not.toHaveProperty("createStreamFn");
   });
 
@@ -380,8 +397,49 @@ describe("llama.cpp provider plugin", () => {
       const provider = registerTextProvider();
       const selectedModel = expectDefined(providerConfig.models[0], "managed chat model");
       const inner = vi.fn(() => ({}) as never);
-      const wrapped = provider.wrapStreamFn?.({
-        config,
+      for (const hook of ["wrapStreamFn", "wrapSimpleCompletionStreamFn"] as const) {
+        const wrapped = provider[hook]?.({
+          config,
+          provider: LLAMA_CPP_PROVIDER_ID,
+          modelId: selectedModel.id,
+          model: {
+            ...selectedModel,
+            provider: LLAMA_CPP_PROVIDER_ID,
+            baseUrl: providerConfig.baseUrl,
+          },
+          streamFn: inner,
+        } as never);
+        await wrapped?.({} as never, { messages: [] } as never, {});
+      }
+
+      expect(mocks.ensureChat).toHaveBeenCalledWith({
+        provider: providerConfig,
+        model: expect.objectContaining({ id: selectedModel.id }),
+      });
+      expect(mocks.ensureChat).toHaveBeenCalledTimes(2);
+      expect(inner).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("prepares managed chat before simple-completion transport", async () => {
+    const configured = configuredOptions();
+    const providerConfig = configured.config.models.providers[LLAMA_CPP_PROVIDER_ID];
+    const selectedModel = expectDefined(providerConfig.models[0], "managed chat model");
+    const order: string[] = [];
+    mocks.ensureChat.mockImplementationOnce(async () => {
+      order.push("prepare");
+    });
+    const transport = vi.fn(() => {
+      order.push("transport");
+      return {} as never;
+    });
+    const wrap = expectDefined(
+      registerTextProvider().wrapSimpleCompletionStreamFn,
+      "simple completion wrapper",
+    );
+    const wrapped = expectDefined(
+      wrap({
+        config: configured.config,
         provider: LLAMA_CPP_PROVIDER_ID,
         modelId: selectedModel.id,
         model: {
@@ -389,18 +447,16 @@ describe("llama.cpp provider plugin", () => {
           provider: LLAMA_CPP_PROVIDER_ID,
           baseUrl: providerConfig.baseUrl,
         },
-        streamFn: inner,
-      } as never);
+        streamFn: transport,
+      } as never),
+      "wrapped simple completion transport",
+    );
 
-      await wrapped?.({} as never, { messages: [] } as never, {});
+    await wrapped({} as never, { messages: [] } as never, {});
 
-      expect(mocks.ensureChat).toHaveBeenCalledWith({
-        provider: providerConfig,
-        model: expect.objectContaining({ id: selectedModel.id }),
-      });
-      expect(inner).toHaveBeenCalledOnce();
-    },
-  );
+    expect(order).toEqual(["prepare", "transport"]);
+    expect(transport).toHaveBeenCalledOnce();
+  });
 
   it("keeps registered text setup chat-capable when local memory is enabled", async () => {
     const provider = registerTextProvider();

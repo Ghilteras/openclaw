@@ -343,7 +343,6 @@ function renderEmbeddingModelSection(params: { isDefault?: boolean; modelPath: s
   return [
     `[${DEFAULT_LLAMA_CPP_EMBEDDING_MODEL_ID}]`,
     `model = ${assertIniValue(params.modelPath, "llama.cpp embedding model path")}`,
-    "ctx-size = 8192",
     ...(params.isDefault ? [`ubatch-size = ${LLAMA_CPP_EMBEDDING_UBATCH_SIZE}`] : []),
     "embedding = true",
   ].join("\n");

@@ -207,7 +207,6 @@ describe("provider local service", () => {
   });
 
   it("starts an on-demand local service and stops it after idle", async () => {
-    expect(hasManagedProviderLocalServices()).toBe(false);
     const port = await freePort();
     const healthUrl = `http://127.0.0.1:${port}/v1/models`;
     const reconcile = vi.fn(async () => {
@@ -216,9 +215,7 @@ describe("provider local service", () => {
     const model = attachModelProviderRuntimePluginHandle(
       attachModelProviderLocalService(
         {
-          id: "demo",
           provider: "local-demo",
-          api: "openai-completions",
           baseUrl: `http://127.0.0.1:${port}/v1`,
         } as unknown as Model<"openai-completions">,
         {
@@ -232,36 +229,29 @@ describe("provider local service", () => {
           idleStopMs: 1,
         },
       ),
-      {
-        provider: "local-demo",
-        plugin: { reconcileLocalService: reconcile } as never,
-      },
+      { plugin: { reconcileLocalService: reconcile } } as never,
     );
 
-    const firstLease = await withSpawnReadyHealthProbe(() =>
-      ensureModelProviderLocalService(model),
-    );
-    const secondLease = await ensureModelProviderLocalService(model);
+    const acquire = (signal?: AbortSignal) =>
+      ensureModelProviderLocalService(model, undefined, signal);
+    const firstLease = await withSpawnReadyHealthProbe(acquire);
+    const secondLease = await acquire();
     if (!firstLease || !secondLease) {
       throw new Error("Expected provider local service lease");
     }
-    const failure = new Error("reconcile failed");
     reconcile.mockImplementationOnce(() => {
-      throw failure;
+      throw new Error("reconcile failed");
     });
-    await expect(ensureModelProviderLocalService(model)).rejects.toThrow(failure.message);
+    await expect(acquire()).rejects.toThrow("reconcile failed");
     const controller = new AbortController();
     const abort = new Error("reconcile aborted");
     reconcile.mockImplementationOnce(async ({ signal }) => {
       controller.abort(abort);
       throw signal?.reason;
     });
-    await expect(
-      ensureModelProviderLocalService(model, undefined, controller.signal),
-    ).rejects.toThrow(abort.message);
+    await expect(acquire(controller.signal)).rejects.toThrow(abort.message);
 
     expect(reconcile).toHaveBeenCalledTimes(4);
-    expect(hasManagedProviderLocalServices()).toBe(true);
     expect((await fetch(healthUrl)).ok).toBe(true);
     firstLease.release();
     expect((await fetch(healthUrl)).ok).toBe(true);
@@ -530,9 +520,7 @@ describe("provider local service", () => {
     const model = attachModelProviderRuntimePluginHandle(
       attachModelProviderLocalService(
         {
-          id: "demo",
           provider: "local-body-cleanup",
-          api: "openai-completions",
           baseUrl: `http://127.0.0.1:${address.port}/v1`,
         } as unknown as Model<"openai-completions">,
         {
@@ -543,10 +531,7 @@ describe("provider local service", () => {
           idleStopMs: 1,
         },
       ),
-      {
-        provider: "local-body-cleanup",
-        plugin: { reconcileLocalService: reconcile } as never,
-      },
+      { plugin: { reconcileLocalService: reconcile } } as never,
     );
 
     try {

@@ -171,7 +171,7 @@ describe("managed llama-server", () => {
       const preset = await fs.readFile(presetPath, "utf8");
       expect(preset).toContain("[chat-model]\nmodel = /models/chat.gguf\nctx-size = 8192");
       expect(preset).toContain(
-        "[embeddinggemma-300m-qat-q8_0]\nmodel = /models/embedding.gguf\nctx-size = 8192\nubatch-size = 2048\nembedding = true",
+        "[embeddinggemma-300m-qat-q8_0]\nmodel = /models/embedding.gguf\nubatch-size = 2048\nembedding = true",
       );
       expect(preset).not.toMatch(/mmproj|draft/iu);
     } finally {
@@ -206,7 +206,7 @@ describe("managed llama-server", () => {
       });
       const preset = await fs.readFile(presetPath, "utf8");
       expect(preset).toBe(
-        "version = 1\n\n[embeddinggemma-300m-qat-q8_0]\nmodel = /models/custom-embedding.gguf\nctx-size = 8192\nembedding = true\n",
+        "version = 1\n\n[embeddinggemma-300m-qat-q8_0]\nmodel = /models/custom-embedding.gguf\nembedding = true\n",
       );
       expect(preset).not.toContain("jinja");
     } finally {
@@ -259,7 +259,7 @@ describe("managed llama-server", () => {
       const preset = await fs.readFile(presetPath, "utf8");
       expect(preset).toContain(`[chat-model]\nmodel = ${chatModelPath}\nctx-size = 8192`);
       expect(preset).toContain(
-        `[embeddinggemma-300m-qat-q8_0]\nmodel = ${embeddingModelPath}\nctx-size = 8192\nembedding = true`,
+        `[embeddinggemma-300m-qat-q8_0]\nmodel = ${embeddingModelPath}\nembedding = true`,
       );
       expect(preset).not.toContain("ubatch-size");
     } finally {
@@ -306,7 +306,7 @@ describe("managed llama-server", () => {
   });
 
   it("prunes and orders sections without rewriting or reloading unchanged bytes", async () => {
-    const { tempRoot, presetPath } = await createPresetFixture("chat-prune");
+    const { presetPath } = await createPresetFixture("chat-prune");
     let reloads = 0;
     const server = http.createServer((req, res) => {
       reloads += Number(req.url === "/models?reload=1");
@@ -336,7 +336,6 @@ describe("managed llama-server", () => {
         "",
         "[embeddinggemma-300m-qat-q8_0]",
         "model = /models/embedding.gguf",
-        "ctx-size = 8192",
         "embedding = true",
         "",
       ].join("\n"),
@@ -358,7 +357,6 @@ describe("managed llama-server", () => {
         "",
         "[embeddinggemma-300m-qat-q8_0]",
         "model = /models/embedding.gguf",
-        "ctx-size = 8192",
         "embedding = true",
         "",
       ].join("\n"),
@@ -401,10 +399,14 @@ describe("managed llama-server", () => {
   });
 
   it("reconciles a mutation after the child reads the preset but before it listens", async () => {
-    const { tempRoot, presetPath } = await createPresetFixture("startup-race");
+    const { presetPath } = await createPresetFixture("startup-race");
     const probe = http.createServer();
     const port = await listen(probe);
-    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      probe.close(() => {
+        resolve();
+      });
+    });
     const prepare = async (contextSize: number) =>
       await prepareManagedLlamaServer({
         chatModel: {
@@ -423,10 +425,14 @@ describe("managed llama-server", () => {
     await prepare(16_384);
 
     let reloads = 0;
-    const server = http.createServer(async (req, res) => {
+    const server = http.createServer((req, res) => {
       if (req.url === "/models?reload=1") {
         reloads += 1;
-        loadedPreset = await fs.readFile(presetPath, "utf8");
+        void fs.readFile(presetPath, "utf8").then((contents) => {
+          loadedPreset = contents;
+          res.end("{}");
+        });
+        return;
       }
       res.end("{}");
     });

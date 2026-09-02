@@ -1,11 +1,7 @@
-/**
- * Manages optional local provider sidecar processes attached to models. Leases
- * keep shared services alive while requests run and stop them after idle.
- */
+/** Manages optional local provider processes; request leases keep shared services alive. */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { isCanonicalDottedDecimalIPv4, isLoopbackIpAddress } from "@openclaw/net-policy/ip";
 import {
   clampPositiveTimerTimeoutMs,
   resolvePositiveTimerTimeoutMs,
@@ -19,7 +15,6 @@ import type { Model } from "../llm/types.js";
 import { isSensitiveFieldKey, redactSensitiveText } from "../logging/redact.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getModelProviderRuntimePluginHandle } from "../plugins/provider-hook-runtime.js";
-import type { ProviderReconcileLocalServiceContext } from "../plugins/provider-transport.types.js";
 import {
   forceKillChildProcessTree,
   isChildProcessTreeAlive,
@@ -27,6 +22,12 @@ import {
   shouldDetachChildForProcessTree,
 } from "../process/child-process-tree.js";
 import { prepareOomScoreAdjustedSpawnPreservingExecEnv as prepareLocalServiceSpawn } from "../process/linux-oom-score.js";
+import type {
+  AcquireConfiguredProviderLocalService,
+  ProviderLocalServiceLease,
+  ProviderLocalServiceTarget,
+} from "./provider-local-service-target.js";
+import { resolveConfiguredProviderLocalServiceTarget } from "./provider-local-service-target.js";
 import { setManagedProviderLocalServicesActive } from "./provider-runtime-lifecycle.js";
 import { unwrapHeadersInitSentinelsForProviderEgress } from "./provider-secret-egress.js";
 
@@ -74,110 +75,14 @@ type LocalServiceDiagnostics = {
   lastExit?: LocalServiceExit;
 };
 
-/** Exact provider endpoint whose optional local process should be leased. */
-export type ProviderLocalServiceTarget = {
-  providerId: string;
-  baseUrl: string;
-  headers?: HeadersInit;
-  service?: ModelProviderLocalServiceConfig;
-  reconcile?: (ctx: ProviderReconcileLocalServiceContext) => Promise<void>;
-};
-
-/** Configured provider endpoint whose host-owned local service may be leased. */
-export type ConfiguredProviderLocalServiceTarget = Omit<ProviderLocalServiceTarget, "service">;
-
-/** Lease returned for a started or already-running local provider service. */
-export type ProviderLocalServiceLease = {
-  release: () => void;
-};
-
-/** Host-injected acquisition hook that cannot supply process configuration. */
-export type AcquireConfiguredProviderLocalService = (
-  target: ConfiguredProviderLocalServiceTarget,
-  signal?: AbortSignal | null,
-) => Promise<ProviderLocalServiceLease | undefined>;
-
 /** Bind local-service acquisition to a host-owned config snapshot. */
 export function createConfiguredProviderLocalServiceAcquirer(
   getConfig: () => OpenClawConfig,
 ): AcquireConfiguredProviderLocalService {
   return async (target, signal) => {
-    const provider = getConfig().models?.providers?.[target.providerId];
-    const service = provider?.localService;
-    if (!service) {
-      return undefined;
-    }
-    if (!isConfiguredProviderBaseUrl(target.baseUrl, readConfiguredProviderBaseUrl(provider))) {
-      throw new Error(
-        `Local service target must match models.providers.${target.providerId}.baseUrl`,
-      );
-    }
-    return await ensureProviderLocalService({ ...target, service }, signal);
+    const resolved = resolveConfiguredProviderLocalServiceTarget(getConfig(), target);
+    return resolved ? await ensureProviderLocalService(resolved, signal) : undefined;
   };
-}
-
-function readConfiguredProviderBaseUrl(
-  provider: { baseUrl?: string; baseURL?: unknown } | undefined,
-): string | undefined {
-  const canonical = provider?.baseUrl?.trim();
-  if (canonical) {
-    return canonical;
-  }
-  const alternate = provider?.baseURL;
-  return typeof alternate === "string" && alternate.trim() ? alternate.trim() : undefined;
-}
-
-function normalizeProviderBaseUrl(value: string): string | undefined {
-  const trimmed = value.trim();
-  const candidates = /^[a-z][a-z\d+.-]*:\/\//iu.test(trimmed) ? [trimmed] : [`http://${trimmed}`];
-  for (const candidate of candidates) {
-    try {
-      const url = new URL(candidate);
-      if (url.protocol !== "http:" && url.protocol !== "https:") {
-        continue;
-      }
-      url.search = "";
-      url.hash = "";
-      url.pathname = url.pathname.replace(/\/+$/u, "") || "/";
-      return url.toString().replace(/\/$/u, "");
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
-function configuredProviderBaseUrlVariants(value: string): Set<string> {
-  const normalized = normalizeProviderBaseUrl(value);
-  if (!normalized) {
-    return new Set();
-  }
-  const withoutOpenAiPath = normalized.replace(/\/v1$/iu, "");
-  return new Set([normalized, withoutOpenAiPath, `${withoutOpenAiPath}/v1`]);
-}
-
-function isLoopbackProviderBaseUrl(value: string): boolean {
-  const normalized = normalizeProviderBaseUrl(value);
-  if (!normalized) {
-    return false;
-  }
-  const hostname = new URL(normalized).hostname.toLowerCase();
-  return (
-    hostname === "localhost" ||
-    hostname === "[::1]" ||
-    (isCanonicalDottedDecimalIPv4(hostname) && isLoopbackIpAddress(hostname))
-  );
-}
-
-function isConfiguredProviderBaseUrl(targetBaseUrl: string, configuredBaseUrl?: string): boolean {
-  const target = normalizeProviderBaseUrl(targetBaseUrl);
-  if (!target) {
-    return false;
-  }
-  const configured = configuredBaseUrl?.trim();
-  return configured
-    ? configuredProviderBaseUrlVariants(configured).has(target)
-    : isLoopbackProviderBaseUrl(target);
 }
 
 /** Attach local-service startup metadata to a model without mutating the original object. */
@@ -295,10 +200,10 @@ async function acquireProviderLocalService(
       });
     }
     await waitForAbort(managed.starting, signal);
-    if (managed.process && !hasLocalServiceProcessExited(managed.process)) {
-      return { release };
-    }
-    if (await probeHealth(healthUrl, healthHeaders, signal)) {
+    if (
+      (managed.process && !hasLocalServiceProcessExited(managed.process)) ||
+      (await probeHealth(healthUrl, healthHeaders, signal))
+    ) {
       return { release };
     }
     release();
@@ -392,8 +297,7 @@ async function probeHealth(
   signal?: AbortSignal | null,
 ): Promise<boolean> {
   throwIfAborted(signal);
-  // Local-service orchestration retains sentinel headers across retries. Only
-  // the actual health request may materialize credentials.
+  // Only the actual health request may materialize retained sentinel headers.
   const egressHeaders = unwrapHeadersInitSentinelsForProviderEgress(
     headers,
     "to probe local model provider health",
@@ -445,8 +349,7 @@ async function startAndWaitForLocalService(params: {
     stderrTail: "",
   };
   managed.diagnostics = diagnostics;
-  // The last lease can disappear while the health probe or restart settles.
-  // Recheck at the spawn boundary so cleanup cannot orphan a newly created child.
+  // Recheck after health/restart so the last lease cannot disappear before spawn.
   throwIfAborted(signal);
   log.info(`starting ${provider} local service: ${service.command}`);
   const serviceEnv = service.env ? mergeProcessEnv([process.env, service.env]) : process.env;
@@ -515,8 +418,7 @@ async function startAndWaitForLocalService(params: {
     if (await probeHealth(healthUrl, healthHeaders, signal)) {
       diagnostics.readyAt = Date.now();
       diagnostics.lastHealthyAt = diagnostics.readyAt;
-      // Pipes keep startup alive while readiness is pending, then stop
-      // diagnostics from retaining runtime output or pinning one-shot hosts.
+      // Drain readiness diagnostics so pipes cannot pin one-shot hosts.
       diagnostics.stdoutTail = "";
       diagnostics.stderrTail = "";
       drainLocalServiceOutput(child);
