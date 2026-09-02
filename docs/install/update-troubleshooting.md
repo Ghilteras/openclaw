@@ -40,13 +40,15 @@ version, platform, update target, failed phase, sanitized diagnostics, and
 verified rollback outcome. The report excludes secrets, tokens, chat content,
 raw logs, private absolute paths, and recovery commands. Nothing is submitted
 until an administrator confirms that preview. OpenClaw then uses the existing
-GitHub CLI issue flow and saves the sanitized report locally. When the CLI
-cannot start, OpenClaw returns a prefilled issue link. Once the CLI starts, an
-authentication failure, timeout, signal, nonzero exit, or malformed response
-without a verified issue URL leaves the attempt pending without a replay link,
-because the issue-creation outcome may be unknown. The action is tied to one
-update-attempt identity and cannot submit that attempt twice; reconnecting or
-refreshing status never reports it automatically.
+GitHub CLI issue flow and saves the sanitized report locally. It first makes a
+silent, read-only request with the active `github.com` account. A missing CLI or
+a failed, unavailable, or timed-out authentication check returns a prefilled
+issue link without starting issue creation. Once issue creation starts, a
+timeout, signal, nonzero exit, or malformed response without a verified issue
+URL leaves the attempt pending without a replay link, because the issue-creation
+outcome may be unknown. The action is tied to one update-attempt identity and
+cannot submit that attempt twice; reconnecting or refreshing status never
+reports it automatically.
 
 Control UI remediation uses typed product actions only. It leads with an
 authenticated Gateway or native action when the connected UI has the required

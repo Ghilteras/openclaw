@@ -26,6 +26,29 @@ const GITHUB_PREFILL_TITLE_MAX_BYTES = 512;
 const GITHUB_PREFILL_URL_MAX_CHARS = 16_384;
 const GITHUB_PREFILL_TRUNCATED_SUFFIX =
   "\n\n...(truncated for URL; see the saved sanitized report for the complete body)";
+const GITHUB_AUTH_PREFLIGHT_ARGS = [
+  "api",
+  "user",
+  "--hostname",
+  "github.com",
+  "--method",
+  "GET",
+  "--silent",
+] as const;
+
+function githubIssueCreateArgs(issue: SanitizedGithubIssue): readonly string[] {
+  return [
+    "issue",
+    "create",
+    "--repo",
+    "github.com/openclaw/openclaw",
+    "--title",
+    issue.title,
+    "--body-file",
+    "-",
+  ];
+}
+
 function buildPrefilledGithubIssueUrl(title: string, body: string): string {
   const params = new URLSearchParams({ body, title });
   return `https://github.com/openclaw/openclaw/issues/new?${params.toString()}`;
@@ -66,21 +89,13 @@ export function createGithubIssue(
   issue: SanitizedGithubIssue,
   spawnGh: SpawnGh = defaultSpawnGh,
 ): GithubIssueCreateResult {
+  const authResult = spawnGh(GITHUB_AUTH_PREFLIGHT_ARGS, { input: "" });
+  if (authResult.error || authResult.status !== 0) {
+    return resolveGithubAuthPreflightFailure(issue, authResult);
+  }
   return resolveGithubIssueCreateResult(
     issue,
-    spawnGh(
-      [
-        "issue",
-        "create",
-        "--repo",
-        "github.com/openclaw/openclaw",
-        "--title",
-        issue.title,
-        "--body-file",
-        "-",
-      ],
-      { input: issue.body },
-    ),
+    spawnGh(githubIssueCreateArgs(issue), { input: issue.body }),
   );
 }
 
@@ -89,22 +104,30 @@ export async function createGithubIssueAsync(
   issue: SanitizedGithubIssue,
   runGh: RunGhAsync = defaultRunGhAsync,
 ): Promise<GithubIssueCreateResult> {
+  const authResult = await runGh(GITHUB_AUTH_PREFLIGHT_ARGS, { input: "" });
+  if (authResult.error || authResult.status !== 0) {
+    return resolveGithubAuthPreflightFailure(issue, authResult);
+  }
   return resolveGithubIssueCreateResult(
     issue,
-    await runGh(
-      [
-        "issue",
-        "create",
-        "--repo",
-        "github.com/openclaw/openclaw",
-        "--title",
-        issue.title,
-        "--body-file",
-        "-",
-      ],
-      { input: issue.body },
-    ),
+    await runGh(githubIssueCreateArgs(issue), { input: issue.body }),
   );
+}
+
+function githubCliFailureMessage(result: GithubCliResult): string {
+  const stderr = String(result.stderr).trim();
+  return result.error?.message ?? (stderr || `gh exited ${result.status ?? "unknown"}`);
+}
+
+function resolveGithubAuthPreflightFailure(
+  issue: SanitizedGithubIssue,
+  result: GithubCliResult,
+): GithubIssueCreateResult {
+  return {
+    fallbackUrl: issue.url,
+    message: githubCliFailureMessage(result),
+    ok: false,
+  };
 }
 
 function resolveGithubIssueCreateResult(
@@ -124,13 +147,10 @@ function resolveGithubIssueCreateResult(
   } catch {
     // A child that started without returning a validated issue URL remains ambiguous.
   }
-  const stderr = String(result.stderr).trim();
-  const error = result.error
-    ? result.error.message
-    : stderr ||
-      (result.status === 0
-        ? "gh completed without a validated GitHub issue URL"
-        : `gh exited ${result.status ?? "unknown"}`);
+  const error =
+    !result.error && result.status === 0
+      ? "gh completed without a validated GitHub issue URL"
+      : githubCliFailureMessage(result);
   const errorCode =
     result.error && "code" in result.error && typeof result.error.code === "string"
       ? result.error.code
@@ -193,7 +213,11 @@ async function defaultRunGhAsync(
       started = true;
     });
     const timeout = setTimeout(() => {
-      error = Object.assign(new Error("gh issue creation timed out"), { code: "ETIMEDOUT" });
+      const message =
+        args[0] === "api"
+          ? "GitHub CLI authentication check timed out"
+          : "GitHub issue creation timed out";
+      error = Object.assign(new Error(message), { code: "ETIMEDOUT" });
       child.kill("SIGKILL");
     }, GITHUB_ISSUE_CREATE_TIMEOUT_MS);
     timeout.unref?.();

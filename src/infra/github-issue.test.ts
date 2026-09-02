@@ -8,6 +8,41 @@ import {
 
 const spawnSyncMock = vi.hoisted(() => vi.fn());
 const spawnMock = vi.hoisted(() => vi.fn());
+const authPreflightArgs = [
+  "api",
+  "user",
+  "--hostname",
+  "github.com",
+  "--method",
+  "GET",
+  "--silent",
+];
+const authSuccess = {
+  status: 0,
+  started: true,
+  stderr: Buffer.alloc(0),
+  stdout: Buffer.alloc(0),
+};
+
+function afterAsyncAuth(result: {
+  error?: Error;
+  status: number | null;
+  started?: boolean;
+  stderr: Buffer;
+  stdout: Buffer;
+}) {
+  return vi.fn().mockResolvedValueOnce(authSuccess).mockResolvedValueOnce(result);
+}
+
+function afterSyncAuth(result: {
+  error?: Error;
+  status: number | null;
+  started?: boolean;
+  stderr: Buffer;
+  stdout: Buffer;
+}) {
+  return vi.fn().mockReturnValueOnce(authSuccess).mockReturnValueOnce(result);
+}
 
 vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
@@ -55,7 +90,7 @@ describe("createGithubIssue", () => {
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
-  it("bounds the async GitHub CLI transport without blocking the process", async () => {
+  it("returns a fallback when the async auth preflight times out", async () => {
     vi.useFakeTimers();
     const child = new EventEmitter() as EventEmitter & {
       stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
@@ -81,30 +116,78 @@ describe("createGithubIssue", () => {
     await vi.advanceTimersByTimeAsync(30_000);
 
     await expect(result).resolves.toEqual({
-      ambiguous: true,
-      message: "gh issue creation timed out",
+      fallbackUrl,
+      message: "GitHub CLI authentication check timed out",
       ok: false,
     });
-    expect(spawnMock).toHaveBeenCalledWith(
-      "gh",
-      [
-        "issue",
-        "create",
-        "--repo",
-        "github.com/openclaw/openclaw",
-        "--title",
-        "Update failed",
-        "--body-file",
-        "-",
-      ],
-      { stdio: ["pipe", "pipe", "pipe"] },
-    );
+    expect(spawnMock).toHaveBeenCalledWith("gh", authPreflightArgs, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(1);
     expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("keeps an async issue-create timeout pending after a successful auth preflight", async () => {
+    vi.useFakeTimers();
+    const createChild = () => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        kill: ReturnType<typeof vi.fn>;
+      };
+      child.stdin = Object.assign(new EventEmitter(), { end: vi.fn() });
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn(() => {
+        queueMicrotask(() => child.emit("close", null));
+        return true;
+      });
+      return child;
+    };
+    const authChild = createChild();
+    authChild.stdin.end.mockImplementation(() => {
+      queueMicrotask(() => {
+        authChild.emit("spawn");
+        authChild.emit("close", 0);
+      });
+    });
+    const issueChild = createChild();
+    issueChild.stdin.end.mockImplementation(() => {
+      queueMicrotask(() => issueChild.emit("spawn"));
+    });
+    spawnMock.mockReturnValueOnce(authChild).mockReturnValueOnce(issueChild);
+
+    const result = createGithubIssueAsync({
+      body: "sanitized body",
+      title: "Update failed",
+      url: "https://github.com/openclaw/openclaw/issues/new?title=update",
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await expect(result).resolves.toEqual({
+      ambiguous: true,
+      message: "GitHub issue creation timed out",
+      ok: false,
+    });
+    expect(spawnMock).toHaveBeenNthCalledWith(1, "gh", authPreflightArgs, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    expect(spawnMock.mock.calls[1]?.[1]).toEqual([
+      "issue",
+      "create",
+      "--repo",
+      "github.com/openclaw/openclaw",
+      "--title",
+      "Update failed",
+      "--body-file",
+      "-",
+    ]);
+    expect(issueChild.kill).toHaveBeenCalledWith("SIGKILL");
   });
 
   it.each([
     {
-      ambiguous: false,
       label: "missing gh",
       result: {
         error: Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" }),
@@ -116,7 +199,6 @@ describe("createGithubIssue", () => {
       message: "spawn gh ENOENT",
     },
     {
-      ambiguous: true,
       label: "unauthenticated gh",
       result: {
         status: 4,
@@ -126,20 +208,148 @@ describe("createGithubIssue", () => {
       },
       message: "To get started with GitHub CLI, run: gh auth login",
     },
-  ])("classifies the async transport for $label", async ({ ambiguous, result, message }) => {
-    const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
+    {
+      label: "timed-out auth preflight",
+      result: {
+        error: Object.assign(new Error("gh auth status timed out"), { code: "ETIMEDOUT" }),
+        status: null,
+        started: true,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.alloc(0),
+      },
+      message: "gh auth status timed out",
+    },
+    {
+      label: "failed auth preflight",
+      result: {
+        status: 2,
+        started: true,
+        stderr: Buffer.from("auth status unavailable"),
+        stdout: Buffer.alloc(0),
+      },
+      message: "auth status unavailable",
+    },
+  ])(
+    "returns a fallback when the async auth preflight reports $label",
+    async ({ result, message }) => {
+      const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
+      const runGh = vi.fn(async () => result);
+
+      await expect(
+        createGithubIssueAsync(
+          { body: "sanitized body", title: "Update failed", url: fallbackUrl },
+          runGh,
+        ),
+      ).resolves.toEqual({
+        fallbackUrl,
+        message,
+        ok: false,
+      });
+      expect(runGh).toHaveBeenCalledTimes(1);
+      expect(runGh).toHaveBeenCalledWith(authPreflightArgs, { input: "" });
+    },
+  );
+
+  it("uses the active-account API preflight before asynchronous issue creation", async () => {
+    const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
+    const runGh = afterAsyncAuth({
+      status: 0,
+      started: true,
+      stderr: Buffer.alloc(0),
+      stdout: Buffer.from(`${issueUrl}\n`),
+    });
 
     await expect(
       createGithubIssueAsync(
-        { body: "sanitized body", title: "Update failed", url: fallbackUrl },
-        async () => result,
+        {
+          body: "sanitized body",
+          title: "Update failed",
+          url: "https://github.com/openclaw/openclaw/issues/new?title=update",
+        },
+        runGh,
       ),
-    ).resolves.toEqual({
-      ...(ambiguous ? { ambiguous: true } : {}),
-      ...(!ambiguous ? { fallbackUrl } : {}),
-      message,
-      ok: false,
-    });
+    ).resolves.toEqual({ ok: true, url: issueUrl });
+    expect(runGh).toHaveBeenNthCalledWith(1, authPreflightArgs, { input: "" });
+    expect(runGh).toHaveBeenNthCalledWith(
+      2,
+      [
+        "issue",
+        "create",
+        "--repo",
+        "github.com/openclaw/openclaw",
+        "--title",
+        "Update failed",
+        "--body-file",
+        "-",
+      ],
+      { input: "sanitized body" },
+    );
+  });
+
+  it.each([
+    {
+      label: "signal",
+      result: {
+        status: null,
+        started: true,
+        stderr: Buffer.from("gh terminated by signal"),
+        stdout: Buffer.alloc(0),
+      },
+      message: "gh terminated by signal",
+    },
+    {
+      label: "nonzero exit",
+      result: {
+        status: 1,
+        started: true,
+        stderr: Buffer.from("post-create response failed"),
+        stdout: Buffer.alloc(0),
+      },
+      message: "post-create response failed",
+    },
+    {
+      label: "malformed stdout",
+      result: {
+        status: 0,
+        started: true,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("not-an-issue-url\n"),
+      },
+      message: "gh completed without a validated GitHub issue URL",
+    },
+  ])(
+    "keeps an async issue-create $label pending without a replay URL",
+    async ({ result, message }) => {
+      await expect(
+        createGithubIssueAsync(
+          {
+            body: "sanitized body",
+            title: "Update failed",
+            url: "https://github.com/openclaw/openclaw/issues/new?title=update",
+          },
+          afterAsyncAuth(result),
+        ),
+      ).resolves.toEqual({ ambiguous: true, message, ok: false });
+    },
+  );
+
+  it("accepts an async nonzero result with a validated issue URL", async () => {
+    const issueUrl = "https://github.com/openclaw/openclaw/issues/789";
+    await expect(
+      createGithubIssueAsync(
+        {
+          body: "sanitized body",
+          title: "Update failed",
+          url: "https://github.com/openclaw/openclaw/issues/new?title=update",
+        },
+        afterAsyncAuth({
+          status: 1,
+          started: true,
+          stderr: Buffer.from("post-create cleanup failed"),
+          stdout: Buffer.from(`${issueUrl}\n`),
+        }),
+      ),
+    ).resolves.toEqual({ ok: true, url: issueUrl });
   });
 
   it.each([
@@ -177,11 +387,28 @@ describe("createGithubIssue", () => {
         url: "https://github.com/openclaw/openclaw/issues/new?title=update",
       }),
     ).toEqual({ ok: true, url: "https://github.com/openclaw/openclaw/issues/123" });
+    expect(spawnSyncMock).toHaveBeenNthCalledWith(1, "gh", authPreflightArgs, {
+      input: "",
+      killSignal: "SIGKILL",
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+    });
+    expect(spawnSyncMock.mock.calls[1]?.[1]).toEqual([
+      "issue",
+      "create",
+      "--repo",
+      "github.com/openclaw/openclaw",
+      "--title",
+      "Update failed",
+      "--body-file",
+      "-",
+    ]);
   });
 
   it("keeps a successful exit with malformed output ambiguous", () => {
-    spawnSyncMock.mockReturnValue({
+    spawnSyncMock.mockReturnValueOnce(authSuccess).mockReturnValueOnce({
       status: 0,
+      started: true,
       stderr: Buffer.alloc(0),
       stdout: Buffer.from("javascript:alert(1)\n"),
     });
@@ -211,11 +438,30 @@ describe("createGithubIssue", () => {
           title: "Update failed",
           url: "https://github.com/openclaw/openclaw/issues/new?title=update",
         },
-        () => ({
+        afterSyncAuth({
           error: timeoutError,
           status: null,
           started: true,
           stderr: Buffer.alloc(0),
+          stdout: Buffer.from(`${issueUrl}\n`),
+        }),
+      ),
+    ).toEqual({ ok: true, url: issueUrl });
+  });
+
+  it("accepts a validated issue URL from a nonzero issue-create result", () => {
+    const issueUrl = "https://github.com/openclaw/openclaw/issues/456";
+    expect(
+      createGithubIssue(
+        {
+          body: "sanitized body",
+          title: "Update failed",
+          url: "https://github.com/openclaw/openclaw/issues/new?title=update",
+        },
+        afterSyncAuth({
+          status: 1,
+          started: true,
+          stderr: Buffer.from("post-create cleanup failed"),
           stdout: Buffer.from(`${issueUrl}\n`),
         }),
       ),
@@ -256,7 +502,7 @@ describe("createGithubIssue", () => {
     expect(
       createGithubIssue(
         { body: "sanitized body", title: "Update failed", url: fallbackUrl },
-        () => result,
+        afterSyncAuth(result),
       ),
     ).toMatchObject({ ambiguous: true, ok: false });
   });
@@ -265,9 +511,10 @@ describe("createGithubIssue", () => {
     const timeoutError = Object.assign(new Error("spawnSync gh ETIMEDOUT"), {
       code: "ETIMEDOUT",
     });
-    spawnSyncMock.mockReturnValue({
+    spawnSyncMock.mockReturnValueOnce(authSuccess).mockReturnValueOnce({
       error: timeoutError,
       status: null,
+      started: true,
       stderr: Buffer.alloc(0),
       stdout: Buffer.alloc(0),
     });
@@ -278,7 +525,8 @@ describe("createGithubIssue", () => {
       url: "https://github.com/openclaw/openclaw/issues/new?title=recovery",
     });
 
-    expect(spawnSyncMock).toHaveBeenCalledWith(
+    expect(spawnSyncMock).toHaveBeenNthCalledWith(
+      2,
       "gh",
       [
         "issue",
@@ -306,7 +554,6 @@ describe("createGithubIssue", () => {
 
   it.each([
     {
-      ambiguous: false,
       label: "missing gh",
       result: {
         error: Object.assign(new Error("spawnSync gh ENOENT"), { code: "ENOENT" }),
@@ -318,7 +565,6 @@ describe("createGithubIssue", () => {
       message: "spawnSync gh ENOENT",
     },
     {
-      ambiguous: false,
       label: "unexecutable gh",
       result: {
         error: Object.assign(new Error("spawnSync gh EACCES"), { code: "EACCES" }),
@@ -330,7 +576,6 @@ describe("createGithubIssue", () => {
       message: "spawnSync gh EACCES",
     },
     {
-      ambiguous: false,
       label: "test-blocked gh",
       result: {
         error: Object.assign(new Error("spawnSync gh EPERM"), { code: "EPERM" }),
@@ -342,7 +587,6 @@ describe("createGithubIssue", () => {
       message: "spawnSync gh EPERM",
     },
     {
-      ambiguous: true,
       label: "unauthenticated gh",
       result: {
         status: 4,
@@ -352,17 +596,44 @@ describe("createGithubIssue", () => {
       },
       message: "To get started with GitHub CLI, run: gh auth login",
     },
-  ])("classifies the sync transport for $label", ({ ambiguous, result, message }) => {
+    {
+      label: "timed-out auth preflight",
+      result: {
+        error: Object.assign(new Error("spawnSync gh ETIMEDOUT"), { code: "ETIMEDOUT" }),
+        status: null,
+        started: true,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.alloc(0),
+      },
+      message: "spawnSync gh ETIMEDOUT",
+    },
+    {
+      label: "failed auth preflight",
+      result: {
+        status: 2,
+        started: true,
+        stderr: Buffer.from("auth status unavailable"),
+        stdout: Buffer.alloc(0),
+      },
+      message: "auth status unavailable",
+    },
+  ])("returns a fallback when the sync auth preflight reports $label", ({ result, message }) => {
     spawnSyncMock.mockReturnValue(result);
     const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
 
     expect(
       createGithubIssue({ body: "sanitized body", title: "Update failed", url: fallbackUrl }),
     ).toEqual({
-      ...(ambiguous ? { ambiguous: true } : {}),
-      ...(!ambiguous ? { fallbackUrl } : {}),
+      fallbackUrl,
       message,
       ok: false,
+    });
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    expect(spawnSyncMock).toHaveBeenCalledWith("gh", authPreflightArgs, {
+      input: "",
+      killSignal: "SIGKILL",
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
     });
   });
 });
