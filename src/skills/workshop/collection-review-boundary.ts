@@ -6,6 +6,8 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { RunCronAgentTurnParams } from "../../cron/isolated-agent/run-prepare-runtime.js";
 import type { RunCronAgentTurnResult } from "../../cron/isolated-agent/run.types.js";
 import type { CronExecutionIdentityAdmission } from "../../cron/service/state.js";
+import { sha256Hex } from "../../infra/crypto-digest.js";
+import { root, walkDirectory } from "../../infra/fs-safe.js";
 import type { PluginHookSkillArtifact } from "../../plugins/hook-types.js";
 import {
   dispatchCommittedSkillChangeBestEffort,
@@ -51,6 +53,12 @@ type ReviewChange = {
   after?: PluginHookSkillArtifact;
 };
 type ReviewCommit = { result: RunCronAgentTurnResult; changes: ReviewChange[] };
+type ReviewSkillFile = {
+  relativeDir: string;
+  relativePath: string;
+  filePath: string;
+  contentHash: string;
+};
 
 export async function runSkillCollectionReviewForAgent(params: {
   config: OpenClawConfig;
@@ -81,6 +89,7 @@ export async function runSkillCollectionReviewForAgent(params: {
       assertCurrent(lease);
       await fs.mkdir(skillsRoot, { recursive: true });
       const before = await resolveReviewSkills(params.config, params.env);
+      const beforeFiles = await snapshotWorkshopSkillFiles(skillsRoot);
       const backup = await createCollectionBackup({
         skillsRoot,
         skillDirs: before.map((skill) => path.relative(skillsRoot, skill.baseDir)),
@@ -129,30 +138,57 @@ export async function runSkillCollectionReviewForAgent(params: {
         const reviewErrors: string[] = [];
         const dropReasons = parseDropReasons(turnResult.outputText);
         const after = await resolveReviewSkills(params.config, params.env);
+        const afterFiles = await snapshotWorkshopSkillFiles(skillsRoot);
         const beforeByName = new Map(before.map((skill) => [skill.name, skill]));
-        const afterByName = new Map(after.map((skill) => [skill.name, skill]));
-        const changed = [...afterByName.values()].filter((skill) => {
-          const previous = beforeByName.get(skill.name);
-          return !previous || previous.treeHash !== skill.treeHash;
+        const afterByDir = new Map(
+          after.map((skill) => [path.relative(skillsRoot, skill.baseDir), skill]),
+        );
+        const beforeLoadedDirs = new Set(
+          before.map((skill) => path.relative(skillsRoot, skill.baseDir)),
+        );
+        const revertedDirs = new Set<string>();
+        const changedFiles = [...afterFiles.values()].filter((file) => {
+          const previous = beforeFiles.get(file.relativeDir);
+          return !previous || previous.contentHash !== file.contentHash;
         });
-        for (const skill of changed) {
+        for (const file of changedFiles) {
           assertCurrent(lease);
-          const content = await fs.readFile(skill.filePath, "utf8");
+          const content = await readWorkshopSkillFile(skillsRoot, file.relativePath);
           const findings = [
-            ...scanSkillContent(content, skill.filePath),
-            ...scanSource(content, skill.filePath),
+            ...scanSkillContent(content, file.filePath),
+            ...scanSource(content, file.filePath),
           ];
           if (findings.some((finding) => finding.severity === "critical")) {
-            const previous = beforeByName.get(skill.name);
             assertCurrent(lease);
             await restoreSkillCollectionDirectoryFromBackup({
               skillsRoot,
               backupDir: backup.backupDir,
-              relativeDir: path.relative(skillsRoot, skill.baseDir),
-              existedBefore: previous !== undefined,
+              relativeDir: file.relativeDir,
+              existedBefore: beforeFiles.has(file.relativeDir),
             });
-            reviewErrors.push(`security scan rejected ${skill.name}`);
+            revertedDirs.add(file.relativeDir);
+            reviewErrors.push(
+              `security scan rejected ${afterByDir.get(file.relativeDir)?.name ?? file.relativeDir}`,
+            );
           }
+        }
+        for (const file of afterFiles.values()) {
+          if (
+            afterByDir.has(file.relativeDir) ||
+            revertedDirs.has(file.relativeDir) ||
+            (!beforeLoadedDirs.has(file.relativeDir) && beforeFiles.has(file.relativeDir))
+          ) {
+            continue;
+          }
+          assertCurrent(lease);
+          await restoreSkillCollectionDirectoryFromBackup({
+            skillsRoot,
+            backupDir: backup.backupDir,
+            relativeDir: file.relativeDir,
+            existedBefore: beforeFiles.has(file.relativeDir),
+          });
+          revertedDirs.add(file.relativeDir);
+          reviewErrors.push(`review left ${file.relativeDir} unloadable`);
         }
         assertCurrent(lease);
         const finalSkills = await resolveReviewSkills(params.config, params.env);
@@ -306,6 +342,49 @@ async function resolveReviewSkills(
     resolvedSkills.push({ ...skill, treeHash });
   }
   return resolvedSkills;
+}
+
+async function snapshotWorkshopSkillFiles(
+  skillsRoot: string,
+): Promise<Map<string, ReviewSkillFile>> {
+  const walked = await walkDirectory(skillsRoot, {
+    // Keep the path-based inventory bounded to the loader's grouped-skill depth.
+    maxDepth: 6,
+    symlinks: "skip",
+    include: (entry) => entry.kind === "file" && entry.name === "SKILL.md",
+    descend: (entry) => !entry.name.startsWith(".") && entry.name !== "node_modules",
+  });
+  if (walked.truncated || walked.failedDirs?.length) {
+    throw new Error("Could not fully inspect the Skill Workshop directory.");
+  }
+  const skillsRootAccess = await root(skillsRoot);
+  const snapshots = await Promise.all(
+    walked.entries
+      .toSorted((left, right) => left.relativePath.localeCompare(right.relativePath))
+      .map(async (entry) => {
+        const read = await skillsRootAccess.read(entry.relativePath, {
+          hardlinks: "reject",
+          symlinks: "reject",
+        });
+        return {
+          relativeDir: path.dirname(entry.relativePath),
+          relativePath: entry.relativePath,
+          filePath: entry.path,
+          contentHash: sha256Hex(read.buffer),
+        } satisfies ReviewSkillFile;
+      }),
+  );
+  return new Map(snapshots.map((snapshot) => [snapshot.relativeDir, snapshot]));
+}
+
+async function readWorkshopSkillFile(skillsRoot: string, relativePath: string): Promise<string> {
+  const read = await (
+    await root(skillsRoot)
+  ).read(relativePath, {
+    hardlinks: "reject",
+    symlinks: "reject",
+  });
+  return read.buffer.toString("utf8");
 }
 
 function resolveReviewConfig(config: OpenClawConfig): OpenClawConfig {
