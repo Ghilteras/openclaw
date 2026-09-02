@@ -634,4 +634,120 @@ describe("package update recovery safety", () => {
       });
     },
   );
+
+  it.runIf(process.platform !== "win32")(
+    "does not verify rollback when candidate Doctor alters a nested symlink target",
+    async () => {
+      await withTestDir(
+        { prefix: "openclaw-package-recovery-altered-nested-link-" },
+        async (base) => {
+          const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+          const packageRoot = path.join(globalRoot, "openclaw");
+          const externalEntry = path.join(base, "external-runtime.js");
+          await writePackageRoot(packageRoot, "1.0.0");
+          await fs.writeFile(externalEntry, "original external runtime\n", "utf8");
+          await fs.symlink(externalEntry, path.join(packageRoot, "dist", "external-runtime.js"));
+
+          const result = await runGlobalPackageUpdateSteps({
+            installTarget: createNpmTarget(globalRoot),
+            installSpec: "openclaw@2.0.0",
+            packageName: "openclaw",
+            packageRoot,
+            runCommand: createRootRunner(globalRoot),
+            runStep: async ({ name, argv }) => {
+              const stagePrefix = argv[argv.indexOf("--prefix") + 1];
+              if (!stagePrefix) {
+                throw new Error("missing stage prefix");
+              }
+              await writePackageRoot(
+                path.join(stagePrefix, "lib", "node_modules", "openclaw"),
+                "2.0.0",
+              );
+              return {
+                name,
+                command: argv.join(" "),
+                cwd: stagePrefix,
+                durationMs: 0,
+                exitCode: 0,
+              };
+            },
+            postVerifyStep: async (candidateRoot) => {
+              expect(candidateRoot).toBe(packageRoot);
+              await fs.writeFile(externalEntry, "altered external runtime\n", "utf8");
+              return {
+                name: "openclaw doctor",
+                command: "openclaw doctor --non-interactive --fix",
+                cwd: candidateRoot,
+                durationMs: 0,
+                exitCode: 1,
+                stderrTail: "doctor rejected candidate",
+              };
+            },
+            timeoutMs: 1000,
+          });
+
+          expect(result.afterVersion).toBe("1.0.0");
+          expect(result.recovery.packageRollbackVerified).toBe(false);
+          expect(result.failedStep?.stderrTail).toContain(
+            "rollback verification failed: restored package tree does not match backup",
+          );
+          await expect(fs.readFile(externalEntry, "utf8")).resolves.toBe(
+            "altered external runtime\n",
+          );
+        },
+      );
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "verifies a stable rollback with a dangling non-directory symlink target",
+    async () => {
+      await withTestDir({ prefix: "openclaw-package-recovery-dangling-link-" }, async (base) => {
+        const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+        const packageRoot = path.join(globalRoot, "openclaw");
+        const packageEntry = path.join(packageRoot, "dist", "index.js");
+        const danglingLink = path.join(packageRoot, "dist", "dangling.js");
+        await writePackageRoot(packageRoot, "1.0.0");
+        await fs.symlink(`${packageEntry}/child`, danglingLink);
+
+        const result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: async ({ name, argv }) => {
+            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
+            if (!stagePrefix) {
+              throw new Error("missing stage prefix");
+            }
+            await writePackageRoot(
+              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
+              "2.0.0",
+            );
+            return {
+              name,
+              command: argv.join(" "),
+              cwd: stagePrefix,
+              durationMs: 0,
+              exitCode: 0,
+            };
+          },
+          postVerifyStep: async (candidateRoot) => ({
+            name: "openclaw doctor",
+            command: "openclaw doctor --non-interactive --fix",
+            cwd: candidateRoot,
+            durationMs: 0,
+            exitCode: 1,
+            stderrTail: "doctor rejected candidate",
+          }),
+          timeoutMs: 1000,
+        });
+
+        expect(result.afterVersion).toBe("1.0.0");
+        expect(result.recovery.packageRollbackVerified).toBe(true);
+        await expect(fs.readlink(danglingLink)).resolves.toBe(`${packageEntry}/child`);
+      });
+    },
+  );
 });

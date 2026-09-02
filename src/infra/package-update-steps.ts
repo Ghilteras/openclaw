@@ -728,15 +728,41 @@ async function pathEntriesMatch(left: string, right: string): Promise<boolean> {
 
 async function fingerprintPackageTree(packageRoot: string): Promise<string> {
   const fingerprint = createHash("sha256");
+  const visitedCanonicalEntries = new Set<string>();
   const visit = async (entryPath: string, relativePath: string): Promise<void> => {
     const stat = await fs.lstat(entryPath);
     const metadata = [stat.mode & 0o7777, stat.uid, stat.gid];
     if (stat.isSymbolicLink()) {
-      fingerprint.update(
-        `${JSON.stringify([relativePath, "symlink", ...metadata, await fs.readlink(entryPath)])}\n`,
-      );
+      const linkTarget = await fs.readlink(entryPath);
+      fingerprint.update(`${JSON.stringify([relativePath, "symlink", ...metadata, linkTarget])}\n`);
+      let canonicalTarget: string;
+      try {
+        canonicalTarget = await fs.realpath(entryPath);
+      } catch (error) {
+        const unresolvedCode = hasErrnoCode(error, "ENOENT")
+          ? "ENOENT"
+          : hasErrnoCode(error, "ELOOP")
+            ? "ELOOP"
+            : hasErrnoCode(error, "ENOTDIR")
+              ? "ENOTDIR"
+              : null;
+        if (unresolvedCode) {
+          fingerprint.update(
+            `${JSON.stringify([relativePath, "symlink-target-unresolved", unresolvedCode])}\n`,
+          );
+          return;
+        }
+        throw error;
+      }
+      if (visitedCanonicalEntries.has(canonicalTarget)) {
+        fingerprint.update(`${JSON.stringify([relativePath, "symlink-target-visited"])}\n`);
+        return;
+      }
+      visitedCanonicalEntries.add(canonicalTarget);
+      await visit(canonicalTarget, `${relativePath}/<effective-target>`);
       return;
     }
+    visitedCanonicalEntries.add(await fs.realpath(entryPath));
     if (stat.isFile()) {
       const contents = createHash("sha256");
       const handle = await fs.open(entryPath, "r");
@@ -776,9 +802,6 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string> {
   };
 
   await visit(packageRoot, "");
-  if ((await fs.lstat(packageRoot)).isSymbolicLink()) {
-    await visit(await fs.realpath(packageRoot), "<effective-root>");
-  }
   return fingerprint.digest("hex");
 }
 
@@ -968,6 +991,9 @@ async function swapStagedNpmInstall(params: {
     }
     // A copy-fallback move can reject after committing its destination and
     // partially removing its source. Only a completed backup permits restoration.
+    if (hadPackage) {
+      previousPackageFingerprint = await fingerprintPackageTree(targetPackageRoot);
+    }
     packageRollbackVerified = false;
     if (hadPackage) {
       await movePathWithCopyFallback({
@@ -987,7 +1013,6 @@ async function swapStagedNpmInstall(params: {
       }
     });
     if (hadPackage) {
-      previousPackageFingerprint = await fingerprintPackageTree(backupRoot);
       packageRollbackVerified = true;
     }
     await activateStagedNpmPackageRoot(params.stage.packageRoot, targetPackageRoot);
