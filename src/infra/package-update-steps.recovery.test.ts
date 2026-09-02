@@ -10,6 +10,21 @@ import {
 } from "./package-update-steps.test-support.js";
 import type { CommandRunner } from "./update-global.js";
 
+async function stageCandidatePackage(step: { name: string; argv: string[] }) {
+  const stagePrefix = step.argv[step.argv.indexOf("--prefix") + 1];
+  if (!stagePrefix) {
+    throw new Error("missing stage prefix");
+  }
+  await writePackageRoot(path.join(stagePrefix, "lib", "node_modules", "openclaw"), "2.0.0");
+  return {
+    name: step.name,
+    command: step.argv.join(" "),
+    cwd: stagePrefix,
+    durationMs: 0,
+    exitCode: 0,
+  };
+}
+
 describe("npm lifecycle policy preflight", () => {
   it.each([false, true])(
     "verifies the original package before recovery from preflight refusal (corrupt=%s)",
@@ -380,23 +395,7 @@ describe("package update recovery safety", () => {
           packageName: "openclaw",
           packageRoot,
           runCommand: createRootRunner(globalRoot),
-          runStep: async ({ name, argv }) => {
-            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
-            if (!stagePrefix) {
-              throw new Error("missing stage prefix");
-            }
-            await writePackageRoot(
-              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-              "2.0.0",
-            );
-            return {
-              name,
-              command: argv.join(" "),
-              cwd: stagePrefix,
-              durationMs: 0,
-              exitCode: 0,
-            };
-          },
+          runStep: stageCandidatePackage,
           postVerifyStep: async (candidateRoot) => ({
             name: "openclaw doctor",
             command: "openclaw doctor --non-interactive --fix",
@@ -589,23 +588,7 @@ describe("package update recovery safety", () => {
         packageName: "openclaw",
         packageRoot,
         runCommand: createRootRunner(globalRoot),
-        runStep: async ({ name, argv }) => {
-          const stagePrefix = argv[argv.indexOf("--prefix") + 1];
-          if (!stagePrefix) {
-            throw new Error("missing stage prefix");
-          }
-          await writePackageRoot(
-            path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-            "2.0.0",
-          );
-          return {
-            name,
-            command: argv.join(" "),
-            cwd: stagePrefix,
-            durationMs: 0,
-            exitCode: 0,
-          };
-        },
+        runStep: stageCandidatePackage,
         postVerifyStep: async (candidateRoot) => {
           expect(candidateRoot).toBe(packageRoot);
           const backupName = (await fs.readdir(globalRoot)).find((entry) =>
@@ -672,23 +655,7 @@ describe("package update recovery safety", () => {
           packageName: "openclaw",
           packageRoot,
           runCommand: createRootRunner(globalRoot),
-          runStep: async ({ name, argv }) => {
-            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
-            if (!stagePrefix) {
-              throw new Error("missing stage prefix");
-            }
-            await writePackageRoot(
-              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-              "2.0.0",
-            );
-            return {
-              name,
-              command: argv.join(" "),
-              cwd: stagePrefix,
-              durationMs: 0,
-              exitCode: 0,
-            };
-          },
+          runStep: stageCandidatePackage,
           postVerifyStep: async (candidateRoot) => {
             expect(candidateRoot).toBe(packageRoot);
             await fs.writeFile(linkedEntry, "altered linked package\n", "utf8");
@@ -737,23 +704,7 @@ describe("package update recovery safety", () => {
           packageName: "openclaw",
           packageRoot,
           runCommand: createRootRunner(globalRoot),
-          runStep: async ({ name, argv }) => {
-            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
-            if (!stagePrefix) {
-              throw new Error("missing stage prefix");
-            }
-            await writePackageRoot(
-              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-              "2.0.0",
-            );
-            return {
-              name,
-              command: argv.join(" "),
-              cwd: stagePrefix,
-              durationMs: 0,
-              exitCode: 0,
-            };
-          },
+          runStep: stageCandidatePackage,
           postVerifyStep: async (candidateRoot) => {
             expect(candidateRoot).toBe(packageRoot);
             const backupName = (await fs.readdir(globalRoot)).find((entry) =>
@@ -879,23 +830,7 @@ describe("package update recovery safety", () => {
           packageName: "openclaw",
           packageRoot,
           runCommand: createRootRunner(globalRoot),
-          runStep: async ({ name, argv }) => {
-            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
-            if (!stagePrefix) {
-              throw new Error("missing stage prefix");
-            }
-            await writePackageRoot(
-              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-              "2.0.0",
-            );
-            return {
-              name,
-              command: argv.join(" "),
-              cwd: stagePrefix,
-              durationMs: 0,
-              exitCode: 0,
-            };
-          },
+          runStep: stageCandidatePackage,
           postVerifyStep: async (candidateRoot) => ({
             name: "openclaw doctor",
             command: "openclaw doctor --non-interactive --fix",
@@ -934,23 +869,7 @@ describe("package update recovery safety", () => {
           packageName: "openclaw",
           packageRoot,
           runCommand: createRootRunner(globalRoot),
-          runStep: async ({ name, argv }) => {
-            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
-            if (!stagePrefix) {
-              throw new Error("missing stage prefix");
-            }
-            await writePackageRoot(
-              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-              "2.0.0",
-            );
-            return {
-              name,
-              command: argv.join(" "),
-              cwd: stagePrefix,
-              durationMs: 0,
-              exitCode: 0,
-            };
-          },
+          runStep: stageCandidatePackage,
           postVerifyStep: async (candidateRoot) => {
             expect(candidateRoot).toBe(packageRoot);
             const backupName = (await fs.readdir(globalRoot)).find((entry) =>
@@ -1009,23 +928,7 @@ describe("package update recovery safety", () => {
           packageName: "openclaw",
           packageRoot,
           runCommand: createRootRunner(globalRoot),
-          runStep: async ({ name, argv }) => {
-            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
-            if (!stagePrefix) {
-              throw new Error("missing stage prefix");
-            }
-            await writePackageRoot(
-              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-              "2.0.0",
-            );
-            return {
-              name,
-              command: argv.join(" "),
-              cwd: stagePrefix,
-              durationMs: 0,
-              exitCode: 0,
-            };
-          },
+          runStep: stageCandidatePackage,
           postVerifyStep: async (candidateRoot) => ({
             name: "openclaw doctor",
             command: "openclaw doctor --non-interactive --fix",
