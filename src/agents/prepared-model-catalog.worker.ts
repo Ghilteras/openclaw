@@ -204,11 +204,13 @@ export async function runPreparedModelCatalogWorkerRequest(
         (left, right) => left.localeCompare(right),
       ),
     };
+    // Persistence follows the owner's contract, not the registry reconstruction above:
+    // read-only explicit reads discover without writing models.json.
     const source = await prepareAgentCatalogSource(
       exactAgentFacts,
       prepared.pluginGeneration,
       "live",
-      true,
+      !value.input.readOnly,
       { authStore },
     );
     const facts = await prepareFullCatalogFacts(

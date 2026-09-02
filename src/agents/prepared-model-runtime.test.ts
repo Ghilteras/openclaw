@@ -4,6 +4,7 @@ import {
   cleanupPreparedModelRuntimeHarness,
   getPreparedModelRuntimeMocks,
   resetPreparedModelRuntimeHarness,
+  buildPreparedFullCatalogForTest,
 } from "./prepared-model-runtime.test-harness.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
@@ -412,7 +413,7 @@ describe("prepared model runtime snapshots", () => {
   });
 
   it("captures static provider-hook rows in the same lifecycle generation", async () => {
-    mocks.loadStaticCatalog.mockResolvedValueOnce([
+    mocks.loadStaticCatalog.mockResolvedValue([
       {
         provider: "nvidia",
         id: "nemotron-static",
@@ -427,11 +428,12 @@ describe("prepared model runtime snapshots", () => {
       },
     ]);
 
-    const snapshot = await publishPreparedModelRuntimeSnapshot({
+    const input = {
       config: {},
       agentDir: state.agentDir("static-catalog"),
       workspaceDir: "/tmp/prepared-model-runtime-static-workspace",
-    });
+    };
+    const snapshot = await publishPreparedModelRuntimeSnapshot(input);
 
     expect(mocks.loadStaticCatalog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -441,7 +443,7 @@ describe("prepared model runtime snapshots", () => {
         workspaceDir: "/tmp/prepared-model-runtime-static-workspace",
       }),
     );
-    expect(structuredClone(snapshot.modelCatalog.entries)).toEqual([
+    expect(structuredClone((await buildPreparedFullCatalogForTest(input)).staticEntries)).toEqual([
       {
         provider: "nvidia",
         id: "nemotron-static",
@@ -548,7 +550,7 @@ describe("prepared model runtime snapshots", () => {
       contextWindow: 128_000,
       maxTokens: 8_192,
     };
-    mocks.loadStaticCatalog.mockResolvedValueOnce([
+    mocks.loadStaticCatalog.mockResolvedValue([
       {
         ...runtimeModel,
         baseUrl: "https://provider-static.example.test/v1",
@@ -556,16 +558,17 @@ describe("prepared model runtime snapshots", () => {
     ]);
     mocks.resolveStaticCatalogModel.mockReturnValueOnce(runtimeModel);
 
-    const snapshot = await publishPreparedModelRuntimeSnapshot({
+    const input = {
       config: { agents: { defaults: { model: { primary: "nvidia/nemotron-static" } } } },
       agentDir: state.agentDir("configured-static"),
       workspaceDir: "/tmp/prepared-model-runtime-configured-static-workspace",
-    });
+    };
+    const snapshot = await publishPreparedModelRuntimeSnapshot(input);
 
     expect(snapshot.configuredRuntimeModels).toEqual([
       { provider: "nvidia", modelId: "nemotron-static", model: runtimeModel },
     ]);
-    expect(structuredClone(snapshot.modelCatalog.entries)).toEqual([
+    expect(structuredClone((await buildPreparedFullCatalogForTest(input)).staticEntries)).toEqual([
       {
         provider: "nvidia",
         id: "nemotron-static",
@@ -616,7 +619,7 @@ describe("prepared model runtime snapshots", () => {
   });
 
   it("omits provider runtime APIs outside the catalog contract", async () => {
-    mocks.loadStaticCatalog.mockResolvedValueOnce([
+    mocks.loadStaticCatalog.mockResolvedValue([
       {
         provider: "custom",
         id: "custom-static",
@@ -631,12 +634,10 @@ describe("prepared model runtime snapshots", () => {
       },
     ]);
 
-    const snapshot = await publishPreparedModelRuntimeSnapshot({
-      config: {},
-      agentDir: state.agentDir("unsupported-api"),
-    });
+    const input = { config: {}, agentDir: state.agentDir("unsupported-api") };
+    await publishPreparedModelRuntimeSnapshot(input);
 
-    expect(structuredClone(snapshot.modelCatalog.entries)).toEqual([
+    expect(structuredClone((await buildPreparedFullCatalogForTest(input)).staticEntries)).toEqual([
       {
         provider: "custom",
         id: "custom-static",

@@ -1,5 +1,4 @@
 import { performance } from "node:perf_hooks";
-import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import pLimit from "p-limit";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -72,38 +71,6 @@ export type PreparedModelRuntimeBuildResult = Readonly<{
   close: () => Promise<void>;
 }>;
 
-function runSerializedPreparedModelRuntimeTask<T>(params: {
-  agentDir: string;
-  agentBuildCompletions: Map<string, Promise<void>>;
-  isCurrent: () => boolean;
-  task: () => Promise<T>;
-}): Promise<T> {
-  const previous = params.agentBuildCompletions.get(params.agentDir);
-  const pending = (async () => {
-    if (previous) {
-      await previous;
-    }
-    await yieldToEventLoop();
-    if (!params.isCurrent()) {
-      throw new PreparedModelRuntimePublicationSupersededError(
-        `prepared model runtime catalog generation was superseded for ${params.agentDir}`,
-      );
-    }
-    return await params.task();
-  })();
-  const completion = pending.then(
-    () => undefined,
-    () => undefined,
-  );
-  params.agentBuildCompletions.set(params.agentDir, completion);
-  void completion.then(() => {
-    if (params.agentBuildCompletions.get(params.agentDir) === completion) {
-      params.agentBuildCompletions.delete(params.agentDir);
-    }
-  });
-  return pending;
-}
-
 function assertPreparedModelRuntimeInputCurrent(
   input: PreparedModelRuntimeInput,
   isCurrent: (() => boolean) | undefined,
@@ -140,7 +107,6 @@ function groupBuildCandidates<K>(
 function createFullModelCatalogAccess(params: {
   agentFacts: PreparedModelRuntimeAgentFacts;
   pluginGeneration: PreparedModelRuntimePluginGeneration;
-  agentBuildCompletions: Map<string, Promise<void>>;
   isCurrent: () => boolean;
 }): PreparedModelRuntimeCatalogAccess {
   const project = (catalog: ModelCatalogSnapshot) => {
@@ -225,18 +191,14 @@ function createFullModelCatalogAccess(params: {
         return fullCatalog;
       }
       if (!pending) {
-        const build = runSerializedPreparedModelRuntimeTask({
-          agentDir: params.agentFacts.input.agentDir,
-          agentBuildCompletions: params.agentBuildCompletions,
-          isCurrent: params.isCurrent,
-          task: async () =>
-            await limitFullModelCatalogBuild(async () => {
-              assertCurrent();
-              // getWorker() re-fences the generation right before the write-capable request.
-              const catalog = await getWorker().loadCatalog();
-              assertCurrent();
-              return catalog;
-            }),
+        // Discovery never occupies the per-agent build slot: run admission and republication
+        // must not wait behind a provider fetch. One worker at a time is enough ordering, and
+        // getWorker() re-fences the generation right before the write-capable request.
+        const build = limitFullModelCatalogBuild(async () => {
+          assertCurrent();
+          const catalog = await getWorker().loadCatalog();
+          assertCurrent();
+          return catalog;
         });
         pending = build
           .then((catalog) => {
@@ -313,7 +275,6 @@ function createSnapshot(
 async function buildSnapshotBatch(
   candidates: readonly PreparedModelRuntimeBuildCandidate[],
   catalogMode: PreparedModelRuntimeCatalogMode,
-  agentBuildCompletions: Map<string, Promise<void>>,
   pluginMetadataSnapshot?: PreparedModelRuntimePluginGeneration["pluginMetadataSnapshot"],
   onBuildStats?: (stats: PreparedModelRuntimeBuildStats) => void,
   includeCredentialProviders = catalogMode === "live",
@@ -465,7 +426,6 @@ async function buildSnapshotBatch(
     const catalogAccess = createFullModelCatalogAccess({
       agentFacts,
       pluginGeneration,
-      agentBuildCompletions,
       isCurrent: candidate.isGenerationCurrent ?? (() => false),
     });
     return {
@@ -508,7 +468,6 @@ export function startSerializedSnapshotBuildBatch(
       actualBuild: buildSnapshotBatch(
         candidates,
         catalogMode,
-        agentBuildCompletions,
         pluginMetadataSnapshot,
         onBuildStats,
         includeCredentialProviders,

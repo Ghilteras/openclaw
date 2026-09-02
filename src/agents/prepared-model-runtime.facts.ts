@@ -375,14 +375,13 @@ export async function prepareWorkspaceBuildGroup(
       buildInlineProviderModels(input.config.models?.providers ?? {}, {
         providerMetadataOwners: pluginMetadataSnapshot.owners,
       });
-    const configuredCatalogEntries = reusablePluginGeneration?.configuredCatalogEntries ?? [
-      ...buildConfiguredModelCatalog({
+    const configuredCatalogEntries =
+      reusablePluginGeneration?.configuredCatalogEntries ??
+      buildConfiguredModelCatalog({
         cfg: input.config,
         manifestPlugins: pluginMetadataSnapshot,
         ...(input.workspaceDir ? { workspaceDir: input.workspaceDir } : {}),
-      }),
-      ...providerStaticModels.map(toStaticCatalogEntry),
-    ];
+      });
     const agentFacts: PreparedModelRuntimeAgentFacts[] = [];
     for (const facts of agentBaseFacts) {
       const configuredRuntimeModels = prepareConfiguredRuntimeModels({

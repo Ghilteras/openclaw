@@ -2,6 +2,7 @@ import { vi } from "vitest";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import type { OpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
+import type { PreparedModelRuntimeInput } from "./prepared-model-runtime.types.js";
 import type { AuthStorageData } from "./sessions/auth-storage.js";
 
 type LoadStaticCatalog =
@@ -486,4 +487,26 @@ export async function cleanupPreparedModelRuntimeHarness(
   }
   getPreparedModelRuntimeTestApi().resetPreparedModelRuntimeSnapshotsForTest();
   await state.cleanup();
+}
+
+/**
+ * Runs the discovery worker's full-catalog build in-process (provider static rows included) so
+ * tests can assert its shape without a child process.
+ */
+export async function buildPreparedFullCatalogForTest(
+  input: PreparedModelRuntimeInput,
+): Promise<ModelCatalogSnapshot> {
+  const [{ prepareAgentCatalogSource, prepareWorkspaceBuildGroup }, { prepareFullCatalogFacts }] =
+    await Promise.all([
+      import("./prepared-model-runtime.facts.js"),
+      import("./prepared-model-runtime.full-catalog.js"),
+    ]);
+  const prepared = await prepareWorkspaceBuildGroup([input], "live");
+  const facts = prepared.agentFacts[0];
+  if (!facts) {
+    throw new Error("expected prepared agent facts");
+  }
+  const source = await prepareAgentCatalogSource(facts, prepared.pluginGeneration, "live", false);
+  return (await prepareFullCatalogFacts(facts, prepared.pluginGeneration, "live", source))
+    .modelCatalog;
 }

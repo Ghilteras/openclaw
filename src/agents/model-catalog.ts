@@ -389,12 +389,15 @@ export function buildCurrentModelCatalogSnapshot(params: {
   env?: NodeJS.ProcessEnv;
 }): ModelCatalogSnapshot {
   const routeVariants = createModelCatalogRouteVariantCollector();
-  const models = loadManifestModelCatalog({
-    config: params.config,
-    metadataSnapshot: params.metadataSnapshot,
-    workspaceDir: params.workspaceDir,
-    env: params.env,
-  });
+  // The manifest rows are a shared per-config cache; merge into a copy, never in place.
+  const models = [
+    ...loadManifestModelCatalog({
+      config: params.config,
+      metadataSnapshot: params.metadataSnapshot,
+      workspaceDir: params.workspaceDir,
+      env: params.env,
+    }),
+  ];
   mergeCatalogRouteVariants(routeVariants, models);
   const configured = buildConfiguredModelCatalog({
     cfg: params.config,
