@@ -249,9 +249,9 @@ manager at `/skills` and offers **Workshop** as a secondary action.
 **Your plugins** shows up to 12 installed plugins, prioritizing enabled plugins,
 plugins that need setup, and plugins that need attention. Use the expanding
 search field to filter the full inventory, or choose **Show all** to browse every
-installed plugin. Each card shows the plugin description and current state. An
-administrator can use the switch on the card to enable or disable the plugin.
-Choose a card or its settings action to open that plugin's details.
+installed plugin. Each card shows the plugin description. An administrator can
+choose the card to open that plugin's settings and enable or
+disable it there. Read-only operators can use the same page to inspect it.
 
 Use the settings action beside **Your plugins**, or open `/settings/plugins`, to
 see the complete plugin inventory grouped by category. It also lists
@@ -269,8 +269,8 @@ history is exhausted. Manual history review works while autonomous self-learning
 is disabled and uses the selected agent's configured model.
 
 Included plugins are already present on the Gateway. For example, Workboard is
-included with OpenClaw but disabled by default, so its card switch starts off.
-Bundled plugins can be disabled but not removed.
+included with OpenClaw but disabled by default. Bundled plugins can be disabled
+but not removed.
 
 Reading the inventory requires `operator.read`. Enabling or disabling a plugin
 and changing MCP servers require `operator.admin`; those actions stay disabled
