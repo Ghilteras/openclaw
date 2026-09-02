@@ -178,9 +178,11 @@ function renderUpdateFailureReportNotice(notice: UpdateFailureReportNotice) {
       ? t("updates.page.reportCreated")
       : result.status === "fallback"
         ? t("updates.page.reportFallback")
-        : result.status === "duplicate"
-          ? t("updates.page.reportDuplicate")
-          : t("updates.page.reportError");
+        : result.status === "pending"
+          ? t("updates.page.reportPending")
+          : result.status === "duplicate"
+            ? t("updates.page.reportDuplicate")
+            : t("updates.page.reportError");
   const url = "url" in result && result.url ? result.url : null;
   const fallbackUrl = "fallbackUrl" in result && result.fallbackUrl ? result.fallbackUrl : null;
   return renderSettingsRow({

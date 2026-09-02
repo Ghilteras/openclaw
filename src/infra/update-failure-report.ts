@@ -51,6 +51,13 @@ export type UpdateFailureReportSubmitResult =
       fallbackUrl?: undefined;
       message: string;
       savedReportPath: string;
+      status: "pending";
+      url?: undefined;
+    }
+  | {
+      fallbackUrl?: undefined;
+      message: string;
+      savedReportPath: string;
       status: "stale";
       url?: undefined;
     };
@@ -452,17 +459,21 @@ function resultFromExistingReceipt(
   receipt: UpdateFailureReportReceipt | null,
   savedReportPath: string,
 ): UpdateFailureReportSubmitResult {
+  if (receipt?.status === "pending") {
+    return {
+      message: "This update attempt already has a report submission in progress.",
+      savedReportPath,
+      status: "pending",
+    };
+  }
   return {
     status: "duplicate",
     savedReportPath,
     ...(receipt?.url ? { url: receipt.url } : {}),
     ...(receipt?.fallbackUrl ? { fallbackUrl: receipt.fallbackUrl } : {}),
-    message:
-      receipt?.status === "pending"
-        ? "This update attempt already has a report submission in progress."
-        : receipt
-          ? "This update attempt was already reported."
-          : "This update attempt already has a report reservation.",
+    message: receipt
+      ? "This update attempt was already reported."
+      : "This update attempt already has a report reservation.",
   };
 }
 
@@ -637,6 +648,14 @@ export async function submitUpdateFailureReport(
       }
     }
     return { savedReportPath: prepared.savedReportPath, status: "created", url: created.url };
+  }
+  if (created.ambiguous) {
+    return {
+      message:
+        "GitHub issue submission may have completed, but confirmation was unavailable. Do not submit this report again.",
+      savedReportPath: prepared.savedReportPath,
+      status: "pending",
+    };
   }
   const message = sanitizeReportField(created.message, context);
   const receipt: UpdateFailureReportReceipt = {

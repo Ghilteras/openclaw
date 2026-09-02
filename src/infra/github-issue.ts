@@ -10,7 +10,7 @@ export type SanitizedGithubIssue = {
 
 export type GithubIssueCreateResult =
   | { ok: true; url: string }
-  | { fallbackUrl: string; message: string; ok: false };
+  | { ambiguous?: true; fallbackUrl: string; message: string; ok: false };
 
 type SpawnGh = (
   args: readonly string[],
@@ -134,7 +134,15 @@ function resolveGithubIssueCreateResult(
   const error = result.error
     ? result.error.message
     : stderr || `gh exited ${result.status ?? "unknown"}`;
+  const errorCode =
+    result.error && "code" in result.error && typeof result.error.code === "string"
+      ? result.error.code
+      : undefined;
+  const definitelyDidNotStart =
+    errorCode === "ENOENT" || errorCode === "EACCES" || errorCode === "EPERM";
+  const ambiguous = result.status === null && !definitelyDidNotStart;
   return {
+    ...(ambiguous ? { ambiguous: true as const } : {}),
     fallbackUrl: issue.url,
     message: error,
     ok: false,

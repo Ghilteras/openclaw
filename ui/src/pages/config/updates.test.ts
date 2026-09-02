@@ -636,6 +636,41 @@ describe("renderUpdates", () => {
     expect(report.querySelector("a")?.getAttribute("href")).toContain("issues/new");
   });
 
+  it("renders an ambiguous submission as pending without a replay link", () => {
+    const projected = projectUpdateStatusResponse(
+      {
+        sentinel: {
+          kind: "update",
+          status: "error",
+          ts: 500,
+          stats: { handoffId: "handoff-failed", mode: "git", reason: "build-failed" },
+        },
+      },
+      { updateStatusBanner: null, recordedUpdateAttempt: null, heldUpdateCampaignId: null },
+    );
+    render(
+      renderUpdates(
+        createProps({
+          recordedAttempt: projected.recordedUpdateAttempt,
+          statusBanner: projected.updateStatusBanner,
+          reportableUpdateFailureId: "handoff-failed",
+          updateFailureReportNotice: {
+            attemptId: "handoff-failed",
+            result: {
+              status: "pending",
+              message: "GitHub issue submission may have completed.",
+            },
+          },
+        }),
+      ),
+      container,
+    );
+
+    const report = row("Failure report");
+    expect(report.textContent).toContain("may have completed");
+    expect(report.querySelector("a")).toBeNull();
+  });
+
   it("keeps read-only facts visible while locking controls for non-admins", () => {
     render(
       renderUpdates(createProps({ canAdmin: false, canUpdate: false, configBusy: true })),

@@ -26450,6 +26450,56 @@ public struct UpdateReportResultFallback: Codable, Sendable {
     }
 }
 
+public struct UpdateReportResultPending: Codable, Sendable {
+    public let status: String
+    public let message: String
+
+    public init(
+        message: String
+    )
+    {
+        self.status = "pending"
+        self.message = message
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case message
+    }
+
+    public init(from decoder: Decoder) throws {
+        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
+        let unexpectedKeys = rawContainer.allKeys
+            .map(\.stringValue)
+            .filter { !Set(["status", "message"]).contains($0) }
+        if !unexpectedKeys.isEmpty {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: rawContainer.codingPath,
+                    debugDescription: "Unexpected keys for UpdateReportResultPending: \(unexpectedKeys.sorted().joined(separator: ", "))"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedStatus = try container.decode(String.self, forKey: .status)
+        guard decodedStatus == "pending" else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .status,
+                in: container,
+                debugDescription: "Expected status to equal pending"
+            )
+        }
+        self.status = "pending"
+        self.message = try container.decode(String.self, forKey: .message)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode("pending", forKey: .status)
+        try container.encode(message, forKey: .message)
+    }
+}
+
 public struct UpdateReportResultDuplicate: Codable, Sendable {
     public let status: String
     public let fallbackurl: String?
@@ -26516,6 +26566,7 @@ public enum UpdateReportResult: Codable, Sendable {
     case ready(UpdateReportResultReady)
     case created(UpdateReportResultCreated)
     case fallback(UpdateReportResultFallback)
+    case pending(UpdateReportResultPending)
     case duplicate(UpdateReportResultDuplicate)
 
     private enum CodingKeys: String, CodingKey {
@@ -26529,6 +26580,7 @@ public enum UpdateReportResult: Codable, Sendable {
         case "ready": self = try .ready(UpdateReportResultReady(from: decoder))
         case "created": self = try .created(UpdateReportResultCreated(from: decoder))
         case "fallback": self = try .fallback(UpdateReportResultFallback(from: decoder))
+        case "pending": self = try .pending(UpdateReportResultPending(from: decoder))
         case "duplicate": self = try .duplicate(UpdateReportResultDuplicate(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(
@@ -26544,6 +26596,7 @@ public enum UpdateReportResult: Codable, Sendable {
         case .ready(let value): try value.encode(to: encoder)
         case .created(let value): try value.encode(to: encoder)
         case .fallback(let value): try value.encode(to: encoder)
+        case .pending(let value): try value.encode(to: encoder)
         case .duplicate(let value): try value.encode(to: encoder)
         }
     }

@@ -239,6 +239,10 @@ export const UpdateReportResultSchema = Type.Union([
     message: Type.String({ maxLength: 512 }),
   }),
   closedObject({
+    status: Type.Literal("pending"),
+    message: Type.String({ maxLength: 512 }),
+  }),
+  closedObject({
     status: Type.Literal("duplicate"),
     fallbackUrl: Type.Optional(UpdateReportUrlSchema),
     message: Type.String({ maxLength: 512 }),

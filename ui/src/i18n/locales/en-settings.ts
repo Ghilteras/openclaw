@@ -68,6 +68,7 @@ const enSettings = {
       reportSubmitting: "Submitting report…",
       reportCreated: "GitHub issue created",
       reportFallback: "GitHub CLI submission was unavailable. Use the prefilled issue link.",
+      reportPending: "GitHub issue submission may have completed. Do not submit this report again.",
       reportDuplicate: "This update attempt was already reported.",
       reportError: "The report could not be prepared or submitted.",
       openIssue: "Open GitHub issue",

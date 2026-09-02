@@ -101,6 +101,12 @@ describe("update protocol schemas", () => {
         url: "https://github.com/openclaw/openclaw/issues/123",
       }),
     ).toBe(true);
+    expect(
+      Value.Check(UpdateReportResultSchema, {
+        status: "pending",
+        message: "GitHub issue submission may have completed; do not submit again.",
+      }),
+    ).toBe(true);
   });
 
   it("accepts only closed, exact tracked Git targets for update.run", () => {

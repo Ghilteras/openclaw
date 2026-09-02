@@ -81,6 +81,7 @@ describe("createGithubIssue", () => {
     await vi.advanceTimersByTimeAsync(30_000);
 
     await expect(result).resolves.toEqual({
+      ambiguous: true,
       fallbackUrl,
       message: "gh issue creation timed out",
       ok: false,
@@ -226,6 +227,7 @@ describe("createGithubIssue", () => {
       },
     );
     expect(result).toEqual({
+      ambiguous: true,
       fallbackUrl: "https://github.com/openclaw/openclaw/issues/new?title=recovery",
       message: "spawnSync gh ETIMEDOUT",
       ok: false,

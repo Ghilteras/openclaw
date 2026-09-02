@@ -127,7 +127,7 @@ describe("update failure report", () => {
     });
 
     expect(createIssue).toHaveBeenCalledOnce();
-    expect([first.status, second.status].toSorted()).toEqual(["created", "duplicate"]);
+    expect([first.status, second.status].toSorted()).toEqual(["created", "pending"]);
     expect(third).toMatchObject({
       status: "duplicate",
       url: "https://github.com/openclaw/openclaw/issues/123",
@@ -169,7 +169,7 @@ describe("update failure report", () => {
 
     finishValidation();
     const delayedResult = await delayed;
-    expect(delayedResult).toMatchObject({ status: "duplicate" });
+    expect(delayedResult).toMatchObject({ status: "pending" });
     expect(delayedResult).not.toHaveProperty("fallbackUrl");
     expect(delayedCreateIssue).not.toHaveBeenCalled();
     finishFallback();
@@ -330,7 +330,7 @@ describe("update failure report", () => {
       createIssue,
       stateDir,
     });
-    expect(second).toMatchObject({ status: "duplicate" });
+    expect(second).toMatchObject({ status: "pending" });
     expect(createIssue).toHaveBeenCalledOnce();
   });
 
@@ -359,7 +359,7 @@ describe("update failure report", () => {
     });
 
     expect(first).toMatchObject({ status: "fallback", fallbackUrl });
-    expect(second).toMatchObject({ status: "duplicate" });
+    expect(second).toMatchObject({ status: "pending" });
     expect(second).not.toHaveProperty("fallbackUrl");
     expect(createIssue).toHaveBeenCalledOnce();
     expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
@@ -397,7 +397,7 @@ describe("update failure report", () => {
     await expect(submission).resolves.toMatchObject({ status: "created" });
   });
 
-  it("consumes timeout ambiguity and returns the prefilled and saved fallbacks", async () => {
+  it("keeps timeout ambiguity pending without exposing a replay link", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(
       { attemptId: "attempt-timeout", result: failedUpdate() },
@@ -405,6 +405,7 @@ describe("update failure report", () => {
     );
     const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
     const createIssue = vi.fn(() => ({
+      ambiguous: true as const,
       fallbackUrl,
       message: "spawnSync gh ETIMEDOUT",
       ok: false as const,
@@ -419,8 +420,10 @@ describe("update failure report", () => {
       stateDir,
     });
 
-    expect(first).toMatchObject({ status: "fallback", fallbackUrl });
-    expect(second).toMatchObject({ status: "duplicate", fallbackUrl });
+    expect(first).toMatchObject({ status: "pending" });
+    expect(first).not.toHaveProperty("fallbackUrl");
+    expect(second).toMatchObject({ status: "pending" });
+    expect(second).not.toHaveProperty("fallbackUrl");
     expect(createIssue).toHaveBeenCalledOnce();
   });
 
