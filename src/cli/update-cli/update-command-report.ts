@@ -55,7 +55,7 @@ const defaultDependencies: UpdateFailureReportDependencies = {
 
 function renderSubmissionResult(result: UpdateFailureReportSubmitResult): string[] {
   if (result.status === "created") {
-    return [`Created GitHub issue: ${result.url}`];
+    return [`Created GitHub issue: ${result.url}`, ...(result.message ? [result.message] : [])];
   }
   if (result.status === "fallback") {
     return [

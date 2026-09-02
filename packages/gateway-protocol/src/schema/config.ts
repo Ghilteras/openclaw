@@ -230,6 +230,7 @@ export const UpdateReportResultSchema = Type.Union([
   }),
   closedObject({
     status: Type.Literal("created"),
+    message: Type.Optional(Type.String({ maxLength: 512 })),
     url: UpdateReportUrlSchema,
   }),
   closedObject({

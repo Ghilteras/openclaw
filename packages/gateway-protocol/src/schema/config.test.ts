@@ -94,6 +94,13 @@ describe("update protocol schemas", () => {
         title: "Update failure",
       }),
     ).toBe(false);
+    expect(
+      Value.Check(UpdateReportResultSchema, {
+        status: "created",
+        message: "Local receipt persistence failed; do not submit again.",
+        url: "https://github.com/openclaw/openclaw/issues/123",
+      }),
+    ).toBe(true);
   });
 
   it("accepts only closed, exact tracked Git targets for update.run", () => {

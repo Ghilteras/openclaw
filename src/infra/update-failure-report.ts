@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isRecord as isPlainRecord } from "@openclaw/normalization-core/record-coerce";
 import { resolveStateDir } from "../config/paths.js";
 import { redactSupportString } from "../logging/diagnostic-support-redaction.js";
 import { classifyUpdateOutcome } from "../shared/update-outcome.js";
@@ -15,6 +16,8 @@ import {
 } from "./github-issue.js";
 import {
   finalizeUpdateFailureReportReceipt,
+  readUpdateFailureReportReceipt,
+  releaseUpdateFailureReportReceipt,
   reserveUpdateFailureReportReceipt,
   type UpdateFailureReportReceipt,
 } from "./restart-sentinel.js";
@@ -22,7 +25,6 @@ import type { UpdateRunResult } from "./update-runner.js";
 
 const UPDATE_REPORT_BODY_MAX_BYTES = 16_000;
 const UPDATE_REPORT_FIELD_MAX_BYTES = 512;
-const UPDATE_REPORT_DIAGNOSTIC_MAX_BYTES = 1_024;
 
 export type PreparedUpdateFailureReport = SanitizedGithubIssue & {
   attemptId: string;
@@ -31,7 +33,7 @@ export type PreparedUpdateFailureReport = SanitizedGithubIssue & {
 };
 
 export type UpdateFailureReportSubmitResult =
-  | { savedReportPath: string; status: "created"; url: string }
+  | { message?: string; savedReportPath: string; status: "created"; url: string }
   | {
       fallbackUrl: string;
       message: string;
@@ -67,6 +69,9 @@ type UpdateFailureReportContext = {
 
 function stripPrivatePaths(value: string): string {
   return value
+    .replace(/(["'])\/+[^"'`\r\n]*\1/gu, "$1[redacted-path]$1")
+    .replace(/(["'])\\\\[^"'`\r\n]*\1/gu, "$1[redacted-path]$1")
+    .replace(/(["'])[A-Za-z]:\\[^"'`\r\n]*\1/gu, "$1[redacted-path]$1")
     .replace(/(^|[^\p{L}\p{N}._~-])\/+[^\s"'`<>]+/gmu, "$1[redacted-path]")
     .replace(/\\\\[^\s"'`<>]+/gu, "[redacted-path]")
     .replace(/\b[A-Za-z]:\\[^\s"'`<>]+/gu, "[redacted-path]");
@@ -96,7 +101,7 @@ function sanitizeReportField(
     stateDir: context.stateDir,
   });
   return truncateUtf8Prefix(
-    stripExecutableRecoveryCommands(stripPrivatePaths(redacted)).trim(),
+    stripPrivatePaths(stripExecutableRecoveryCommands(redacted)).trim(),
     maxBytes,
   );
 }
@@ -159,15 +164,6 @@ function renderBoundedDiagnostics(
     const phase = sanitizeReportField(step.name, context);
     const termination = step.termination ? `, termination ${step.termination}` : "";
     diagnostics.push(`Failed phase ${phase}: exit ${step.exitCode ?? "unknown"}${termination}`);
-  }
-  if (input.error?.trim()) {
-    diagnostics.push(
-      `Error summary: ${sanitizeReportField(
-        input.error,
-        context,
-        UPDATE_REPORT_DIAGNOSTIC_MAX_BYTES,
-      )}`,
-    );
   }
   return diagnostics;
 }
@@ -246,6 +242,12 @@ type SavedUpdateFailureReport = {
   reportDirCreated: boolean;
 };
 
+type CreatedUpdateFailureReportRecovery = {
+  reservationId: string;
+  status: "created";
+  url: string;
+};
+
 function hasErrorCode(error: unknown, ...codes: string[]): boolean {
   return (
     error instanceof Error &&
@@ -282,6 +284,102 @@ async function discardSavedUpdateFailureReport(
       }
     });
   }
+}
+
+async function discardSavedUpdateFailureReportBestEffort(
+  prepared: PreparedUpdateFailureReport,
+  saved: SavedUpdateFailureReport,
+  removeExistingReport = false,
+): Promise<void> {
+  await discardSavedUpdateFailureReport(prepared, saved, removeExistingReport).catch(() => {});
+}
+
+function terminalRecoveryPath(prepared: PreparedUpdateFailureReport): string {
+  return `${prepared.savedReportPath}.result.json`;
+}
+
+function isSafeCreatedIssueUrl(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.hostname === "github.com" &&
+      /^\/openclaw\/openclaw\/issues(?:\/\d+)?$/u.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function readCreatedReportRecovery(
+  prepared: PreparedUpdateFailureReport,
+): Promise<CreatedUpdateFailureReportRecovery | null> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(terminalRecoveryPath(prepared), "utf8");
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) {
+      return null;
+    }
+    throw error;
+  }
+  const value: unknown = JSON.parse(raw);
+  if (
+    !isPlainRecord(value) ||
+    value.status !== "created" ||
+    typeof value.reservationId !== "string" ||
+    !isSafeCreatedIssueUrl(value.url)
+  ) {
+    throw new Error("Saved update report recovery is invalid.");
+  }
+  return { reservationId: value.reservationId, status: "created", url: value.url };
+}
+
+async function writeCreatedReportRecovery(
+  prepared: PreparedUpdateFailureReport,
+  recovery: CreatedUpdateFailureReportRecovery,
+): Promise<boolean> {
+  const recoveryPath = terminalRecoveryPath(prepared);
+  const temporaryPath = `${recoveryPath}.${randomUUID()}.tmp`;
+  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+  try {
+    handle = await fs.open(temporaryPath, "wx", 0o600);
+    await handle.writeFile(JSON.stringify(recovery), "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await fs.link(temporaryPath, recoveryPath);
+    await fs.rm(temporaryPath, { force: true });
+    if (process.platform !== "win32") {
+      const directory = await fs.open(path.dirname(recoveryPath), "r");
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    }
+    return true;
+  } catch (error) {
+    if (hasErrorCode(error, "EEXIST")) {
+      const existing = await readCreatedReportRecovery(prepared).catch(() => null);
+      if (existing?.reservationId === recovery.reservationId && existing.url === recovery.url) {
+        return true;
+      }
+    }
+    return false;
+  } finally {
+    await handle?.close().catch(() => {});
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+  }
+}
+
+async function discardCreatedReportRecoveryBestEffort(
+  prepared: PreparedUpdateFailureReport,
+): Promise<void> {
+  await fs.rm(terminalRecoveryPath(prepared), { force: true }).catch(() => {});
 }
 
 /** Persists one reviewed body while rechecking the caller's live authority around every write. */
@@ -394,6 +492,8 @@ export async function submitUpdateFailureReport(
     env?: NodeJS.ProcessEnv;
     finalizeReceipt?: typeof finalizeUpdateFailureReportReceipt;
     hasCurrentAuthority?: () => boolean;
+    readReceipt?: typeof readUpdateFailureReportReceipt;
+    releaseReceipt?: typeof releaseUpdateFailureReportReceipt;
     stateDir?: string;
     validateCurrentAttempt?: () => boolean | Promise<boolean>;
   } = {},
@@ -405,19 +505,54 @@ export async function submitUpdateFailureReport(
   const stateDir = options.stateDir ?? resolveStateDir(env);
   const context = { env, stateDir };
   const stateEnv = { ...env, OPENCLAW_STATE_DIR: stateDir };
-  const saved = await savePreparedUpdateFailureReport(prepared, options.hasCurrentAuthority);
+  if (options.hasCurrentAuthority && !options.hasCurrentAuthority()) {
+    throw new Error("Update report submission requires a current authenticated client.");
+  }
+  const finalizeReceipt = options.finalizeReceipt ?? finalizeUpdateFailureReportReceipt;
+  const recovered = await readCreatedReportRecovery(prepared);
+  if (recovered) {
+    const finalized = finalizeReceiptWithRetry(
+      finalizeReceipt,
+      prepared.attemptId,
+      recovered,
+      stateEnv,
+    );
+    if (finalized) {
+      await discardCreatedReportRecoveryBestEffort(prepared);
+    }
+    await discardSavedUpdateFailureReportBestEffort(
+      prepared,
+      { reportCreated: false, reportDirCreated: false },
+      true,
+    );
+    return {
+      savedReportPath: prepared.savedReportPath,
+      status: "created",
+      url: recovered.url,
+    };
+  }
+  const existingReceipt = (options.readReceipt ?? readUpdateFailureReportReceipt)(
+    prepared.attemptId,
+    stateEnv,
+  );
+  if (existingReceipt) {
+    if (existingReceipt.status === "created") {
+      await discardSavedUpdateFailureReportBestEffort(
+        prepared,
+        { reportCreated: false, reportDirCreated: false },
+        true,
+      );
+    }
+    return resultFromExistingReceipt(existingReceipt, prepared.savedReportPath, prepared.url);
+  }
   if (options.validateCurrentAttempt && !(await options.validateCurrentAttempt())) {
-    await discardSavedUpdateFailureReport(prepared, saved);
     return {
       message: "This failed update attempt is stale or unavailable.",
       savedReportPath: prepared.savedReportPath,
       status: "stale",
     };
   }
-  if (options.hasCurrentAuthority && !options.hasCurrentAuthority()) {
-    await discardSavedUpdateFailureReport(prepared, saved);
-    throw new Error("Update report submission requires a current authenticated client.");
-  }
+
   const reservationId = randomUUID();
   const reservation = reserveUpdateFailureReportReceipt(
     prepared.attemptId,
@@ -426,26 +561,77 @@ export async function submitUpdateFailureReport(
   );
   if (!reservation.reserved) {
     if (reservation.receipt?.status === "created") {
-      await discardSavedUpdateFailureReport(prepared, saved, true);
+      await discardSavedUpdateFailureReportBestEffort(
+        prepared,
+        { reportCreated: false, reportDirCreated: false },
+        true,
+      );
     }
     return resultFromExistingReceipt(reservation.receipt, prepared.savedReportPath, prepared.url);
   }
 
+  const releaseReceipt = options.releaseReceipt ?? releaseUpdateFailureReportReceipt;
+  let saved: SavedUpdateFailureReport | undefined;
+  try {
+    saved = await savePreparedUpdateFailureReport(prepared, options.hasCurrentAuthority);
+    if (options.validateCurrentAttempt && !(await options.validateCurrentAttempt())) {
+      await discardSavedUpdateFailureReport(prepared, saved);
+      if (!releaseReceipt(prepared.attemptId, reservationId, stateEnv)) {
+        throw new Error("Stale update report reservation could not be released.");
+      }
+      return {
+        message: "This failed update attempt is stale or unavailable.",
+        savedReportPath: prepared.savedReportPath,
+        status: "stale",
+      };
+    }
+    if (options.hasCurrentAuthority && !options.hasCurrentAuthority()) {
+      throw new Error("Update report submission requires a current authenticated client.");
+    }
+  } catch (error) {
+    if (saved) {
+      await discardSavedUpdateFailureReportBestEffort(prepared, saved);
+    }
+    try {
+      releaseReceipt(prepared.attemptId, reservationId, stateEnv);
+    } catch {
+      // The original preparation or authority failure remains actionable.
+    }
+    throw error;
+  }
+  if (!saved) {
+    throw new Error("Update report was not saved by its reservation owner.");
+  }
+
   const created = await (options.createIssue ?? createGithubIssueAsync)(prepared);
   if (created.ok) {
-    const receipt: UpdateFailureReportReceipt = {
+    const receipt: CreatedUpdateFailureReportRecovery = {
       reservationId,
       status: "created",
       url: created.url,
     };
     const finalized = finalizeReceiptWithRetry(
-      options.finalizeReceipt ?? finalizeUpdateFailureReportReceipt,
+      finalizeReceipt,
       prepared.attemptId,
       receipt,
       stateEnv,
     );
     if (finalized) {
-      await discardSavedUpdateFailureReport(prepared, saved, true);
+      await discardCreatedReportRecoveryBestEffort(prepared);
+      await discardSavedUpdateFailureReportBestEffort(prepared, saved, true);
+    } else {
+      const recoverySaved = await writeCreatedReportRecovery(prepared, receipt);
+      if (recoverySaved) {
+        await discardSavedUpdateFailureReportBestEffort(prepared, saved, true);
+      } else {
+        return {
+          message:
+            "GitHub issue was created, but its local receipt could not be saved. Do not submit this report again.",
+          savedReportPath: prepared.savedReportPath,
+          status: "created",
+          url: created.url,
+        };
+      }
     }
     return { savedReportPath: prepared.savedReportPath, status: "created", url: created.url };
   }
@@ -455,12 +641,7 @@ export async function submitUpdateFailureReport(
     reservationId,
     status: "fallback",
   };
-  finalizeReceiptWithRetry(
-    options.finalizeReceipt ?? finalizeUpdateFailureReportReceipt,
-    prepared.attemptId,
-    receipt,
-    stateEnv,
-  );
+  finalizeReceiptWithRetry(finalizeReceipt, prepared.attemptId, receipt, stateEnv);
   return {
     fallbackUrl: created.fallbackUrl,
     message,

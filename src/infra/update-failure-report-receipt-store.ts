@@ -59,6 +59,14 @@ function readReceipt(db: DatabaseSync, attemptId: string): UpdateFailureReportRe
   return parseReceipt(current.kind === "valid" ? current.sentinel : null);
 }
 
+/** Reads one existing report receipt without creating state. */
+export function readUpdateFailureReportReceiptRowSync(
+  db: DatabaseSync,
+  attemptId: string,
+): UpdateFailureReportReceipt | null {
+  return readReceipt(db, attemptId);
+}
+
 function buildReceiptPayload(receipt: UpdateFailureReportReceipt): RestartSentinelPayload {
   return {
     kind: "update",
@@ -120,6 +128,34 @@ export function finalizeUpdateFailureReportReceiptRowSync(
     stateDb
       .updateTable("gateway_restart_sentinel")
       .set(row)
+      .where("sentinel_key", "=", sentinelKey)
+      .where("updated_at_ms", "=", current.sentinel.revision),
+  );
+  return result.numAffectedRows === 1n;
+}
+
+/** Releases only the process-owned pending reservation before any external side effect. */
+export function releaseUpdateFailureReportReceiptRowSync(
+  db: DatabaseSync,
+  attemptId: string,
+  reservationId: string,
+): boolean {
+  const sentinelKey = receiptKey(attemptId);
+  const current = readRestartSentinelRowForKeySync(db, sentinelKey);
+  const currentReceipt = parseReceipt(current.kind === "valid" ? current.sentinel : null);
+  if (
+    current.kind !== "valid" ||
+    !currentReceipt ||
+    currentReceipt.status !== "pending" ||
+    currentReceipt.reservationId !== reservationId
+  ) {
+    return false;
+  }
+  const stateDb = getNodeSqliteKysely<GatewayRestartSentinelDatabase>(db);
+  const result = executeSqliteQuerySync(
+    db,
+    stateDb
+      .deleteFrom("gateway_restart_sentinel")
       .where("sentinel_key", "=", sentinelKey)
       .where("updated_at_ms", "=", current.sentinel.revision),
   );

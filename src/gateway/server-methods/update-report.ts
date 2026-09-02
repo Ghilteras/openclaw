@@ -69,7 +69,11 @@ function projectPublicSubmitResult(
   result: Exclude<UpdateFailureReportSubmitResult, { status: "stale" }>,
 ) {
   if (result.status === "created") {
-    return { status: result.status, url: result.url };
+    return {
+      status: result.status,
+      url: result.url,
+      ...(result.message ? { message: result.message } : {}),
+    };
   }
   if (result.status === "fallback") {
     return {

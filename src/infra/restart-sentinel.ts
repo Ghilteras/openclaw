@@ -26,6 +26,8 @@ import {
 } from "./restart-sentinel-store.js";
 import {
   finalizeUpdateFailureReportReceiptRowSync,
+  readUpdateFailureReportReceiptRowSync,
+  releaseUpdateFailureReportReceiptRowSync,
   reserveUpdateFailureReportReceiptRowSync,
   type UpdateFailureReportReceipt,
 } from "./update-failure-report-receipt-store.js";
@@ -78,6 +80,18 @@ export function reserveUpdateFailureReportReceipt(
   );
 }
 
+export function readUpdateFailureReportReceipt(
+  attemptId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): UpdateFailureReportReceipt | null {
+  return (
+    withExistingOpenClawStateDatabaseReadOnly(
+      ({ db }) => readUpdateFailureReportReceiptRowSync(db, attemptId),
+      { env },
+    ) ?? null
+  );
+}
+
 export function finalizeUpdateFailureReportReceipt(
   attemptId: string,
   receipt: UpdateFailureReportReceipt,
@@ -87,6 +101,18 @@ export function finalizeUpdateFailureReportReceipt(
     ({ db }) => finalizeUpdateFailureReportReceiptRowSync(db, attemptId, receipt),
     { env },
     { operationLabel: "update-failure-report.finalize" },
+  );
+}
+
+export function releaseUpdateFailureReportReceipt(
+  attemptId: string,
+  reservationId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return runOpenClawStateWriteTransaction(
+    ({ db }) => releaseUpdateFailureReportReceiptRowSync(db, attemptId, reservationId),
+    { env },
+    { operationLabel: "update-failure-report.release" },
   );
 }
 

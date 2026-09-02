@@ -41,17 +41,17 @@ describe("update failure report", () => {
     const prepared = await prepareUpdateFailureReport(
       {
         attemptId: "attempt-redaction",
-        error: `token=${secret} ${home}/private/error.log cwd=/var/lib/openclaw/private.log cwd=//var/lib/openclaw/double-private.log file:/Users/alice/private.log file:///Users/alice/file-private.log context)/Users/alice/closed-private.log nothttp:/Users/alice/nothttp-private.log malformed=https:/Users/alice/malformed-private.log source=https://example.com/?next=/docs\nPlease run openclaw doctor --fix\nC:\\Users\\private\\repair.log \\\\server\\private\\repair.log\n${emoji}`,
+        error: `opaque raw chat payload token=${secret} ${home}/private/error.log`,
         result: failedUpdate({
-          reason: `build-failed token=${secret}`,
+          reason: `build-failed cwd="/Users/Alice Smith/private/project" token=${secret} ${emoji}`,
           steps: [
             {
               ...failedUpdate().steps[0]!,
-              name: `build ${home}/source token=${secret}`,
+              name: `Command failed: /usr/local/bin/openclaw doctor --fix ${home}/source token=${secret}`,
             },
           ],
         }),
-        target: `origin/main ${home}/checkout token=${secret}`,
+        target: `origin/main cwd="/Users/Alice Smith/private/project" token=${secret}`,
       },
       { env: { HOME: home, OPENCLAW_STATE_DIR: stateDir }, stateDir },
     );
@@ -80,7 +80,9 @@ describe("update failure report", () => {
     expect(saved).not.toContain(home);
     expect(saved).not.toContain("/var/lib/openclaw");
     expect(saved).not.toContain("/Users/alice");
+    expect(saved).not.toContain("Alice Smith");
     expect(saved).not.toContain("https://example.com/?next=/docs");
+    expect(saved).not.toContain("opaque raw chat payload");
     expect(saved).not.toContain("raw-command-secret");
     expect(saved).not.toContain("raw-log-secret");
     expect(saved).not.toContain("raw chat and log output");
@@ -111,6 +113,7 @@ describe("update failure report", () => {
     const third = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
       createIssue,
       stateDir,
+      validateCurrentAttempt: () => false,
     });
 
     expect(createIssue).toHaveBeenCalledOnce();
@@ -138,10 +141,6 @@ describe("update failure report", () => {
       stateDir,
       validateCurrentAttempt: () => validationGate,
     });
-    await vi.waitFor(async () => {
-      expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
-    });
-
     const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
     let finishFallback!: () => void;
     const createIssue = vi.fn(
@@ -156,6 +155,7 @@ describe("update failure report", () => {
       stateDir,
     });
     await vi.waitFor(() => expect(createIssue).toHaveBeenCalledOnce());
+    expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
 
     finishValidation();
     await expect(delayed).resolves.toMatchObject({ status: "duplicate" });
@@ -200,7 +200,7 @@ describe("update failure report", () => {
     await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("keeps a local fallback and no-retry fence when receipt finalization stays unavailable", async () => {
+  it("recovers a durable created result before rejecting the original attempt as stale", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(
       { attemptId: "attempt-created-finalize-unavailable", result: failedUpdate() },
@@ -215,19 +215,111 @@ describe("update failure report", () => {
       finalizeReceipt,
       stateDir,
     });
+    const recoveryPath = `${prepared.savedReportPath}.result.json`;
+    const recovery = JSON.parse(await fs.readFile(recoveryPath, "utf8")) as unknown;
+    expect(recovery).toEqual({
+      reservationId: expect.any(String),
+      status: "created",
+      url: issueUrl,
+    });
+    await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+    if (process.platform !== "win32") {
+      expect((await fs.stat(recoveryPath)).mode & 0o777).toBe(0o600);
+    }
+
+    const second = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      stateDir,
+      validateCurrentAttempt: () => false,
+    });
+
+    expect(first).toMatchObject({ status: "created", url: issueUrl });
+    expect(second).toMatchObject({ status: "created", url: issueUrl });
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(finalizeReceipt).toHaveBeenCalledTimes(2);
+    await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(recoveryPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("does not hide a created result when saved-report cleanup fails", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-created-cleanup-failure", result: failedUpdate() },
+      { stateDir },
+    );
+    const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
+    const createIssue = vi.fn(() => ({ ok: true as const, url: issueUrl }));
+    const realRm = fs.rm.bind(fs);
+    const rm = vi.spyOn(fs, "rm").mockImplementation(async (target, options) => {
+      if (target === prepared.savedReportPath) {
+        throw new Error("simulated saved-report cleanup failure");
+      }
+      return await realRm(target, options);
+    });
+    let first: Awaited<ReturnType<typeof submitUpdateFailureReport>>;
+    try {
+      first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue,
+        stateDir,
+      });
+    } finally {
+      rm.mockRestore();
+    }
+
+    expect(first).toMatchObject({ status: "created", url: issueUrl });
+    expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
     const second = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
       createIssue,
       stateDir,
     });
+    expect(second).toMatchObject({ status: "duplicate", url: issueUrl });
+    expect(createIssue).toHaveBeenCalledOnce();
+    await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
 
-    expect(first).toMatchObject({ status: "created", url: issueUrl });
+  it("surfaces durable-recovery failure without replaying a created issue", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-created-recovery-failure", result: failedUpdate() },
+      { stateDir },
+    );
+    const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
+    const createIssue = vi.fn(() => ({ ok: true as const, url: issueUrl }));
+    const finalizeReceipt = vi.fn(() => false);
+    const recoveryPath = `${prepared.savedReportPath}.result.json`;
+    const realLink = fs.link.bind(fs);
+    const link = vi.spyOn(fs, "link").mockImplementation(async (existingPath, newPath) => {
+      if (newPath === recoveryPath) {
+        throw Object.assign(new Error("simulated recovery publication failure"), { code: "EIO" });
+      }
+      return await realLink(existingPath, newPath);
+    });
+    let first: Awaited<ReturnType<typeof submitUpdateFailureReport>>;
+    try {
+      first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue,
+        finalizeReceipt,
+        stateDir,
+      });
+    } finally {
+      link.mockRestore();
+    }
+
+    expect(first).toMatchObject({
+      message: expect.stringContaining("local receipt could not be saved"),
+      status: "created",
+      url: issueUrl,
+    });
+    expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
+    await expect(fs.stat(recoveryPath)).rejects.toMatchObject({ code: "ENOENT" });
+    const second = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      stateDir,
+    });
     expect(second).toMatchObject({ status: "duplicate" });
     expect(createIssue).toHaveBeenCalledOnce();
-    expect(finalizeReceipt).toHaveBeenCalledTimes(2);
-    expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
-    if (process.platform !== "win32") {
-      expect((await fs.stat(prepared.savedReportPath)).mode & 0o777).toBe(0o600);
-    }
   });
 
   it("keeps an unresolved fallback receipt from replaying transport", async () => {
