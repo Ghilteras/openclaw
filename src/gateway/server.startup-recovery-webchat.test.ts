@@ -4,7 +4,6 @@ import { writeOpenAiResponsesText } from "../../test/helpers/openai-responses-ss
 import { createDeferred } from "../../test/helpers/promise.js";
 import { MAIN_SESSION_RECOVERY_WORK_ADMISSION_OWNER } from "../agents/main-session-recovery/main-session-recovery-admission.js";
 import { recoverRestartAbortedMainSessions } from "../agents/main-session-recovery/main-session-restart-recovery.js";
-import { getFollowupQueueDepth } from "../auto-reply/reply/queue.js";
 import { clearFollowupQueue, getExistingFollowupQueue } from "../auto-reply/reply/queue/state.js";
 import {
   appendTranscriptMessage,
@@ -17,6 +16,7 @@ import {
   getSessionWorkAdmissionOwnerRelease,
 } from "../sessions/session-lifecycle-admission.js";
 import { createOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import { countPendingQueueItems } from "../utils/queue-helpers.js";
 import { getGatewayRecoveryRuntime } from "./server-recovery-runtime-context.js";
 import { disconnectGatewayClient, startGatewayWithClient } from "./test-helpers.e2e.js";
 import { buildMockOpenAiResponsesProvider } from "./test-openai-responses-model.js";
@@ -184,6 +184,10 @@ it(
 
       const canceledRunId = "webchat-canceled-during-recovery";
       const survivorRunId = "webchat-survives-recovery";
+      const expectedQueuedMessages = new Map([
+        [canceledRunId, canceledMessage],
+        [survivorRunId, survivorMessage],
+      ]);
       const sendQueuedTurn = async (runId: string, message: string) => {
         await expect(
           client.request("chat.send", {
@@ -204,12 +208,17 @@ it(
         expect([...(queue?.inFlight ?? [])].map((item) => item.messageId)).toEqual([canceledRunId]);
       });
       await sendQueuedTurn(survivorRunId, survivorMessage);
-      // The queue retains its active item; only the survivor counts as pending.
       await vi.waitFor(() => {
         const queue = getExistingFollowupQueue(sessionKey);
+        // Active sources remain in items; started ACKs can precede queue admission.
+        expect(queue?.items).toHaveLength(expectedQueuedMessages.size);
+        expect(new Map(queue?.items.map(({ messageId, prompt }) => [messageId, prompt]))).toEqual(
+          expectedQueuedMessages,
+        );
         expect(queue?.inFlight).toHaveLength(1);
         expect(queue?.items.map((item) => item.messageId)).toEqual([canceledRunId, survivorRunId]);
-        expect(getFollowupQueueDepth(sessionKey)).toBe(1);
+        expect(countPendingQueueItems(queue?.items ?? [], queue?.inFlight)).toBe(1);
+        expect(targetRequests).toHaveLength(1);
       });
       replacementOwner = await beginSessionWorkAdmission({
         scope: storePath,

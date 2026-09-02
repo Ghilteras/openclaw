@@ -14,17 +14,21 @@ import * as support from "./service.test-support.js";
 describe("offline device abandonment with retained physical cleanup", () => {
   support.setupWorkerEnvironmentServiceSuite();
 
-  it.each([
-    "complete",
-    "held",
-    "failed",
-    "restarted",
-    "authorization-closed",
-    "retired-siblings",
-    "retired-mixed",
-  ] as const)(
-    "fences the old claim and retains exact cleanup ownership with %s sibling cleanup",
-    async (cleanup) => {
+  it.each(
+    (
+      [
+        "complete",
+        "held",
+        "failed",
+        "restarted",
+        "authorization-closed",
+        "retired-siblings",
+        "retired-mixed",
+      ] as const
+    ).flatMap((cleanup) => [true, null].map((sharedHost) => ({ cleanup, sharedHost }))),
+  )(
+    "fences the old claim and retains exact cleanup ownership with $cleanup sibling cleanup and sharedHost=$sharedHost",
+    async ({ cleanup, sharedHost }) => {
       let placements = createWorkerSessionPlacementStore({ database: support.testState.stateDb });
       const harness = createHarness(placements, { workspacePath: support.testState.root });
       const environmentId = harness.ready.environmentId;
@@ -37,7 +41,7 @@ describe("offline device abandonment with retained physical cleanup", () => {
         ...support.BUNDLE_ARTIFACT,
         ...build,
       });
-      function seedDevice(id: string) {
+      function seedDevice(id: string, isolation: boolean | null = true) {
         support.testState.store.createIntent({
           environmentId: id,
           providerId: "device",
@@ -58,17 +62,18 @@ describe("offline device abandonment with retained physical cleanup", () => {
             ...support.readyPatch(id, { ...build, installKind: "bundle" }),
             leaseId: `lease:${id}`,
             nodeDeviceId: deviceId,
-            sharedHost: true,
+            ...(isolation === null ? {} : { sharedHost: isolation }),
           },
         });
       }
-      seedDevice(environmentId);
+      seedDevice(environmentId, sharedHost);
       const attached = support.testState.store.transition({
         environmentId,
         from: "ready",
         to: "attached",
-        patch: { ...support.attachedPatch(environmentId, REQUEST.sessionId), sharedHost: true },
+        patch: support.attachedPatch(environmentId, REQUEST.sessionId),
       });
+      expect(attached.sharedHost).toBe(sharedHost);
       const active = harness.placements.seedActive(attached.ownerEpoch);
       if (active.state !== "active") {
         throw new Error("expected active placement");
@@ -221,7 +226,7 @@ describe("offline device abandonment with retained physical cleanup", () => {
           .finally(() => {
             settled = true;
           });
-        await cleanupStarted.promise;
+        await Promise.race([cleanupStarted.promise, moving]);
         if (cleanup !== "complete") {
           await setImmediate();
           expect.soft(settled).toBe(false);
@@ -254,7 +259,7 @@ describe("offline device abandonment with retained physical cleanup", () => {
           ownerEpoch: attached.ownerEpoch,
           attachedSessionIds: [active.sessionId],
           nodeDeviceId: deviceId,
-          sharedHost: true,
+          sharedHost,
         });
         expect(invoke).not.toHaveBeenCalled();
         expect(destroy).not.toHaveBeenCalled();

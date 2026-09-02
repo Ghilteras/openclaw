@@ -1,25 +1,23 @@
 // OpenClaw test instance helper spawns isolated OpenClaw processes.
-import { type ChildProcess, type ChildProcessByStdio, spawn } from "node:child_process";
+import { type ChildProcessByStdio, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import { toErrorObject } from "@openclaw/normalization-core/error-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
   BUILD_STAMP_FILE,
   RUNTIME_POSTBUILD_STAMP_FILE,
 } from "../../scripts/lib/local-build-metadata-paths.mts";
 import { terminateManagedChild } from "../../scripts/lib/managed-child-process.mts";
-import { hasErrnoCode } from "../../src/infra/errno.js";
+import { runUtf8CommandWithTimeout } from "../../src/process/exec-runner.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../../src/test-utils/openclaw-test-state.js";
 import { sleep } from "../../src/utils.js";
 import { decodeUtf8Tail } from "./bounded-child-output.js";
-import { runNodeScript } from "./run-node-script.js";
 
 type OpenClawTestStateOptions = NonNullable<Parameters<typeof createOpenClawTestState>[0]>;
 
@@ -75,7 +73,6 @@ const GATEWAY_START_TIMEOUT_MS = 60_000;
 const GATEWAY_STOP_TIMEOUT_MS = 1_500;
 const GATEWAY_ENTRYPOINT_PREPARE_TIMEOUT_MS = 120_000;
 const COMMAND_TIMEOUT_MS = 30_000;
-const COMMAND_MAX_BUFFER_BYTES = 2 * 1024 * 1024;
 const LOG_TAIL_MAX_BYTES = 256 * 1024;
 const GATEWAY_MIGRATION_CONVERGENCE_MAX_RESTARTS = 1;
 const GATEWAY_MIGRATION_CONVERGENCE_REFUSAL_PREFIX =
@@ -187,7 +184,7 @@ async function prepareGatewayEntrypoint(cwd: string): Promise<string[]> {
 
   // Share command ownership so successful preparation cannot retain its deadline.
   const completed = await runCommand({
-    args: ["scripts/run-node.mjs", "--help"],
+    args: ["node", "scripts/run-node.mjs", "--help"],
     cwd,
     env: { ...process.env, VITEST: "1" },
     timeoutMs: GATEWAY_ENTRYPOINT_PREPARE_TIMEOUT_MS,
@@ -416,7 +413,15 @@ function mergeConfig(
 }
 
 function formatLogs(stdout: string[], stderr: string[]): string {
-  return `--- stdout ---\n${readLogBuffer(stdout)}\n--- stderr ---\n${readLogBuffer(stderr)}`;
+  const diagnosticTail = (log: string[]): string => {
+    const tail = createBoundedStringLog() as BoundedStringLog;
+    for (const chunk of log) {
+      appendLogChunk(tail, chunk);
+    }
+    tail.truncated ||= (log as BoundedStringLog).truncated;
+    return readLogBuffer(tail);
+  };
+  return `--- stdout ---\n${diagnosticTail(stdout)}\n--- stderr ---\n${diagnosticTail(stderr)}`;
 }
 
 function createInstanceEnv(params: {
@@ -577,7 +582,7 @@ export async function createOpenClawTestInstance(
     cli: async (args, commandOptions = {}) => {
       const entrypoint = await resolveGatewayEntrypoint(cwd);
       return await runCommand({
-        args: [...entrypoint, ...args],
+        args: ["node", ...entrypoint, ...args],
         cwd,
         env,
         timeoutMs: commandOptions.timeoutMs ?? COMMAND_TIMEOUT_MS,
@@ -652,7 +657,9 @@ export async function createOpenClawTestInstance(
         if (cleaned) {
           return;
         }
-        await stopGatewayChild();
+        // Terminal cleanup has no graceful-shutdown contract. Force the Windows
+        // tree so inherited pipes cannot outlive the completed test instance.
+        await stopGatewayChild({ forceWindowsTree: true });
         await state.cleanup();
         cleaned = true;
       }),
@@ -667,30 +674,31 @@ async function runCommand(params: {
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
 }): Promise<OpenClawTestInstanceCommandResult> {
-  let child: ChildProcess | undefined;
-  // CLI results are machine data, not diagnostic tails. Overflow must fail
-  // after the command owner joins its process and output pipes.
-  const result = await runNodeScript(params.args, params.env, params.timeoutMs, {
+  const result = await runUtf8CommandWithTimeout(params.args, {
     cwd: params.cwd,
-    maxBuffer: COMMAND_MAX_BUFFER_BYTES,
-    onReady(process) {
-      child = process;
-    },
+    // This is the complete isolated environment, not an overlay on the parent.
+    baseEnv: params.env,
+    timeoutMs: params.timeoutMs,
+    killProcessTree: true,
+    // CLI stdout is a machine-readable result; only diagnostics may lose their head.
+    outputCapture: { stdout: "head", stderr: "tail" },
+    maxOutputBytes: { stderr: LOG_TAIL_MAX_BYTES },
+    terminateOnOutputLimit: { stdout: true },
   });
-  if (result.error) {
-    if (hasErrnoCode(result.error, "ETIMEDOUT")) {
-      throw new Error(
-        `command timed out after ${params.timeoutMs}ms: ${params.args.join(" ")}\n${formatLogs([result.stdout], [result.stderr])}`,
-        { cause: result.error },
-      );
-    }
-    throw toErrorObject(result.error, "CLI command failed");
+  const stderr = createBoundedStringLog();
+  appendLogChunk(stderr, result.stderr);
+  (stderr as BoundedStringLog).truncated ||= Boolean(result.stderrTruncatedBytes);
+  if (result.outputLimitExceeded || result.termination === "timeout") {
+    const failure = result.outputLimitExceeded
+      ? "command stdout exceeded capture limit"
+      : `command timed out after ${params.timeoutMs}ms`;
+    throw new Error(`${failure}: ${params.args.join(" ")}\n${formatLogs([result.stdout], stderr)}`);
   }
   return {
-    code: child?.exitCode ?? null,
-    signal: child?.signalCode ?? null,
+    code: result.code,
+    signal: result.signal,
     stdout: result.stdout,
-    stderr: result.stderr,
+    stderr: readLogBuffer(stderr),
   };
 }
 

@@ -154,7 +154,7 @@ export function createWorkerProviderOwnerLifecycle(
       if (
         record.ownerEpoch !== binding.ownerEpoch ||
         !record.nodeDeviceId ||
-        record.sharedHost !== true ||
+        record.sharedHost === false ||
         record.attachedSessionIds.length !== 1 ||
         record.attachedSessionIds[0] !== binding.sessionId
       ) {
