@@ -112,6 +112,8 @@ cadence; the job is enabled only when
 tools and its agent's full Workshop directory as its working directory,
 file-tool root, and session root. It keeps distinct useful skills, rewrites
 weak ones, consolidates overlap, and drops junk or stale fragments.
+When the operator runs agents in a sandbox, the sandbox workspace for this turn
+is the agent's Workshop directory.
 Choosing `auto` intentionally authorizes those rewrites and drops without a
 second approval **for Workshop-owned paths only**; `propose` and `off` do not
 run collection review.
