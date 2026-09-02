@@ -451,17 +451,12 @@ async function savePreparedUpdateFailureReport(
 function resultFromExistingReceipt(
   receipt: UpdateFailureReportReceipt | null,
   savedReportPath: string,
-  fallbackUrl: string,
 ): UpdateFailureReportSubmitResult {
   return {
     status: "duplicate",
     savedReportPath,
     ...(receipt?.url ? { url: receipt.url } : {}),
-    ...(receipt?.fallbackUrl
-      ? { fallbackUrl: receipt.fallbackUrl }
-      : receipt?.status === "pending"
-        ? { fallbackUrl }
-        : {}),
+    ...(receipt?.fallbackUrl ? { fallbackUrl: receipt.fallbackUrl } : {}),
     message:
       receipt?.status === "pending"
         ? "This update attempt already has a report submission in progress."
@@ -551,7 +546,7 @@ export async function submitUpdateFailureReport(
         true,
       );
     }
-    return resultFromExistingReceipt(existingReceipt, prepared.savedReportPath, prepared.url);
+    return resultFromExistingReceipt(existingReceipt, prepared.savedReportPath);
   }
   if (options.validateCurrentAttempt && !(await options.validateCurrentAttempt())) {
     return {
@@ -575,7 +570,7 @@ export async function submitUpdateFailureReport(
         true,
       );
     }
-    return resultFromExistingReceipt(reservation.receipt, prepared.savedReportPath, prepared.url);
+    return resultFromExistingReceipt(reservation.receipt, prepared.savedReportPath);
   }
 
   const releaseReceipt = options.releaseReceipt ?? releaseUpdateFailureReportReceipt;

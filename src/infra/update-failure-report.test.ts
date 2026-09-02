@@ -168,7 +168,9 @@ describe("update failure report", () => {
     expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
 
     finishValidation();
-    await expect(delayed).resolves.toMatchObject({ status: "duplicate" });
+    const delayedResult = await delayed;
+    expect(delayedResult).toMatchObject({ status: "duplicate" });
+    expect(delayedResult).not.toHaveProperty("fallbackUrl");
     expect(delayedCreateIssue).not.toHaveBeenCalled();
     finishFallback();
     await expect(winner).resolves.toMatchObject({ status: "fallback", fallbackUrl });
@@ -357,7 +359,8 @@ describe("update failure report", () => {
     });
 
     expect(first).toMatchObject({ status: "fallback", fallbackUrl });
-    expect(second).toMatchObject({ status: "duplicate", fallbackUrl: prepared.url });
+    expect(second).toMatchObject({ status: "duplicate" });
+    expect(second).not.toHaveProperty("fallbackUrl");
     expect(createIssue).toHaveBeenCalledOnce();
     expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
   });

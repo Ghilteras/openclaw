@@ -85,6 +85,20 @@ describe("createGithubIssue", () => {
       message: "gh issue creation timed out",
       ok: false,
     });
+    expect(spawnMock).toHaveBeenCalledWith(
+      "gh",
+      [
+        "issue",
+        "create",
+        "--repo",
+        "github.com/openclaw/openclaw",
+        "--title",
+        "Update failed",
+        "--body-file",
+        "-",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
     expect(child.kill).toHaveBeenCalledWith("SIGKILL");
   });
 
@@ -198,7 +212,7 @@ describe("createGithubIssue", () => {
         "issue",
         "create",
         "--repo",
-        "openclaw/openclaw",
+        "github.com/openclaw/openclaw",
         "--title",
         "Session SQLite migration recovery report",
         "--body-file",
