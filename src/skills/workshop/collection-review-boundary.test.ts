@@ -60,7 +60,8 @@ describe("skill collection review boundary", () => {
 
       expect(result).toMatchObject({
         status: "error",
-        error: "Skill collection review completed with errors: security scan rejected malformed",
+        error:
+          "Skill collection review completed with errors: security scan rejected malformed/SKILL.md",
       });
       await expect(fs.access(path.join(skillsRoot, "malformed"))).rejects.toThrow();
       expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
@@ -98,7 +99,8 @@ describe("skill collection review boundary", () => {
 
       expect(result).toMatchObject({
         status: "error",
-        error: "Skill collection review completed with errors: security scan rejected shared",
+        error:
+          "Skill collection review completed with errors: security scan rejected first/SKILL.md",
       });
       await expect(
         fs.readFile(path.join(skillsRoot, "first", "SKILL.md"), "utf8"),
@@ -106,6 +108,153 @@ describe("skill collection review boundary", () => {
       await expect(
         fs.readFile(path.join(skillsRoot, "second", "SKILL.md"), "utf8"),
       ).resolves.toContain("# Second");
+    } finally {
+      await testState.cleanup();
+    }
+  });
+
+  it("restores an existing skill when a new support file has critical content", async () => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-unsafe-support-create-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    try {
+      await writeSkill(skillsRoot, "procedure", "Procedure", "# Before\n");
+      const result = await runSkillCollectionReviewForAgent({
+        config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
+        agentId: "main",
+        job: createReviewJob("skill-review-unsafe-support-create"),
+        env: testState.env,
+        runTurn: async () => {
+          await fs.mkdir(path.join(skillsRoot, "procedure", "scripts"), { recursive: true });
+          await fs.writeFile(
+            path.join(skillsRoot, "procedure", "scripts", "run.sh"),
+            'const cp = require("child_process");\ncp.exec("bad");\n',
+          );
+          return { status: "ok", summary: "reviewed", outputText: "" };
+        },
+      });
+
+      expect(result).toMatchObject({
+        status: "error",
+        error:
+          "Skill collection review completed with errors: security scan rejected procedure/scripts/run.sh",
+      });
+      await expect(
+        fs.readFile(path.join(skillsRoot, "procedure", "SKILL.md"), "utf8"),
+      ).resolves.toContain("# Before");
+      await expect(fs.access(path.join(skillsRoot, "procedure", "scripts"))).rejects.toThrow();
+      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+        kept: ["procedure"],
+        written: [],
+      });
+    } finally {
+      await testState.cleanup();
+    }
+  });
+
+  it("restores an existing skill when changed support content is critical", async () => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-unsafe-support-change-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const supportFile = path.join(skillsRoot, "procedure", "references", "notes.md");
+    try {
+      await writeSkill(skillsRoot, "procedure", "Procedure", "# Before\n");
+      await fs.mkdir(path.dirname(supportFile), { recursive: true });
+      await fs.writeFile(supportFile, "Safe notes.\n");
+      const result = await runSkillCollectionReviewForAgent({
+        config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
+        agentId: "main",
+        job: createReviewJob("skill-review-unsafe-support-change"),
+        env: testState.env,
+        runTurn: async () => {
+          await fs.writeFile(
+            supportFile,
+            'const cp = require("child_process");\ncp.exec("bad");\n',
+          );
+          return { status: "ok", summary: "reviewed", outputText: "" };
+        },
+      });
+
+      expect(result).toMatchObject({
+        status: "error",
+        error:
+          "Skill collection review completed with errors: security scan rejected procedure/references/notes.md",
+      });
+      await expect(fs.readFile(supportFile, "utf8")).resolves.toBe("Safe notes.\n");
+      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+        kept: ["procedure"],
+        written: [],
+      });
+    } finally {
+      await testState.cleanup();
+    }
+  });
+
+  it("records a benign support-file change as written", async () => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-safe-support-change-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const supportFile = path.join(skillsRoot, "procedure", "references", "notes.md");
+    try {
+      await writeSkill(skillsRoot, "procedure", "Procedure", "# Procedure\n");
+      await fs.mkdir(path.dirname(supportFile), { recursive: true });
+      await fs.writeFile(supportFile, "Before notes.\n");
+      const result = await runSkillCollectionReviewForAgent({
+        config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
+        agentId: "main",
+        job: createReviewJob("skill-review-safe-support-change"),
+        env: testState.env,
+        runTurn: async () => {
+          await fs.writeFile(supportFile, "After notes.\n");
+          return { status: "ok", summary: "reviewed", outputText: "" };
+        },
+      });
+
+      expect(result.status).toBe("ok");
+      await expect(fs.readFile(supportFile, "utf8")).resolves.toBe("After notes.\n");
+      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+        kept: [],
+        written: ["procedure"],
+      });
+    } finally {
+      await testState.cleanup();
+    }
+  });
+
+  it("does not remove the collection for a critical root-level file", async () => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-unsafe-root-file-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const rootFile = path.join(skillsRoot, "unsafe.md");
+    try {
+      await writeSkill(skillsRoot, "procedure", "Procedure", "# Before\n");
+      const result = await runSkillCollectionReviewForAgent({
+        config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
+        agentId: "main",
+        job: createReviewJob("skill-review-unsafe-root-file"),
+        env: testState.env,
+        runTurn: async () => {
+          await fs.writeFile(rootFile, 'const cp = require("child_process");\ncp.exec("bad");\n');
+          return { status: "ok", summary: "reviewed", outputText: "" };
+        },
+      });
+
+      expect(result).toMatchObject({
+        status: "error",
+        error: "Skill collection review completed with errors: security scan rejected unsafe.md",
+      });
+      await expect(fs.access(rootFile)).rejects.toThrow();
+      await expect(
+        fs.readFile(path.join(skillsRoot, "procedure", "SKILL.md"), "utf8"),
+      ).resolves.toContain("# Before");
     } finally {
       await testState.cleanup();
     }
@@ -236,7 +385,7 @@ describe("skill collection review boundary", () => {
 
       expect(result.status).toBe("error");
       expect(result.error).toBe(
-        "Skill collection review completed with errors: security scan rejected unsafe",
+        "Skill collection review completed with errors: security scan rejected unsafe/SKILL.md",
       );
       expect(getSkillsSnapshotVersion()).toBeGreaterThan(beforeVersion);
       expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({

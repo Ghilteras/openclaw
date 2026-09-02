@@ -7,7 +7,8 @@ import type { RunCronAgentTurnParams } from "../../cron/isolated-agent/run-prepa
 import type { RunCronAgentTurnResult } from "../../cron/isolated-agent/run.types.js";
 import type { CronExecutionIdentityAdmission } from "../../cron/service/state.js";
 import { sha256Hex } from "../../infra/crypto-digest.js";
-import { root, walkDirectory } from "../../infra/fs-safe.js";
+import { removePathWithinRoot } from "../../infra/fs-safe-remove.js";
+import { pathExists, root, walkDirectory } from "../../infra/fs-safe.js";
 import type { PluginHookSkillArtifact } from "../../plugins/hook-types.js";
 import {
   dispatchCommittedSkillChangeBestEffort,
@@ -30,7 +31,11 @@ import {
 } from "./collection-review-state.js";
 import { restoreSkillCollectionDirectoryFromBackup } from "./collection-rollback.js";
 import { clearSkillUsageForRemovedSkills } from "./curator.js";
-import { readSkillProposalTargetTreeSha256 } from "./proposal-bundle.js";
+import {
+  isUtf8Buffer,
+  MAX_EVALUATION_FILE_BYTES,
+  readSkillProposalTargetTreeSha256,
+} from "./proposal-bundle.js";
 import { resolveWorkshopSkillsDir } from "./skills-root.js";
 import { withSkillCollectionLock } from "./target-lock.js";
 import { listWritableWorkshopSkillSummaries } from "./workspace-skill-read.js";
@@ -59,6 +64,8 @@ type ReviewSkillFile = {
   filePath: string;
   contentHash: string;
 };
+
+const MAX_WORKSHOP_REVIEW_ENTRIES = 10_000;
 
 export async function runSkillCollectionReviewForAgent(params: {
   config: OpenClawConfig;
@@ -146,46 +153,54 @@ export async function runSkillCollectionReviewForAgent(params: {
         const beforeLoadedDirs = new Set(
           before.map((skill) => path.relative(skillsRoot, skill.baseDir)),
         );
+        const beforeFileDirs = new Set([...beforeFiles.values()].map((file) => file.relativeDir));
         const revertedDirs = new Set<string>();
         const changedFiles = [...afterFiles.values()].filter((file) => {
-          const previous = beforeFiles.get(file.relativeDir);
+          const previous = beforeFiles.get(file.relativePath);
           return !previous || previous.contentHash !== file.contentHash;
         });
+        const criticalFilesByDir = new Map<string, string>();
+        const skillsRootAccess = await root(skillsRoot);
         for (const file of changedFiles) {
           assertCurrent(lease);
-          const content = await readWorkshopSkillFile(skillsRoot, file.relativePath);
-          const findings = [
-            ...scanSkillContent(content, file.filePath),
-            ...scanSource(content, file.filePath),
-          ];
+          const findings = await scanWorkshopReviewFile(file, skillsRootAccess);
           if (findings.some((finding) => finding.severity === "critical")) {
-            assertCurrent(lease);
-            await restoreSkillCollectionDirectoryFromBackup({
-              skillsRoot,
-              backupDir: backup.backupDir,
-              relativeDir: file.relativeDir,
-              existedBefore: beforeFiles.has(file.relativeDir),
-            });
-            revertedDirs.add(file.relativeDir);
-            reviewErrors.push(
-              `security scan rejected ${afterByDir.get(file.relativeDir)?.name ?? file.relativeDir}`,
-            );
+            if (!criticalFilesByDir.has(file.relativeDir)) {
+              criticalFilesByDir.set(file.relativeDir, file.relativePath);
+            }
           }
+        }
+        for (const [relativeDir, relativePath] of criticalFilesByDir) {
+          assertCurrent(lease);
+          await restoreWorkshopReviewPath({
+            skillsRoot,
+            backupDir: backup.backupDir,
+            relativeDir,
+            relativePath,
+            existedBefore:
+              relativeDir === "." ? beforeFiles.has(relativePath) : beforeFileDirs.has(relativeDir),
+          });
+          revertedDirs.add(relativeDir);
+          reviewErrors.push(`security scan rejected ${relativePath}`);
         }
         for (const file of afterFiles.values()) {
           if (
             afterByDir.has(file.relativeDir) ||
             revertedDirs.has(file.relativeDir) ||
-            (!beforeLoadedDirs.has(file.relativeDir) && beforeFiles.has(file.relativeDir))
+            (!beforeLoadedDirs.has(file.relativeDir) && !beforeFileDirs.has(file.relativeDir))
           ) {
             continue;
           }
           assertCurrent(lease);
-          await restoreSkillCollectionDirectoryFromBackup({
+          await restoreWorkshopReviewPath({
             skillsRoot,
             backupDir: backup.backupDir,
             relativeDir: file.relativeDir,
-            existedBefore: beforeFiles.has(file.relativeDir),
+            relativePath: file.relativePath,
+            existedBefore:
+              file.relativeDir === "."
+                ? beforeFiles.has(file.relativePath)
+                : beforeFileDirs.has(file.relativeDir),
           });
           revertedDirs.add(file.relativeDir);
           reviewErrors.push(`review left ${file.relativeDir} unloadable`);
@@ -348,43 +363,109 @@ async function snapshotWorkshopSkillFiles(
   skillsRoot: string,
 ): Promise<Map<string, ReviewSkillFile>> {
   const walked = await walkDirectory(skillsRoot, {
-    // Keep the path-based inventory bounded to the loader's grouped-skill depth.
+    // Bound each snapshot to 10,000 entries and six levels so a review cannot exhaust memory.
     maxDepth: 6,
+    maxEntries: MAX_WORKSHOP_REVIEW_ENTRIES,
     symlinks: "skip",
-    include: (entry) => entry.kind === "file" && entry.name === "SKILL.md",
+    include: (entry) => entry.kind === "file",
     descend: (entry) => !entry.name.startsWith(".") && entry.name !== "node_modules",
   });
   if (walked.truncated || walked.failedDirs?.length) {
     throw new Error("Could not fully inspect the Skill Workshop directory.");
   }
   const skillsRootAccess = await root(skillsRoot);
+  const skillDirs = new Set(
+    walked.entries
+      .filter((entry) => entry.kind === "file" && entry.name === "SKILL.md")
+      .map((entry) => path.dirname(entry.relativePath)),
+  );
   const snapshots = await Promise.all(
     walked.entries
       .toSorted((left, right) => left.relativePath.localeCompare(right.relativePath))
       .map(async (entry) => {
         const read = await skillsRootAccess.read(entry.relativePath, {
           hardlinks: "reject",
+          maxBytes: MAX_EVALUATION_FILE_BYTES,
           symlinks: "reject",
         });
         return {
-          relativeDir: path.dirname(entry.relativePath),
+          relativeDir: resolveWorkshopSkillDirectory(entry.relativePath, skillDirs),
           relativePath: entry.relativePath,
           filePath: entry.path,
           contentHash: sha256Hex(read.buffer),
         } satisfies ReviewSkillFile;
       }),
   );
-  return new Map(snapshots.map((snapshot) => [snapshot.relativeDir, snapshot]));
+  return new Map(snapshots.map((snapshot) => [snapshot.relativePath, snapshot]));
 }
 
-async function readWorkshopSkillFile(skillsRoot: string, relativePath: string): Promise<string> {
-  const read = await (
-    await root(skillsRoot)
-  ).read(relativePath, {
+function resolveWorkshopSkillDirectory(
+  relativePath: string,
+  skillDirs: ReadonlySet<string>,
+): string {
+  const ownDirectory = path.dirname(relativePath);
+  let directory = ownDirectory;
+  while (directory !== ".") {
+    if (skillDirs.has(directory)) {
+      return directory;
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) {
+      break;
+    }
+    directory = parent;
+  }
+  return skillDirs.has(".") ? "." : ownDirectory;
+}
+
+async function scanWorkshopReviewFile(
+  file: ReviewSkillFile,
+  skillsRootAccess: Awaited<ReturnType<typeof root>>,
+) {
+  const read = await skillsRootAccess.read(file.relativePath, {
     hardlinks: "reject",
+    maxBytes: MAX_EVALUATION_FILE_BYTES,
     symlinks: "reject",
   });
-  return read.buffer.toString("utf8");
+  if (!isUtf8Buffer(read.buffer)) {
+    return [];
+  }
+  const content = read.buffer.toString("utf8");
+  return [...scanSkillContent(content, file.filePath), ...scanSource(content, file.filePath)];
+}
+
+async function restoreWorkshopReviewPath(params: {
+  skillsRoot: string;
+  backupDir: string;
+  relativeDir: string;
+  relativePath: string;
+  existedBefore: boolean;
+}): Promise<void> {
+  if (params.relativeDir !== ".") {
+    await restoreSkillCollectionDirectoryFromBackup({
+      skillsRoot: params.skillsRoot,
+      backupDir: params.backupDir,
+      relativeDir: params.relativeDir,
+      existedBefore: params.existedBefore,
+    });
+    return;
+  }
+  const livePath = path.join(params.skillsRoot, params.relativePath);
+  if (await pathExists(livePath)) {
+    await removePathWithinRoot({
+      rootDir: params.skillsRoot,
+      relativePath: params.relativePath,
+      recursive: false,
+      force: true,
+    });
+  }
+  if (params.existedBefore) {
+    await fs.cp(path.join(params.backupDir, "skills", params.relativePath), livePath, {
+      errorOnExist: true,
+      force: false,
+      preserveTimestamps: true,
+    });
+  }
 }
 
 function resolveReviewConfig(config: OpenClawConfig): OpenClawConfig {
