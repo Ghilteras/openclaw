@@ -772,7 +772,8 @@ function compareAttachmentAuthority(
 function reconcileAttachedSessionOwners(db: DatabaseSync, nowMs: number): void {
   const ownersBySession = new Map<string, WorkerEnvironmentRecord[]>();
   for (const record of listRows(db, false)) {
-    if (record.state !== "attached") {
+    // Closing attachments retain physical cleanup scope, not live ownership.
+    if (record.state !== "attached" || record.destroyRequestedAtMs !== null) {
       continue;
     }
     const sessionId = record.attachedSessionIds[0];
@@ -789,8 +790,7 @@ function reconcileAttachedSessionOwners(db: DatabaseSync, nowMs: number): void {
     }
     const [, ...duplicates] = owners.toSorted(compareAttachmentAuthority);
     for (const duplicate of duplicates) {
-      // Repair multiple owners admitted before attachment uniqueness.
-      // Demotion fences the loser before startup snapshots it.
+      // Fence legacy duplicate live owners before startup snapshots them.
       update(db, duplicate.environmentId, "attached", {
         owner_epoch: nextGlobalOwnerEpoch(db),
         state: "idle",

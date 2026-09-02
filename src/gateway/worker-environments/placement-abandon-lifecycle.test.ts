@@ -21,6 +21,7 @@ describe("offline device abandonment with retained physical cleanup", () => {
         "held",
         "failed",
         "restarted",
+        "replacement-restarted",
         "authorization-closed",
         "retired-siblings",
         "retired-mixed",
@@ -151,6 +152,14 @@ describe("offline device abandonment with retained physical cleanup", () => {
           },
         );
       let service = createService();
+      const restartDisconnectedService = async () => {
+        await expect(service.stop()).rejects.toThrow("not connected");
+        support.testState.service = undefined;
+        await support.reopenWorkerEnvironmentStore();
+        placements = createWorkerSessionPlacementStore({ database: support.testState.stateDb });
+        tunnels = createTunnels();
+        service = createService();
+      };
       vi.mocked(harness.environments.get).mockImplementation(service.get);
       vi.mocked(harness.environments.destroy).mockImplementation(service.destroy);
       vi.mocked(harness.environments.retireAbandonedNodeEnvironment).mockImplementation(
@@ -266,14 +275,11 @@ describe("offline device abandonment with retained physical cleanup", () => {
 
         stopDesktop.mockResolvedValue(undefined);
         if (cleanup === "restarted") {
-          await expect(service.stop()).rejects.toThrow("not connected");
-          support.testState.service = undefined;
-          await support.reopenWorkerEnvironmentStore();
-          placements = createWorkerSessionPlacementStore({ database: support.testState.stateDb });
-          tunnels = createTunnels();
-          service = createService();
+          await restartDisconnectedService();
         }
-        listNodes.mockResolvedValue(connectedNodes);
+        if (cleanup !== "replacement-restarted") {
+          listNodes.mockResolvedValue(connectedNodes);
+        }
         const replacement =
           cleanup === "failed" || cleanup === "retired-mixed" || cleanup === "authorization-closed"
             ? undefined
@@ -285,6 +291,11 @@ describe("offline device abandonment with retained physical cleanup", () => {
             environmentId: replacementId,
             ownerEpoch: replacement.ownerEpoch,
           });
+          if (cleanup === "replacement-restarted") {
+            // Reopen both owners together, then admit a fresh replacement turn below.
+            await restartDisconnectedService();
+            listNodes.mockResolvedValue(connectedNodes);
+          }
           replacementClaim = placements.claimTurn({
             ...REQUEST,
             claimId: "replacement-claim",
