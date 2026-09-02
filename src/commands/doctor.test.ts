@@ -399,6 +399,67 @@ describe("doctorCommand", () => {
     expect(runtime.log).not.toHaveBeenCalledWith(expect.stringContaining("prefilled issue URL"));
   });
 
+  it("does not expose a prefilled URL when recovery issue creation can be retried", async () => {
+    const supportIssue = {
+      body: "sanitized body",
+      title: "Session SQLite migration recovery report (run-1)",
+      url: "https://github.com/openclaw/openclaw/issues/new?title=run-1",
+    };
+    const report = {
+      mode: "recover",
+      supportIssue,
+      targets: [],
+      totals: {
+        archivedTranscriptFiles: 0,
+        archivedUnreferencedJsonlFiles: 0,
+        importedEntries: 0,
+        importedTranscriptEvents: 0,
+        issues: 0,
+        legacyEntries: 0,
+        sqliteEntries: 0,
+        targets: 0,
+        unreferencedJsonlFiles: 0,
+        validatedEntries: 0,
+        validatedTranscriptEvents: 0,
+      },
+    };
+    mocks.runDoctorSessionSqlite.mockResolvedValueOnce(report);
+    mocks.createGithubIssue.mockReturnValueOnce({
+      issueCreateStarted: false,
+      message: "spawn gh EAGAIN",
+      ok: false,
+      retryable: true,
+    });
+    const runtime = {
+      log: vi.fn(),
+      error: vi.fn(),
+      writeStdout: vi.fn(),
+      writeJson: vi.fn(),
+      exit: vi.fn((code: number) => {
+        throw new Error(`exit:${code}`);
+      }),
+    };
+
+    await expect(
+      doctorCommand(runtime, {
+        sessionSqlite: "recover",
+        sessionSqliteGithubIssue: true,
+        yes: true,
+      }),
+    ).rejects.toThrow("exit:0");
+
+    expect(supportIssue).toMatchObject({
+      github: {
+        message: "spawn gh EAGAIN",
+        status: "failed",
+      },
+    });
+    expect((supportIssue as { github?: unknown }).github).not.toHaveProperty("fallbackUrl");
+    expect(runtime.log).toHaveBeenCalledWith(
+      "session-sqlite recover: GitHub issue creation can be retried: spawn gh EAGAIN",
+    );
+  });
+
   it("keeps session sqlite recovery GitHub status inside JSON output", async () => {
     const report = {
       mode: "recover",

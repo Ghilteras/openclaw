@@ -6,6 +6,7 @@ import type { GithubIssueCreateAsyncHooks, SanitizedGithubIssue } from "./github
 import {
   finalizeUpdateFailureReportReceipt,
   readUpdateFailureReportReceipt,
+  reserveUpdateFailureReportReceipt,
 } from "./restart-sentinel.js";
 import { prepareUpdateFailureReport, submitUpdateFailureReport } from "./update-failure-report.js";
 import type { UpdateRunResult } from "./update-runner.js";
@@ -149,12 +150,34 @@ describe("update failure report", () => {
     });
 
     expect(createIssue).toHaveBeenCalledOnce();
-    expect([first.status, second.status].toSorted()).toEqual(["created", "pending"]);
+    expect([first.status, second.status].toSorted()).toEqual(["created", "retryable"]);
     expect(third).toMatchObject({
       status: "duplicate",
       url: "https://github.com/openclaw/openclaw/issues/123",
     });
     await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("distinguishes an active preparation from ambiguous issue creation", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-preparing", result: failedUpdate() },
+      { stateDir },
+    );
+    expect(
+      reserveUpdateFailureReportReceipt(prepared.attemptId, "active-owner", {
+        OPENCLAW_STATE_DIR: stateDir,
+      }),
+    ).toMatchObject({ reserved: true });
+    const createIssue = mockCreatedIssue("https://github.com/openclaw/openclaw/issues/123");
+
+    await expect(
+      submitUpdateFailureReport(prepared, prepared.previewDigest, { createIssue, stateDir }),
+    ).resolves.toMatchObject({
+      message: "This update attempt already has a report preparation in progress.",
+      status: "retryable",
+    });
+    expect(createIssue).not.toHaveBeenCalled();
   });
 
   it("cancels preparation when authority closes immediately before issue creation", async () => {
@@ -350,7 +373,7 @@ describe("update failure report", () => {
 
     finishValidation();
     const delayedResult = await delayed;
-    expect(delayedResult).toMatchObject({ status: "pending" });
+    expect(delayedResult).toMatchObject({ status: "retryable" });
     expect(delayedResult).not.toHaveProperty("fallbackUrl");
     expect(delayedCreateIssue).not.toHaveBeenCalled();
     finishFallback();
@@ -899,7 +922,7 @@ describe("update failure report", () => {
         stateDir,
         writeRecovery: async () => failRecovery(),
       });
-      expect(first).toMatchObject({ status: "pending" });
+      expect(first).toMatchObject({ status: "retryable" });
       expect(first).not.toHaveProperty("fallbackUrl");
 
       nowMs += 10 * 60_000;
@@ -1020,6 +1043,46 @@ describe("update failure report", () => {
         OPENCLAW_STATE_DIR: stateDir,
       }),
     ).toMatchObject({ fallbackUrl: prepared.url, status: "fallback" });
+  });
+
+  it("allows an immediate retry when issue creation explicitly did not start", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-issue-create-retryable", result: failedUpdate() },
+      { stateDir },
+    );
+    const createIssue = vi
+      .fn()
+      .mockImplementationOnce(
+        async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+          await hooks.afterAuthPreflight?.();
+          await hooks.beforeIssueCreate?.();
+          return {
+            issueCreateStarted: false as const,
+            message: "spawn gh EAGAIN",
+            ok: false as const,
+            retryable: true as const,
+          };
+        },
+      )
+      .mockImplementationOnce(
+        async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+          await hooks.afterAuthPreflight?.();
+          await hooks.beforeIssueCreate?.();
+          return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/123" };
+        },
+      );
+
+    await expect(
+      submitUpdateFailureReport(prepared, prepared.previewDigest, { createIssue, stateDir }),
+    ).resolves.toMatchObject({ status: "retryable" });
+    await expect(
+      submitUpdateFailureReport(prepared, prepared.previewDigest, { createIssue, stateDir }),
+    ).resolves.toMatchObject({
+      status: "created",
+      url: "https://github.com/openclaw/openclaw/issues/123",
+    });
+    expect(createIssue).toHaveBeenCalledTimes(2);
   });
 
   it("requires the submitted body to match the reviewed preview", async () => {

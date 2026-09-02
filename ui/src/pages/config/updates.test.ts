@@ -671,6 +671,43 @@ describe("renderUpdates", () => {
     expect(report.querySelector("a")).toBeNull();
   });
 
+  it("renders a definitely unstarted report as retryable rather than ambiguous", () => {
+    const projected = projectUpdateStatusResponse(
+      {
+        sentinel: {
+          kind: "update",
+          status: "error",
+          ts: 500,
+          stats: { handoffId: "handoff-failed", mode: "git", reason: "build-failed" },
+        },
+      },
+      { updateStatusBanner: null, recordedUpdateAttempt: null, heldUpdateCampaignId: null },
+    );
+    render(
+      renderUpdates(
+        createProps({
+          recordedAttempt: projected.recordedUpdateAttempt,
+          statusBanner: projected.updateStatusBanner,
+          reportableUpdateFailureId: "handoff-failed",
+          updateFailureReportNotice: {
+            attemptId: "handoff-failed",
+            result: {
+              status: "retryable",
+              message: "No issue submission was started; retry this action later.",
+            },
+          },
+        }),
+      ),
+      container,
+    );
+
+    const report = row("Failure report");
+    expect(report.textContent).toContain("No GitHub issue submission was started");
+    expect(report.textContent).toContain("retry this action later");
+    expect(report.textContent).not.toContain("may have completed");
+    expect(report.querySelector("a")).toBeNull();
+  });
+
   it("keeps read-only facts visible while locking controls for non-admins", () => {
     render(
       renderUpdates(createProps({ canAdmin: false, canUpdate: false, configBusy: true })),

@@ -83,6 +83,30 @@ describe("interactive update failure action", () => {
     );
   });
 
+  it("returns a retryable no-start result to explicit action and confirmation", async () => {
+    const fixture = setup("report", true);
+    fixture.submit
+      .mockReset()
+      .mockResolvedValueOnce({
+        message: "spawn gh EAGAIN",
+        savedReportPath: fixture.prepared.savedReportPath,
+        status: "retryable",
+      })
+      .mockResolvedValueOnce({
+        savedReportPath: fixture.prepared.savedReportPath,
+        status: "created",
+        url: "https://github.com/openclaw/openclaw/issues/123",
+      });
+
+    await expect(fixture.run()).resolves.toBe("handled");
+    expect(fixture.prepare).toHaveBeenCalledTimes(2);
+    expect(fixture.submit).toHaveBeenCalledTimes(2);
+    expect(fixture.runtime.log).toHaveBeenCalledWith("spawn gh EAGAIN");
+    expect(fixture.runtime.log).toHaveBeenCalledWith(
+      "Created GitHub issue: https://github.com/openclaw/openclaw/issues/123",
+    );
+  });
+
   it("does nothing when the action menu is dismissed", async () => {
     const fixture = setup("dismiss", true);
 

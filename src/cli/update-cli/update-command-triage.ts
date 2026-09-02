@@ -24,6 +24,8 @@ export async function withUpdateFailureTriage(
   target: UpdateTriageTarget,
   run: () => Promise<void>,
 ): Promise<void> {
+  // One wrapper call owns one actual update execution. A later CLI invocation
+  // is a new attempt; persisted managed failures use their handoff identity.
   const updateAttemptId = randomUUID();
   const mode = opts.json
     ? "json"

@@ -73,6 +73,13 @@ export type UpdateFailureReportSubmitResult =
       fallbackUrl?: undefined;
       message: string;
       savedReportPath: string;
+      status: "retryable";
+      url?: undefined;
+    }
+  | {
+      fallbackUrl?: undefined;
+      message: string;
+      savedReportPath: string;
       status: "stale";
       url?: undefined;
     };
@@ -383,14 +390,18 @@ function resultFromExistingReceipt(
   receipt: UpdateFailureReportReceipt | null,
   savedReportPath: string,
 ): UpdateFailureReportSubmitResult {
-  if (receipt?.status === "pending" || receipt?.status === "preparing") {
+  if (receipt?.status === "pending") {
     return {
-      message:
-        receipt.status === "pending"
-          ? "This update attempt already has a report submission in progress."
-          : "This update attempt already has a report preparation in progress.",
+      message: "This update attempt already has a report submission in progress.",
       savedReportPath,
       status: "pending",
+    };
+  }
+  if (receipt?.status === "preparing") {
+    return {
+      message: "This update attempt already has a report preparation in progress.",
+      savedReportPath,
+      status: "retryable",
     };
   }
   return {
@@ -637,6 +648,32 @@ export async function submitUpdateFailureReport(
       status: "pending",
     };
   }
+  if (!("fallbackUrl" in created)) {
+    const preparationRefreshed = retryUpdateReportStateWrite(() =>
+      (options.refreshPreparation ?? refreshUpdateFailureReportReceiptPreparation)(
+        prepared.attemptId,
+        reservationId,
+        stateEnv,
+      ),
+    );
+    if (!preparationRefreshed) {
+      return resultFromExistingReceipt(
+        readReceipt(prepared.attemptId, stateEnv),
+        prepared.savedReportPath,
+      );
+    }
+    if (!cleanupOwnedPreparation()) {
+      return resultFromExistingReceipt(
+        readReceipt(prepared.attemptId, stateEnv),
+        prepared.savedReportPath,
+      );
+    }
+    return {
+      message: sanitizeReportField(created.message, context),
+      savedReportPath: prepared.savedReportPath,
+      status: "retryable",
+    };
+  }
   const message = sanitizeReportField(created.message, context);
   const preparationRefreshed = retryUpdateReportStateWrite(() =>
     (options.refreshPreparation ?? refreshUpdateFailureReportReceiptPreparation)(
@@ -673,7 +710,7 @@ export async function submitUpdateFailureReport(
       message:
         "The browser report handoff could not be saved safely. No issue submission was started; retry this action later.",
       savedReportPath: prepared.savedReportPath,
-      status: "pending",
+      status: "retryable",
     };
   }
   if (!fallbackFinalized) {

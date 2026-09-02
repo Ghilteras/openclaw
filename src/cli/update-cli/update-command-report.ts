@@ -64,6 +64,9 @@ function renderSubmissionResult(result: UpdateFailureReportSubmitResult): string
       `Saved sanitized report: ${result.savedReportPath}`,
     ];
   }
+  if (result.status === "retryable") {
+    return [result.message];
+  }
   return [
     result.message,
     ...(result.url ? [`Existing issue: ${result.url}`] : []),
@@ -86,43 +89,47 @@ export async function runInteractiveUpdateFailureAction(params: {
     ...params.dependencies,
     prompts: params.dependencies?.prompts ?? defaultDependencies.prompts,
   };
-  const action = await dependencies.prompts.chooseAction();
-  if (isCancel(action) || action === "dismiss") {
-    return "handled";
+  while (true) {
+    const action = await dependencies.prompts.chooseAction();
+    if (isCancel(action) || action === "dismiss") {
+      return "handled";
+    }
+    if (action === "triage") {
+      return "triage";
+    }
+    const result: UpdateRunResult = params.result ?? {
+      status: "error",
+      mode: "unknown",
+      reason: "unexpected-error",
+      steps: [],
+      durationMs: 0,
+    };
+    const stateDir = resolveStateDir(params.env);
+    const prepared = await dependencies.prepare(
+      {
+        attemptId: params.attemptId,
+        ...(params.error ? { error: params.error } : {}),
+        result,
+        ...(result.after?.upstreamRef ? { target: result.after.upstreamRef } : {}),
+      },
+      { env: params.env, stateDir },
+    );
+    params.runtime.log("Sanitized update failure report preview:");
+    params.runtime.log(prepared.body);
+    const confirmed = await dependencies.prompts.confirmSubmission();
+    if (isCancel(confirmed) || !confirmed) {
+      params.runtime.log("Update failure report cancelled.");
+      return "handled";
+    }
+    const submitted = await dependencies.submit(prepared, prepared.previewDigest, {
+      env: params.env,
+      stateDir,
+    });
+    for (const line of renderSubmissionResult(submitted)) {
+      params.runtime.log(line);
+    }
+    if (submitted.status !== "retryable") {
+      return "handled";
+    }
   }
-  if (action === "triage") {
-    return "triage";
-  }
-  const result: UpdateRunResult = params.result ?? {
-    status: "error",
-    mode: "unknown",
-    reason: "unexpected-error",
-    steps: [],
-    durationMs: 0,
-  };
-  const stateDir = resolveStateDir(params.env);
-  const prepared = await dependencies.prepare(
-    {
-      attemptId: params.attemptId,
-      ...(params.error ? { error: params.error } : {}),
-      result,
-      ...(result.after?.upstreamRef ? { target: result.after.upstreamRef } : {}),
-    },
-    { env: params.env, stateDir },
-  );
-  params.runtime.log("Sanitized update failure report preview:");
-  params.runtime.log(prepared.body);
-  const confirmed = await dependencies.prompts.confirmSubmission();
-  if (isCancel(confirmed) || !confirmed) {
-    params.runtime.log("Update failure report cancelled.");
-    return "handled";
-  }
-  const submitted = await dependencies.submit(prepared, prepared.previewDigest, {
-    env: params.env,
-    stateDir,
-  });
-  for (const line of renderSubmissionResult(submitted)) {
-    params.runtime.log(line);
-  }
-  return "handled";
 }

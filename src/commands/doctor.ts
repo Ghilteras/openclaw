@@ -207,6 +207,18 @@ async function maybeCreateSessionSqliteGithubIssue(
     }
     return;
   }
+  if (!("fallbackUrl" in created)) {
+    report.supportIssue.github = {
+      message: created.message,
+      status: "failed",
+    };
+    if (shouldLog) {
+      runtime.log(
+        `session-sqlite recover: GitHub issue creation can be retried: ${created.message}`,
+      );
+    }
+    return;
+  }
   report.supportIssue.github = {
     fallbackUrl: created.fallbackUrl,
     message: created.message,

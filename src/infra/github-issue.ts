@@ -13,6 +13,13 @@ export type GithubIssueCreateResult =
   | { ambiguous: true; message: string; ok: false }
   | {
       ambiguous?: false;
+      issueCreateStarted: false;
+      message: string;
+      ok: false;
+      retryable: true;
+    }
+  | {
+      ambiguous?: false;
       fallbackUrl: string;
       issueCreateStarted: false;
       message: string;
@@ -68,16 +75,16 @@ function buildPrefilledGithubIssueUrl(title: string, body: string): string {
 /** Builds the browser handoff used when the authenticated GitHub CLI is unavailable. */
 export function createPrefilledGithubIssueUrl(title: string, body: string): string {
   const boundedTitle = truncateUtf8Prefix(title, GITHUB_PREFILL_TITLE_MAX_BYTES);
-  const fullUrl = buildPrefilledGithubIssueUrl(boundedTitle, body);
-  if (
-    Buffer.byteLength(body, "utf8") <= GITHUB_PREFILL_BODY_MAX_BYTES &&
-    fullUrl.length <= GITHUB_PREFILL_URL_MAX_CHARS
-  ) {
-    return fullUrl;
+  const bodyBytes = Buffer.byteLength(body, "utf8");
+  if (bodyBytes <= GITHUB_PREFILL_BODY_MAX_BYTES) {
+    const fullUrl = buildPrefilledGithubIssueUrl(boundedTitle, body);
+    if (fullUrl.length <= GITHUB_PREFILL_URL_MAX_CHARS) {
+      return fullUrl;
+    }
   }
 
   let low = 0;
-  let high = Math.min(Buffer.byteLength(body, "utf8"), GITHUB_PREFILL_BODY_MAX_BYTES);
+  let high = Math.min(bodyBytes, GITHUB_PREFILL_BODY_MAX_BYTES);
   let boundedUrl = buildPrefilledGithubIssueUrl(boundedTitle, GITHUB_PREFILL_TRUNCATED_SUFFIX);
   while (low <= high) {
     const middle = Math.floor((low + high) / 2);
@@ -170,12 +177,18 @@ function resolveGithubIssueCreateResult(
     result.error && "code" in result.error && typeof result.error.code === "string"
       ? result.error.code
       : undefined;
-  const definitelyDidNotStart =
+  const definitelyUnstarted =
     result.started === false &&
-    (errorCode === "ENOENT" || errorCode === "EACCES" || errorCode === "EPERM");
-  return definitelyDidNotStart
-    ? { fallbackUrl: issue.url, issueCreateStarted: false, message: error, ok: false }
-    : { ambiguous: true, message: error, ok: false };
+    result.error !== undefined &&
+    (result.status === null || result.status < 0) &&
+    errorCode !== "ETIMEDOUT";
+  if (!definitelyUnstarted) {
+    return { ambiguous: true, message: error, ok: false };
+  }
+  if (errorCode === "ENOENT" || errorCode === "EACCES" || errorCode === "EPERM") {
+    return { fallbackUrl: issue.url, issueCreateStarted: false, message: error, ok: false };
+  }
+  return { issueCreateStarted: false, message: error, ok: false, retryable: true };
 }
 
 function testProcessBlockResult(): GithubCliResult {

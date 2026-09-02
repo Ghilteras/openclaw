@@ -69,6 +69,30 @@ describe("createGithubIssue", () => {
     expect(new URL(url).searchParams.get("body")).toContain("truncated for URL");
   });
 
+  it("does not URL-encode an oversized body before truncating it", () => {
+    const NativeURLSearchParams = URLSearchParams;
+    let largestEncodedBody = 0;
+    vi.stubGlobal(
+      "URLSearchParams",
+      class extends NativeURLSearchParams {
+        constructor(init?: ConstructorParameters<typeof NativeURLSearchParams>[0]) {
+          if (init && typeof init === "object" && !Array.isArray(init) && "body" in init) {
+            largestEncodedBody = Math.max(
+              largestEncodedBody,
+              Buffer.byteLength(String(init.body), "utf8"),
+            );
+          }
+          super(init);
+        }
+      },
+    );
+
+    const url = createPrefilledGithubIssueUrl("Update failed", "sensitive".repeat(1_000_000));
+
+    expect(url.length).toBeLessThanOrEqual(16_384);
+    expect(largestEncodedBody).toBeLessThan(7_000);
+  });
+
   it.each([
     ["VITEST", "true"],
     ["NODE_ENV", "test"],
@@ -554,6 +578,56 @@ describe("createGithubIssue", () => {
         afterSyncAuth(result),
       ),
     ).toMatchObject({ ambiguous: true, ok: false });
+  });
+
+  it("keeps an explicit unstarted resource failure retryable without a fallback URL", () => {
+    const resourceError = Object.assign(new Error("spawnSync gh EAGAIN"), { code: "EAGAIN" });
+    expect(
+      createGithubIssue(
+        {
+          body: "sanitized body",
+          title: "Update failed",
+          url: "https://github.com/openclaw/openclaw/issues/new?title=update",
+        },
+        afterSyncAuth({
+          error: resourceError,
+          status: null,
+          started: false,
+          stderr: Buffer.alloc(0),
+          stdout: Buffer.alloc(0),
+        }),
+      ),
+    ).toEqual({
+      issueCreateStarted: false,
+      message: "spawnSync gh EAGAIN",
+      ok: false,
+      retryable: true,
+    });
+  });
+
+  it("keeps an explicit async unstarted resource failure retryable without a fallback URL", async () => {
+    const resourceError = Object.assign(new Error("spawn gh EMFILE"), { code: "EMFILE" });
+    await expect(
+      createGithubIssueAsync(
+        {
+          body: "sanitized body",
+          title: "Update failed",
+          url: "https://github.com/openclaw/openclaw/issues/new?title=update",
+        },
+        afterAsyncAuth({
+          error: resourceError,
+          status: -24,
+          started: false,
+          stderr: Buffer.alloc(0),
+          stdout: Buffer.alloc(0),
+        }),
+      ),
+    ).resolves.toEqual({
+      issueCreateStarted: false,
+      message: "spawn gh EMFILE",
+      ok: false,
+      retryable: true,
+    });
   });
 
   it("bounds GitHub CLI issue creation and marks timeout as ambiguous", () => {

@@ -107,6 +107,12 @@ describe("update protocol schemas", () => {
         message: "GitHub issue submission may have completed; do not submit again.",
       }),
     ).toBe(true);
+    expect(
+      Value.Check(UpdateReportResultSchema, {
+        status: "retryable",
+        message: "No issue submission was started; retry this action later.",
+      }),
+    ).toBe(true);
   });
 
   it("accepts only closed, exact tracked Git targets for update.run", () => {

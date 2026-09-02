@@ -128,7 +128,8 @@ async function withTerminal(run: () => Promise<void>) {
 }
 
 beforeEach(() => {
-  runInteractiveUpdateFailureAction.mockClear();
+  runInteractiveUpdateFailureAction.mockReset();
+  runInteractiveUpdateFailureAction.mockResolvedValue("triage");
   vi.spyOn(defaultRuntime, "exit").mockImplementation(() => undefined);
   vi.spyOn(defaultRuntime, "log").mockImplementation(() => undefined);
   vi.spyOn(defaultRuntime, "error").mockImplementation(() => undefined);
@@ -290,6 +291,29 @@ describe("update failure triage boundary", () => {
     });
     await expect(fs.stat(target.env.OPENCLAW_STATE_DIR)).rejects.toMatchObject({ code: "ENOENT" });
     expect(defaultRuntime.exit).not.toHaveBeenCalled();
+  });
+
+  it("uses a new report identity for each distinct CLI update execution", async () => {
+    const target = await createInstalledTriage();
+    runInteractiveUpdateFailureAction.mockResolvedValue("handled");
+
+    await withTerminal(async () => {
+      for (let index = 0; index < 2; index += 1) {
+        await expect(
+          withUpdateFailureTriage({}, target, async () => {
+            throw new UpdateCommandFailure(failedUpdate);
+          }),
+        ).rejects.toMatchObject({ code: 1 });
+      }
+    });
+
+    const attemptIds = runInteractiveUpdateFailureAction.mock.calls.map(
+      ([params]) => params.attemptId,
+    );
+    expect(attemptIds).toHaveLength(2);
+    expect(attemptIds[0]).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(attemptIds[1]).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(attemptIds[0]).not.toBe(attemptIds[1]);
   });
 
   it.each([
