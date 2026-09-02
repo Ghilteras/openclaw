@@ -2246,7 +2246,6 @@ src/channels/plugins/meta-normalization.ts	1
 src/channels/plugins/package-state-probes.ts	2
 src/channels/plugins/read-only-command-defaults.ts	2
 src/channels/plugins/read-only.ts	6
-src/channels/plugins/registry-loaded.ts	1
 src/channels/plugins/registry.ts	1
 src/channels/plugins/session-thread-info-loaded.ts	1
 src/channels/plugins/setup-contract.ts	3

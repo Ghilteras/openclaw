@@ -47,14 +47,7 @@ function coerceLoadedChannelPlugin(
   if (!plugin || !id) {
     return null;
   }
-  if (!plugin.meta || typeof plugin.meta !== "object") {
-    // Loaded plugin metadata is optional at the runtime-state boundary, but
-    // channel sorting expects an object so normalize it once at read time.
-    plugin.meta = {};
-  }
-  // Active registry entries originate only from normalizeRegisteredChannelPlugin;
-  // this read boundary restores the full validated contract once after light storage.
-  return plugin as LoadedChannelPlugin;
+  return plugin;
 }
 
 function resolveChannelPlugins(registry?: ActivePluginChannelRegistry): ChannelPluginView {
