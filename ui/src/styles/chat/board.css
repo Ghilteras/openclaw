@@ -17,6 +17,7 @@
 }
 
 .chat-pane__face-switch .settings-segmented__btn {
+  gap: 5px;
   font-size: 11px;
   padding: 2px 9px;
   border-radius: var(--radius-full);
