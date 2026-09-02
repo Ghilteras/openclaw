@@ -438,7 +438,7 @@ async function runSkillExperienceReviewInner(
       cwd: workspaceDir,
     });
     const { listWritableWorkshopSkillSummaries } = await import("./workspace-skill-read.js");
-    const existingSkills = listWritableWorkshopSkillSummaries();
+    const existingSkills = listWritableWorkshopSkillSummaries({ config });
     const run = () =>
       runSkillWorkshopReview({
         reviewKind: "experience",
