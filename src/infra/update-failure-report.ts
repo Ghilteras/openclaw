@@ -11,6 +11,7 @@ import { VERSION } from "../version.js";
 import {
   createGithubIssueAsync,
   createPrefilledGithubIssueUrl,
+  type GithubIssueCreateAsyncHooks,
   type GithubIssueCreateResult,
   type SanitizedGithubIssue,
 } from "./github-issue.js";
@@ -495,6 +496,16 @@ function finalizeReceiptWithRetry(
   return false;
 }
 
+class UpdateReportPreCreateGuardError extends Error {
+  constructor(
+    message: string,
+    readonly reason: "authority" | "stale",
+  ) {
+    super(message);
+    this.name = "UpdateReportPreCreateGuardError";
+  }
+}
+
 /** Consumes one reviewed preview and invokes the shared GitHub issue creator at most once. */
 export async function submitUpdateFailureReport(
   prepared: PreparedUpdateFailureReport,
@@ -502,6 +513,7 @@ export async function submitUpdateFailureReport(
   options: {
     createIssue?: (
       issue: SanitizedGithubIssue,
+      hooks: GithubIssueCreateAsyncHooks,
     ) => GithubIssueCreateResult | Promise<GithubIssueCreateResult>;
     env?: NodeJS.ProcessEnv;
     finalizeReceipt?: typeof finalizeUpdateFailureReportReceipt;
@@ -617,7 +629,52 @@ export async function submitUpdateFailureReport(
     throw new Error("Update report was not saved by its reservation owner.");
   }
 
-  const created = await (options.createIssue ?? createGithubIssueAsync)(prepared);
+  const afterAuthPreflight = async () => {
+    if (options.hasCurrentAuthority && !options.hasCurrentAuthority()) {
+      throw new UpdateReportPreCreateGuardError(
+        "Update report submission requires a current authenticated client.",
+        "authority",
+      );
+    }
+    if (options.validateCurrentAttempt && !(await options.validateCurrentAttempt())) {
+      throw new UpdateReportPreCreateGuardError(
+        "This failed update attempt is stale or unavailable.",
+        "stale",
+      );
+    }
+    if (options.hasCurrentAuthority && !options.hasCurrentAuthority()) {
+      throw new UpdateReportPreCreateGuardError(
+        "Update report submission requires a current authenticated client.",
+        "authority",
+      );
+    }
+  };
+  const createIssue =
+    options.createIssue ??
+    ((issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) =>
+      createGithubIssueAsync(issue, undefined, hooks));
+  let created: GithubIssueCreateResult;
+  try {
+    created = await createIssue(prepared, { afterAuthPreflight });
+  } catch (error) {
+    if (!(error instanceof UpdateReportPreCreateGuardError)) {
+      throw error;
+    }
+    await discardSavedUpdateFailureReport(prepared, saved);
+    if (!releaseReceipt(prepared.attemptId, reservationId, stateEnv)) {
+      throw new Error("Cancelled update report reservation could not be released.", {
+        cause: error,
+      });
+    }
+    if (error.reason === "stale") {
+      return {
+        message: error.message,
+        savedReportPath: prepared.savedReportPath,
+        status: "stale",
+      };
+    }
+    throw error;
+  }
   if (created.ok) {
     const receipt: CreatedUpdateFailureReportRecovery = {
       reservationId,

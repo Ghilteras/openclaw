@@ -206,6 +206,74 @@ describe("update report live authority boundary", () => {
     { change: "shared-auth", closeReason: "gateway auth changed" },
     { change: "invalidated", closeReason: "client invalidated: device-token-revoked" },
   ] as const)(
+    "blocks issue creation when $change authority closes during GitHub auth preflight",
+    async (testCase) => {
+      let generation = "current";
+      const client = createOperatorWsClient({ connId: `report-preflight-${testCase.change}` });
+      if (testCase.change === "shared-auth") {
+        client.usesSharedGatewayAuth = true;
+        client.sharedGatewaySessionGeneration = generation;
+      }
+      const { harness, waitForNextHandler } = createReportHarness({
+        getGeneration: () => generation,
+      });
+      const previewDigest = await dispatchPreview({
+        client,
+        harness,
+        id: `preview-preflight-${testCase.change}`,
+      });
+      const enteredAuthPreflight = createDeferredCore();
+      const releaseAuthPreflight = createDeferredCore();
+      let issueCreateCalls = 0;
+      mocks.createGithubIssueAsync.mockImplementationOnce(
+        async (
+          _issue: unknown,
+          _runGh: unknown,
+          hooks: { afterAuthPreflight?: () => Promise<void> | void },
+        ) => {
+          enteredAuthPreflight.resolve();
+          await releaseAuthPreflight.promise;
+          await hooks.afterAuthPreflight?.();
+          issueCreateCalls += 1;
+          return {
+            ok: true,
+            url: "https://github.com/openclaw/openclaw/issues/999999",
+          };
+        },
+      );
+
+      const finished = waitForNextHandler();
+      await dispatchSubmit({
+        client,
+        harness,
+        id: `denied-preflight-${testCase.change}`,
+        previewDigest,
+      });
+      await enteredAuthPreflight.promise;
+      if (testCase.change === "shared-auth") {
+        generation = "rotated";
+      } else {
+        client.invalidated = true;
+        client.invalidatedReason = "device-token-revoked";
+      }
+      releaseAuthPreflight.resolve();
+      await finished;
+
+      expect(harness.close).toHaveBeenCalledWith(4001, testCase.closeReason);
+      expect(mocks.createGithubIssueAsync).toHaveBeenCalledOnce();
+      expect(issueCreateCalls).toBe(0);
+      expect(await countReportFiles()).toBe(0);
+      expect(countReportReceipts()).toBe(0);
+      expect(harness.send).not.toHaveBeenCalledWith(
+        expect.objectContaining({ id: `denied-preflight-${testCase.change}`, ok: true }),
+      );
+    },
+  );
+
+  it.each([
+    { change: "shared-auth", closeReason: "gateway auth changed" },
+    { change: "invalidated", closeReason: "client invalidated: device-token-revoked" },
+  ] as const)(
     "blocks receipt reservation and GitHub CLI transport after $change authority closes",
     async (testCase) => {
       let generation = "current";

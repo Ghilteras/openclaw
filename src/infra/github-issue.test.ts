@@ -286,6 +286,29 @@ describe("createGithubIssue", () => {
     );
   });
 
+  it("rechecks the caller guard after auth preflight and before issue creation", async () => {
+    const guardError = new Error("report authority expired");
+    const runGh = vi.fn().mockResolvedValueOnce(authSuccess);
+    const afterAuthPreflight = vi.fn(() => {
+      throw guardError;
+    });
+
+    await expect(
+      createGithubIssueAsync(
+        {
+          body: "sanitized body",
+          title: "Update failed",
+          url: "https://github.com/openclaw/openclaw/issues/new?title=update",
+        },
+        runGh,
+        { afterAuthPreflight },
+      ),
+    ).rejects.toBe(guardError);
+    expect(afterAuthPreflight).toHaveBeenCalledOnce();
+    expect(runGh).toHaveBeenCalledOnce();
+    expect(runGh).toHaveBeenCalledWith(authPreflightArgs, { input: "" });
+  });
+
   it.each([
     {
       label: "signal",

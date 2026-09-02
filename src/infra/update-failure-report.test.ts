@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import type { GithubIssueCreateAsyncHooks, SanitizedGithubIssue } from "./github-issue.js";
 import { finalizeUpdateFailureReportReceipt } from "./restart-sentinel.js";
 import { prepareUpdateFailureReport, submitUpdateFailureReport } from "./update-failure-report.js";
 import type { UpdateRunResult } from "./update-runner.js";
@@ -133,6 +134,98 @@ describe("update failure report", () => {
       url: "https://github.com/openclaw/openclaw/issues/123",
     });
     await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("cancels the reservation when authority closes after auth preflight", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-auth-preflight-authority", result: failedUpdate() },
+      { stateDir },
+    );
+    let authorityCurrent = true;
+    let issueCreateCalls = 0;
+    const createIssue = vi.fn(
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        authorityCurrent = false;
+        await hooks.afterAuthPreflight?.();
+        issueCreateCalls += 1;
+        return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/123" };
+      },
+    );
+
+    await expect(
+      submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue,
+        hasCurrentAuthority: () => authorityCurrent,
+        stateDir,
+        validateCurrentAttempt: () => true,
+      }),
+    ).rejects.toThrow("current authenticated client");
+    expect(issueCreateCalls).toBe(0);
+    await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    authorityCurrent = true;
+    const retryCreateIssue = vi.fn(
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        await hooks.afterAuthPreflight?.();
+        issueCreateCalls += 1;
+        return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/124" };
+      },
+    );
+    await expect(
+      submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue: retryCreateIssue,
+        hasCurrentAuthority: () => authorityCurrent,
+        stateDir,
+        validateCurrentAttempt: () => true,
+      }),
+    ).resolves.toMatchObject({ status: "created" });
+    expect(issueCreateCalls).toBe(1);
+  });
+
+  it("cancels the reservation when the canonical attempt changes after auth preflight", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-auth-preflight-stale", result: failedUpdate() },
+      { stateDir },
+    );
+    let currentAttempt = true;
+    let issueCreateCalls = 0;
+    const createIssue = vi.fn(
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        currentAttempt = false;
+        await hooks.afterAuthPreflight?.();
+        issueCreateCalls += 1;
+        return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/123" };
+      },
+    );
+
+    await expect(
+      submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue,
+        stateDir,
+        validateCurrentAttempt: () => currentAttempt,
+      }),
+    ).resolves.toMatchObject({ status: "stale" });
+    expect(issueCreateCalls).toBe(0);
+    await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    currentAttempt = true;
+    const retryCreateIssue = vi.fn(
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        await hooks.afterAuthPreflight?.();
+        issueCreateCalls += 1;
+        return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/124" };
+      },
+    );
+    await expect(
+      submitUpdateFailureReport(prepared, prepared.previewDigest, {
+        createIssue: retryCreateIssue,
+        stateDir,
+        validateCurrentAttempt: () => currentAttempt,
+      }),
+    ).resolves.toMatchObject({ status: "created" });
+    expect(issueCreateCalls).toBe(1);
   });
 
   it("does not let a pending-reservation loser delete the winner's fallback report", async () => {

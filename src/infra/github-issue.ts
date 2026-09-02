@@ -20,6 +20,10 @@ type GithubCliResult = Pick<SpawnSyncReturns<Buffer>, "error" | "status" | "stde
 };
 type RunGhAsync = (args: readonly string[], options: { input: string }) => Promise<GithubCliResult>;
 
+export type GithubIssueCreateAsyncHooks = {
+  afterAuthPreflight?: () => Promise<void> | void;
+};
+
 const GITHUB_ISSUE_CREATE_TIMEOUT_MS = 30_000;
 const GITHUB_PREFILL_BODY_MAX_BYTES = 6_000;
 const GITHUB_PREFILL_TITLE_MAX_BYTES = 512;
@@ -103,8 +107,10 @@ export function createGithubIssue(
 export async function createGithubIssueAsync(
   issue: SanitizedGithubIssue,
   runGh: RunGhAsync = defaultRunGhAsync,
+  hooks: GithubIssueCreateAsyncHooks = {},
 ): Promise<GithubIssueCreateResult> {
   const authResult = await runGh(GITHUB_AUTH_PREFLIGHT_ARGS, { input: "" });
+  await hooks.afterAuthPreflight?.();
   if (authResult.error || authResult.status !== 0) {
     return resolveGithubAuthPreflightFailure(issue, authResult);
   }
