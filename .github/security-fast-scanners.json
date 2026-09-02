@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "preCommitPackage": "pre-commit==4.6.2",
+  "zizmorConfigPath": ".github/zizmor.yml",
+  "config": {
+    "minimum_pre_commit_version": "0",
+    "default_install_hook_types": ["pre-commit"],
+    "default_language_version": {},
+    "default_stages": [
+      "commit-msg",
+      "post-checkout",
+      "post-commit",
+      "post-merge",
+      "post-rewrite",
+      "pre-commit",
+      "pre-merge-commit",
+      "pre-push",
+      "pre-rebase",
+      "prepare-commit-msg",
+      "manual"
+    ],
+    "files": "",
+    "exclude": "^$",
+    "fail_fast": false
+  },
+  "scanners": [
+    {
+      "package": "pre-commit-hooks==6.0.0",
+      "source": {
+        "repository": "https://github.com/pre-commit/pre-commit-hooks",
+        "revision": "v6.0.0"
+      },
+      "hook": {
+        "id": "detect-private-key",
+        "name": "detect private key",
+        "entry": "detect-private-key",
+        "language": "python",
+        "alias": "",
+        "files": "",
+        "exclude": "(^|/)(\\.pre-commit-config\\.yaml$|apps/ios/fastlane/Fastfile$|.*\\.test\\.ts$)",
+        "types": ["text"],
+        "types_or": [],
+        "exclude_types": [],
+        "additional_dependencies": [],
+        "args": [],
+        "always_run": false,
+        "fail_fast": false,
+        "pass_filenames": true,
+        "description": "detects the presence of private keys.",
+        "language_version": "default",
+        "log_file": "",
+        "minimum_pre_commit_version": "0",
+        "require_serial": false,
+        "stages": [
+          "commit-msg",
+          "post-checkout",
+          "post-commit",
+          "post-merge",
+          "post-rewrite",
+          "pre-commit",
+          "pre-merge-commit",
+          "pre-push",
+          "pre-rebase",
+          "prepare-commit-msg",
+          "manual"
+        ],
+        "verbose": false
+      }
+    },
+    {
+      "package": "zizmor==1.29.0",
+      "source": {
+        "repository": "https://github.com/zizmorcore/zizmor-pre-commit",
+        "revision": "451b56af716f9f0d0c2b816503a3fd0cf8b036fa"
+      },
+      "hook": {
+        "id": "zizmor",
+        "name": "zizmor",
+        "entry": "zizmor",
+        "language": "python",
+        "alias": "",
+        "files": "(\\.github/(workflows/.*|dependabot.ya?ml))|(action\\.ya?ml)$",
+        "exclude": "^(vendor/|apps/swabble/)",
+        "types": ["yaml"],
+        "types_or": [],
+        "exclude_types": [],
+        "additional_dependencies": [],
+        "args": [
+          "--config",
+          ".github/zizmor.yml",
+          "--persona=regular",
+          "--min-severity=medium",
+          "--min-confidence=medium"
+        ],
+        "always_run": false,
+        "fail_fast": false,
+        "pass_filenames": true,
+        "description": "Find security issues in GitHub Actions CI/CD setups",
+        "language_version": "default",
+        "log_file": "",
+        "minimum_pre_commit_version": "0",
+        "require_serial": true,
+        "stages": [
+          "commit-msg",
+          "post-checkout",
+          "post-commit",
+          "post-merge",
+          "post-rewrite",
+          "pre-commit",
+          "pre-merge-commit",
+          "pre-push",
+          "pre-rebase",
+          "prepare-commit-msg",
+          "manual"
+        ],
+        "verbose": false
+      }
+    }
+  ]
+}

@@ -2184,6 +2184,8 @@ const pluginSdkEntryOwners = [
 // unambiguous scripts and direct imports without a second inventory.
 const EXACT_TOOLING_TARGETS = new Map<string, string[]>([
   [".github/workflows/ci.yml", ["ci-platform-checkout", "ci-linux-git", "ci-git-owner"]],
+  [".github/security-fast-scanners.json", ["ci-security-fast-scanner-contract"]],
+  [".github/actions/security-fast-scanners/compile.py", ["ci-security-fast-scanner-contract"]],
   [".github/workflows/docs-sync-publish.yml", ["docs-sync-publish"]],
   [".github/workflows/docs-agent.yml", ["docs-agent-workflow"]],
   ["scripts/generate-ci-git-owner.mts", ["ci-git-owner"]],

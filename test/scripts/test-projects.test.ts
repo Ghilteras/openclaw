@@ -885,6 +885,13 @@ describe("scripts/test-projects changed-target routing", () => {
     );
   });
 
+  it.each([
+    ".github/security-fast-scanners.json",
+    ".github/actions/security-fast-scanners/compile.py",
+  ])("keeps security-fast scanner contract edits on their boundary test", (changedPath) => {
+    expectChangedTargets([changedPath], ["test/scripts/ci-security-fast-scanner-contract.test.ts"]);
+  });
+
   it("keeps full release validation workflow edits on FRV contract tests", () => {
     expectChangedTargets(
       [".github/workflows/full-release-validation.yml"],
