@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { CronStoredJob } from "../../cron/types.js";
 import { createOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createTrackedTempDirs } from "../../test-utils/tracked-temp-dirs.js";
@@ -20,7 +21,7 @@ describe("skill collection review boundary", () => {
     });
     const workspaceDir = await tempDirs.make("openclaw-skill-collection-review-workspace-");
     const skillsRoot = resolveWorkshopSkillsDir(testState.env);
-    const config = {
+    const config: OpenClawConfig = {
       skills: { workshop: { autonomous: { mode: "auto" } } },
     };
     const job = {

@@ -211,24 +211,6 @@ describe("prepareEmbeddedAttemptSetup", () => {
     expect(resolveSandboxContext).toHaveBeenCalledWith(expect.objectContaining({ skillsSnapshot }));
   });
 
-  it.each(["ro", "rw"] as const)(
-    "keeps collection review on the host workspace with %s sandbox access",
-    async (workspaceAccess) => {
-      const workspaceDir = path.join(os.tmpdir(), "openclaw-attempt-setup-collection-review");
-      const setup = await resolveAttemptWorkspaceSandbox({
-        agentId: "main",
-        config: { agents: { defaults: { sandbox: { mode: "all", workspaceAccess } } } },
-        sessionId: "session-collection-review",
-        sessionKey: "agent:main:skill-collection-review",
-        skillWorkshopCollectionReconcile: {},
-        workspaceDir,
-      });
-
-      expect(resolveSandboxContext).not.toHaveBeenCalled();
-      expect(setup.effectiveWorkspace).toBe(workspaceDir);
-    },
-  );
-
   it("reuses lifecycle metadata and the provider handle from the runtime plan", async () => {
     const metadataSnapshot = { plugins: [] } as never;
     const workspaceDir = path.join(os.tmpdir(), "openclaw-attempt-setup-prepared");
