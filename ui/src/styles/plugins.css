@@ -1239,6 +1239,78 @@ h3.plugins-subheader {
   justify-content: flex-end;
 }
 
+/* ---------- plugin settings ---------- */
+
+.plugins-settings-title {
+  margin: 0;
+  font: inherit;
+}
+
+.plugins-settings-tabs {
+  margin-bottom: var(--space-5);
+}
+
+.plugins-settings-search {
+  position: relative;
+  display: block;
+  margin-bottom: var(--space-5);
+}
+
+.plugins-settings-search > span[aria-hidden="true"] {
+  position: absolute;
+  top: 50%;
+  left: var(--space-3);
+  display: inline-flex;
+  width: 16px;
+  color: var(--muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.plugins-settings-search > span[aria-hidden="true"] svg {
+  width: 16px;
+  height: 16px;
+}
+
+.plugins-settings-search .settings-input {
+  width: 100%;
+  padding-left: calc(var(--space-3) + 24px);
+}
+
+.plugins-settings-row__link {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.plugins-settings-back {
+  margin-bottom: var(--space-4);
+}
+
+.plugins-settings-advanced-access {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.plugins-settings-advanced-access summary {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.plugins-settings-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.plugins-settings-advanced-access[open] summary {
+  margin-bottom: var(--space-3);
+}
+
 /* ---------- responsive ---------- */
 
 @media (max-width: 560px) {

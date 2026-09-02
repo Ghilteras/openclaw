@@ -1,0 +1,594 @@
+import { html, nothing, type TemplateResult } from "lit";
+import { repeat } from "lit/directives/repeat.js";
+import type { ConfigUiHints } from "../../api/types.ts";
+import { renderNode } from "../../components/config-form.ts";
+import { renderHubTabs } from "../../components/hub-tabs.ts";
+import { icons } from "../../components/icons.ts";
+import { renderReasonedDisabledControl } from "../../components/reasoned-disabled-control.ts";
+import {
+  renderSettingsEmpty,
+  renderSettingsLoadingSkeleton,
+  renderSettingsPage,
+  renderSettingsPageHeader,
+  renderSettingsRow,
+  renderSettingsSection,
+  renderSettingsStatus,
+  renderSettingsToggle,
+} from "../../components/settings-ui.ts";
+import { t } from "../../i18n/index.ts";
+import type { JsonSchema } from "../../lib/config-form-utils.ts";
+import { formatUiExternalText } from "../../lib/format-error.ts";
+import type {
+  PluginCatalogItem,
+  PluginListResult,
+  PluginsInspectResult,
+} from "../../lib/plugins/index.ts";
+import {
+  pluginOriginLabel,
+  renderArtTile,
+  renderPluginDeclaredCapabilities,
+  renderPluginGrants,
+} from "./consent-dialog.ts";
+import { pluginRowKey, type PluginRowMessage } from "./plugin-row-message.ts";
+import { pluginEntryValue } from "./settings-model.ts";
+
+export type PluginSettingsTab = "installed" | "advanced";
+
+type SharedProps = {
+  connected: boolean;
+  loading: boolean;
+  result: PluginListResult | null;
+  error: string | null;
+  busy: Readonly<Record<string, boolean>>;
+  messages: Readonly<Record<string, PluginRowMessage>>;
+  pageNotice: PluginRowMessage | null;
+  iconUrls: Readonly<Record<string, string>>;
+  canMutate: boolean;
+  mutationBlockedReason: string | null;
+  configBusy: boolean;
+  configSchemaLoading: boolean;
+  configDirty: boolean;
+  configError: string | null;
+  canEditConfig: boolean;
+  configBlockedReason: string | null;
+  configValue: Record<string, unknown> | null;
+  configHints: ConfigUiHints;
+  configUnsupportedPaths: readonly string[];
+  onIconError: (pluginId: string) => void;
+  onSetEnabled: (pluginId: string, enabled: boolean, rowKey: string) => void;
+  onUninstall: (pluginId: string, rowKey: string) => void;
+  onConfigPatch: (path: Array<string | number>, value: unknown) => void;
+  onConfigRemove: (path: Array<string | number>) => void;
+  onConfigSave: () => void;
+  onConfigReload: () => void;
+  onRefresh: () => void;
+};
+
+type InventoryProps = SharedProps & {
+  tab: PluginSettingsTab;
+  query: string;
+  advancedSchema: JsonSchema | null;
+  onTabChange: (tab: PluginSettingsTab) => void;
+  onQueryChange: (query: string) => void;
+  onOpenPlugin: (pluginId: string) => void;
+};
+
+type DetailProps = SharedProps & {
+  pluginId: string;
+  inspection: PluginsInspectResult | null;
+  inspectionError: string | null;
+  configSchema: JsonSchema | null;
+  backHref: string;
+  onBack: () => void;
+  onRetryInspection: () => void;
+};
+
+function stateLabel(plugin: PluginCatalogItem): string {
+  switch (plugin.state) {
+    case "enabled":
+      return t("pluginsPage.enabled");
+    case "disabled":
+      return t("pluginsPage.disabled");
+    case "needs-setup":
+      return t("pluginsPage.setupRequired");
+    case "error":
+      return t("pluginsPage.needsAttention");
+    case "not-installed":
+      return t("pluginsPage.available");
+  }
+  return plugin.state;
+}
+
+function stateKind(plugin: PluginCatalogItem): "ok" | "warn" | "danger" | "muted" {
+  if (plugin.state === "enabled") {
+    return "ok";
+  }
+  if (plugin.state === "needs-setup") {
+    return "warn";
+  }
+  return plugin.state === "error" ? "danger" : "muted";
+}
+
+function matchesQuery(plugin: PluginCatalogItem, query: string): boolean {
+  const needle = query.trim().toLocaleLowerCase();
+  return (
+    !needle ||
+    [plugin.name, plugin.id, plugin.description, plugin.packageName].some((value) =>
+      value?.toLocaleLowerCase().includes(needle),
+    )
+  );
+}
+
+function renderMessage(message: PluginRowMessage | undefined) {
+  if (!message) {
+    return nothing;
+  }
+  return html`<div
+    class="plugins-row-message plugins-row-message--${message.kind}"
+    role=${message.kind === "error" ? "alert" : "status"}
+  >
+    ${message.text}
+  </div>`;
+}
+
+function renderRetryError(error: string, onRetry: () => void): TemplateResult {
+  return html`<div class="callout danger plugins-settings-error" role="alert">
+    <span>${error}</span>
+    <button type="button" class="btn btn--sm" @click=${onRetry}>
+      ${t("pluginsPage.tryAgain")}
+    </button>
+  </div>`;
+}
+
+function renderConfigActions(props: SharedProps) {
+  const button = html`<button
+    type="button"
+    class="btn primary"
+    ?disabled=${!props.configBlockedReason &&
+    (!props.canEditConfig || props.configBusy || !props.configDirty)}
+    aria-disabled=${!props.canEditConfig ? "true" : nothing}
+    @click=${() => {
+      if (props.canEditConfig && !props.configBusy && props.configDirty) {
+        props.onConfigSave();
+      }
+    }}
+  >
+    ${props.configBusy ? t("common.saving") : t("pluginsPage.saveConfiguration")}
+  </button>`;
+  return html`<div class="settings-row__control">
+    ${renderReasonedDisabledControl(props.configBlockedReason, button)}
+    <button
+      type="button"
+      class="btn"
+      ?disabled=${props.configBusy || props.configSchemaLoading}
+      @click=${props.onConfigReload}
+    >
+      ${t("common.reload")}
+    </button>
+  </div>`;
+}
+
+function renderSettingsTabs(props: InventoryProps): TemplateResult {
+  return renderHubTabs({
+    id: "plugin-settings",
+    active: props.tab,
+    tabs: [
+      { value: "installed", label: t("pluginsPage.settingsInstalled") },
+      { value: "advanced", label: t("pluginsPage.advanced") },
+    ],
+    ariaLabel: t("pluginsPage.settingsTabs"),
+    panelId: "plugin-settings-panel",
+    variant: "sub",
+    className: "plugins-settings-tabs",
+    onSelect: props.onTabChange,
+  });
+}
+
+function renderInstalledInventory(props: InventoryProps): TemplateResult {
+  if (!props.connected) {
+    return renderSettingsEmpty(t("pluginsPage.connectToManage"));
+  }
+  if (props.loading) {
+    return renderSettingsLoadingSkeleton({ rows: 4 });
+  }
+  if (props.error) {
+    return renderRetryError(props.error, props.onRefresh);
+  }
+  const plugins = (props.result?.plugins ?? [])
+    .filter((plugin) => plugin.installed && matchesQuery(plugin, props.query))
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+  if (plugins.length === 0) {
+    return renderSettingsEmpty(
+      props.query ? t("pluginsPage.noSettingsMatches") : t("pluginsPage.noInstalled"),
+    );
+  }
+  return html`${repeat(
+    plugins,
+    (plugin) => plugin.id,
+    (plugin) => {
+      const key = pluginRowKey(plugin.id);
+      const busy = Boolean(props.busy[key]);
+      const toggle = renderSettingsToggle({
+        checked: plugin.enabled,
+        disabled: !props.mutationBlockedReason && (!props.canMutate || busy),
+        ariaDisabled: !props.canMutate,
+        ariaLabel: t("pluginsPage.toggleNamed", { name: plugin.name }),
+        onChange: (enabled) => {
+          if (!props.canMutate || busy) {
+            return false;
+          }
+          props.onSetEnabled(plugin.id, enabled, key);
+          return true;
+        },
+      });
+      return html`
+        <article
+          class="settings-row settings-row--nav plugins-settings-row"
+          data-plugin-id=${plugin.id}
+          @click=${(event: Event) => {
+            const target = event.target;
+            if (!(target instanceof Element) || !target.closest("wa-switch, button, a")) {
+              props.onOpenPlugin(plugin.id);
+            }
+          }}
+        >
+          ${renderArtTile(plugin.id, plugin.name, props.iconUrls[plugin.id], () =>
+            props.onIconError(plugin.id),
+          )}
+          <button
+            type="button"
+            class="settings-row__text plugins-settings-row__link"
+            @click=${() => props.onOpenPlugin(plugin.id)}
+          >
+            <span class="settings-row__title">${plugin.name}</span>
+            <span class="settings-row__desc"
+              >${plugin.description || t("pluginsPage.optionalCapability")}</span
+            >
+          </button>
+          <div class="settings-row__control">
+            ${renderSettingsStatus({ kind: stateKind(plugin), label: stateLabel(plugin) })}
+            ${renderReasonedDisabledControl(props.mutationBlockedReason, toggle)}
+            <span class="settings-row__chevron" aria-hidden="true">${icons.chevronRight}</span>
+          </div>
+          ${renderMessage(props.messages[key])}
+        </article>
+      `;
+    },
+  )}`;
+}
+
+function renderAdvanced(props: InventoryProps): TemplateResult {
+  if (!props.connected) {
+    return renderSettingsEmpty(t("pluginsPage.connectToManage"));
+  }
+  if (!props.advancedSchema || !props.configValue) {
+    return props.configError
+      ? renderRetryError(props.configError, props.onConfigReload)
+      : props.configSchemaLoading || !props.configValue
+        ? renderSettingsLoadingSkeleton({ rows: 4 })
+        : renderSettingsEmpty(t("pluginsPage.schemaUnavailable"));
+  }
+  return html`
+    ${renderNode({
+      schema: props.advancedSchema,
+      value: props.configValue.plugins ?? {},
+      path: ["plugins"],
+      hints: props.configHints,
+      unsupported: new Set(props.configUnsupportedPaths),
+      disabled: !props.canEditConfig || props.configBusy,
+      showLabel: false,
+      onPatch: props.onConfigPatch,
+      onRemove: props.onConfigRemove,
+    })}
+    ${props.configError ? renderRetryError(props.configError, props.onConfigReload) : nothing}
+  `;
+}
+
+export function renderPluginSettingsInventory(props: InventoryProps): TemplateResult {
+  const body =
+    props.tab === "installed"
+      ? html`
+          <label class="plugins-settings-search">
+            <span class="settings-control__sr-label">${t("pluginsPage.searchInstalled")}</span>
+            <span aria-hidden="true">${icons.search}</span>
+            <input
+              class="settings-input"
+              type="search"
+              aria-label=${t("pluginsPage.searchInstalled")}
+              placeholder=${t("pluginsPage.searchInstalled")}
+              .value=${props.query}
+              @input=${(event: Event) => {
+                // SAFETY: Lit attaches this handler directly to the input declared above.
+                props.onQueryChange((event.currentTarget as HTMLInputElement).value);
+              }}
+            />
+          </label>
+          ${renderSettingsSection(
+            {
+              title: t("pluginsPage.settingsInstalled"),
+              description: t("pluginsPage.settingsInstalledDescription"),
+              count: (props.result?.plugins ?? []).filter((plugin) => plugin.installed).length,
+            },
+            renderInstalledInventory(props),
+          )}
+        `
+      : html`<div id="plugin-settings-advanced">
+          ${renderSettingsSection(
+            {
+              title: t("pluginsPage.advanced"),
+              description: t("pluginsPage.advancedDescription"),
+              actions: renderConfigActions(props),
+            },
+            renderAdvanced(props),
+          )}
+        </div>`;
+  return renderSettingsPage(html`
+    ${renderSettingsPageHeader({
+      title: html`<h1 class="plugins-settings-title">${t("tabs.plugins")}</h1>`,
+      subtitle: t("pluginsPage.settingsDescription"),
+    })}
+    ${props.pageNotice ? renderMessage(props.pageNotice) : nothing}
+    ${props.configBlockedReason
+      ? html`<div class="callout info">${props.configBlockedReason}</div>`
+      : nothing}
+    ${renderSettingsTabs(props)}
+    <wa-tab-panel
+      id="plugin-settings-panel"
+      name=${props.tab}
+      active
+      aria-labelledby=${`plugin-settings-tab-${props.tab}`}
+    >
+      ${body}
+    </wa-tab-panel>
+  `);
+}
+
+function renderConfiguration(props: DetailProps, plugin: PluginCatalogItem): TemplateResult {
+  if (!props.configValue || !props.configSchema) {
+    if (props.configError) {
+      return renderRetryError(props.configError, props.onConfigReload);
+    }
+    return props.configSchemaLoading || !props.configValue
+      ? renderSettingsLoadingSkeleton({ rows: 3 })
+      : renderSettingsEmpty(t("pluginsPage.noConfigurableSettings"));
+  }
+  const pluginEntry = pluginEntryValue(props.configValue, plugin.id);
+  return html`
+    ${renderNode({
+      schema: props.configSchema,
+      value: pluginEntry.config ?? {},
+      path: ["plugins", "entries", plugin.id, "config"],
+      hints: props.configHints,
+      unsupported: new Set(props.configUnsupportedPaths),
+      disabled: !props.canEditConfig || props.configBusy,
+      showLabel: false,
+      onPatch: props.onConfigPatch,
+      onRemove: props.onConfigRemove,
+    })}
+    ${props.configError ? renderRetryError(props.configError, props.onConfigReload) : nothing}
+  `;
+}
+
+function renderAccess(props: DetailProps): TemplateResult {
+  if (props.inspectionError) {
+    return renderRetryError(props.inspectionError, props.onRetryInspection);
+  }
+  if (!props.inspection) {
+    return renderSettingsLoadingSkeleton({ rows: 3 });
+  }
+  const grants = props.inspection.grants;
+  const modelOverride = Boolean(
+    grants.llm?.allowModelOverride ||
+    grants.llm?.allowAuthProfileOverride ||
+    grants.llm?.allowAgentIdOverride ||
+    grants.subagent?.allowModelOverride,
+  );
+  return html`
+    ${renderSettingsRow({
+      title: t("pluginsPage.promptContextAccess"),
+      description: t("pluginsPage.promptContextAccessDescription"),
+      control: renderSettingsStatus({
+        kind: grants.hooks.allowPromptInjection.effective ? "warn" : "muted",
+        label: grants.hooks.allowPromptInjection.effective
+          ? t("pluginsPage.accessAllowed")
+          : t("pluginsPage.accessBlocked"),
+      }),
+    })}
+    ${renderSettingsRow({
+      title: t("pluginsPage.conversationAccess"),
+      description: t("pluginsPage.conversationAccessDescription"),
+      control: renderSettingsStatus({
+        kind: grants.hooks.allowConversationAccess.effective ? "warn" : "muted",
+        label: grants.hooks.allowConversationAccess.effective
+          ? t("pluginsPage.accessAllowed")
+          : t("pluginsPage.accessBlocked"),
+      }),
+    })}
+    ${renderSettingsRow({
+      title: t("pluginsPage.modelOverrideAccess"),
+      description: t("pluginsPage.modelOverrideAccessDescription"),
+      control: renderSettingsStatus({
+        kind: modelOverride ? "warn" : "muted",
+        label: modelOverride ? t("pluginsPage.accessAllowed") : t("pluginsPage.accessBlocked"),
+      }),
+    })}
+    <details class="plugins-settings-advanced-access">
+      <summary>${t("pluginsPage.advanced")}</summary>
+      ${renderPluginDeclaredCapabilities(props.inspection.declared)}
+      ${renderPluginGrants(props.inspection.grants, props.inspection.plugin.origin)}
+    </details>
+  `;
+}
+
+function renderLifecycle(props: DetailProps, plugin: PluginCatalogItem): TemplateResult {
+  const key = pluginRowKey(plugin.id);
+  const source = props.inspection?.source;
+  const trust = props.inspection?.trust;
+  const rows = html`
+    ${renderSettingsRow({
+      title: t("pluginsPage.detailPluginId"),
+      control: html`<code>${plugin.id}</code>`,
+    })}
+    ${plugin.version
+      ? renderSettingsRow({
+          title: t("pluginsPage.version"),
+          control: html`<span>${`v${plugin.version}`}</span>`,
+        })
+      : nothing}
+    ${plugin.packageName
+      ? renderSettingsRow({
+          title: t("pluginsPage.detailPackage"),
+          control: html`<code>${plugin.packageName}</code>`,
+        })
+      : nothing}
+    ${plugin.origin
+      ? renderSettingsRow({
+          title: t("pluginsPage.detailOrigin"),
+          control: html`<span>${pluginOriginLabel(plugin.origin)}</span>`,
+        })
+      : nothing}
+    ${source
+      ? renderSettingsRow({
+          title: t("pluginsPage.installedSource"),
+          control: html`<span>${source.spec ?? source.packageName ?? source.kind}</span>`,
+        })
+      : nothing}
+    ${source?.integrity
+      ? renderSettingsRow({
+          title: t("pluginsPage.integrity"),
+          control: html`<code title=${source.integrity}>${source.integrity.slice(0, 20)}…</code>`,
+        })
+      : nothing}
+    ${trust
+      ? renderSettingsRow({
+          title: t("pluginsPage.trustStatus"),
+          control: html`<span>${trust.disposition}</span>`,
+        })
+      : nothing}
+    ${plugin.removable
+      ? renderSettingsRow({
+          title: t("pluginsPage.uninstall"),
+          description: t("pluginsPage.uninstallDescription"),
+          control: renderReasonedDisabledControl(
+            props.mutationBlockedReason,
+            html`<button
+              type="button"
+              class="btn danger"
+              ?disabled=${!props.mutationBlockedReason &&
+              (!props.canMutate || Boolean(props.busy[key]))}
+              aria-disabled=${!props.canMutate ? "true" : nothing}
+              aria-label=${t("pluginsPage.uninstallNamed", { name: plugin.name })}
+              @click=${() => {
+                if (props.canMutate && !props.busy[key]) {
+                  props.onUninstall(plugin.id, key);
+                }
+              }}
+            >
+              ${t("pluginsPage.uninstall")}
+            </button>`,
+          ),
+        })
+      : renderSettingsRow({
+          title: t("pluginsPage.uninstall"),
+          description: t("pluginsPage.managedCannotUninstall"),
+        })}
+  `;
+  return rows;
+}
+
+export function renderPluginSettingsDetail(props: DetailProps): TemplateResult {
+  const plugin = props.result?.plugins.find((entry) => entry.id === props.pluginId);
+  if (!props.connected) {
+    return renderSettingsPage(renderSettingsEmpty(t("pluginsPage.connectToManage")));
+  }
+  if (props.error && !props.result) {
+    return renderSettingsPage(renderRetryError(props.error, props.onRefresh));
+  }
+  if (props.loading || !props.result) {
+    return renderSettingsPage(renderSettingsLoadingSkeleton({ rows: 5 }));
+  }
+  if (!plugin?.installed) {
+    return renderSettingsPage(html`
+      <a
+        class="btn btn--sm"
+        href=${props.backHref}
+        @click=${(event: Event) => {
+          event.preventDefault();
+          props.onBack();
+        }}
+      >
+        ${icons.chevronLeft} ${t("pluginsPage.backToPlugins")}
+      </a>
+      ${renderSettingsEmpty(t("pluginsPage.pluginNotFound"))}
+    `);
+  }
+  const key = pluginRowKey(plugin.id);
+  return renderSettingsPage(html`
+    <a
+      class="btn btn--sm plugins-settings-back"
+      href=${props.backHref}
+      @click=${(event: Event) => {
+        event.preventDefault();
+        props.onBack();
+      }}
+    >
+      ${icons.chevronLeft} ${t("pluginsPage.backToPlugins")}
+    </a>
+    ${renderSettingsPageHeader({
+      title: html`<h1 class="plugins-settings-title">${plugin.name}</h1>`,
+      subtitle: plugin.description || plugin.id,
+      actions: html`
+        ${renderSettingsStatus({ kind: stateKind(plugin), label: stateLabel(plugin) })}
+        ${renderReasonedDisabledControl(
+          props.mutationBlockedReason,
+          renderSettingsToggle({
+            checked: plugin.enabled,
+            disabled:
+              !props.mutationBlockedReason && (!props.canMutate || Boolean(props.busy[key])),
+            ariaDisabled: !props.canMutate,
+            ariaLabel: t("pluginsPage.toggleNamed", { name: plugin.name }),
+            onChange: (enabled) => {
+              if (!props.canMutate || props.busy[key]) {
+                return false;
+              }
+              props.onSetEnabled(plugin.id, enabled, key);
+              return true;
+            },
+          }),
+        )}
+      `,
+    })}
+    ${props.pageNotice ? renderMessage(props.pageNotice) : nothing}
+    ${props.error ? renderRetryError(props.error, props.onRefresh) : nothing}
+    ${plugin.error
+      ? html`<div class="callout danger" role="alert">${formatUiExternalText(plugin.error)}</div>`
+      : nothing}
+    ${props.configBlockedReason
+      ? html`<div class="callout info">${props.configBlockedReason}</div>`
+      : nothing}
+    ${renderMessage(props.messages[key])}
+    ${renderSettingsSection(
+      {
+        title: t("pluginsPage.configuration"),
+        description: t("pluginsPage.configurationDescription"),
+        actions: renderConfigActions(props),
+      },
+      html`${plugin.state === "needs-setup"
+        ? html`<div class="callout warning" role="status">
+            ${t("pluginsPage.setupRequiredDescription")}
+          </div>`
+        : nothing}${renderConfiguration(props, plugin)}`,
+    )}
+    ${renderSettingsSection(
+      {
+        title: t("pluginsPage.accessCapabilities"),
+        description: t("pluginsPage.accessCapabilitiesDescription"),
+      },
+      renderAccess(props),
+    )}
+    ${renderSettingsSection(
+      { title: t("pluginsPage.lifecycle"), description: t("pluginsPage.lifecycleDescription") },
+      renderLifecycle(props, plugin),
+    )}
+  `);
+}
