@@ -20,7 +20,7 @@ import type { GatewayPostReadySidecarHandle } from "./server-startup-post-attach
 export type GatewayConfigReloaderHandle = {
   stop: () => Promise<void>;
   hotReloadStatus?: () => GatewayHotReloadStatus;
-  notifyPluginMetadataChanged: () => void;
+  applyPluginLifecycleChange: import("../plugins/lifecycle.js").PluginLifecycleRuntimeApply;
   isConfigReloadSettled: () => boolean;
 };
 
@@ -65,7 +65,9 @@ export function createGatewayServerMutableState(): GatewayServerMutableState {
     channelHealthMonitor: null as ChannelHealthMonitor | null,
     configReloader: {
       stop: async () => {},
-      notifyPluginMetadataChanged: () => {},
+      applyPluginLifecycleChange: async () => {
+        throw new Error("Plugin lifecycle is unavailable before Gateway startup completes.");
+      },
       isConfigReloadSettled: () => false,
     } satisfies GatewayConfigReloaderHandle,
     agentUnsub: null as (() => Promise<void> | void) | null,

@@ -4,17 +4,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { areBundledPluginsDisabled, resolveBundledPluginsDir } from "../plugins/bundled-dir.js";
 import { getPluginCacheRoot, getPluginCacheSource } from "../plugins/plugin-cache.js";
+import { getPluginInstance } from "../plugins/plugin-instance-scope.js";
 import { getCachedPluginSourceModuleLoader } from "../plugins/plugin-module-loader-cache.js";
+import { getPluginRegistryForContext } from "../plugins/runtime-state.js";
 import { resolveLoaderPackageRoot } from "../plugins/sdk-alias.js";
 import {
   loadBundledPluginPublicSurfaceModuleSyncCore as loadBundledPluginPublicSurfaceModuleSyncLight,
   loadFacadeModuleAtLocationSync,
   resetFacadeLoaderStateForTest,
+  resolveBundledPublicSurfaceLocation,
   type FacadeModuleLocation,
 } from "./facade-loader.js";
 import {
   createFacadeResolutionKey as createFacadeResolutionKeyShared,
-  resolveBundledFacadeModuleLocation,
+  resolveRuntimeFacadeModuleLocation,
   resolveRegistryPluginModuleLocationFromRecords,
 } from "./facade-resolution-shared.js";
 export {
@@ -58,13 +61,7 @@ function resolveFacadeModuleLocationUncached(params: {
 }): { modulePath: string; boundaryRoot: string } | null {
   const env = params.env ?? process.env;
   if (!areBundledPluginsDisabled(env)) {
-    const bundledPluginsDir = resolveBundledPluginsDir(env);
-    const bundledLocation = resolveBundledFacadeModuleLocation({
-      ...params,
-      currentModulePath: CURRENT_MODULE_PATH,
-      packageRoot: OPENCLAW_PACKAGE_ROOT,
-      bundledPluginsDir,
-    });
+    const bundledLocation = resolveBundledPublicSurfaceLocation(params);
     if (bundledLocation) {
       return bundledLocation;
     }
@@ -77,6 +74,10 @@ function resolveFacadeModuleLocation(params: {
   artifactBasename: string;
   env?: NodeJS.ProcessEnv;
 }): { modulePath: string; boundaryRoot: string } | null {
+  const runtime = resolveRuntimeFacadeModuleLocation(params);
+  if (runtime !== undefined) {
+    return runtime;
+  }
   // Custom environments may select different installed-plugin profiles, so
   // their facade locations must not enter the process-wide gateway cache.
   if (params.env !== undefined && params.env !== process.env) {
@@ -225,6 +226,11 @@ export function canLoadActivatedBundledPluginPublicSurface(params: {
   ).allowed;
 }
 
+function wrapActivatedSurface<T extends object>(pluginId: string | undefined, loaded: T): T {
+  const owner = getPluginRegistryForContext()?.plugins.find((entry) => entry.id === pluginId);
+  return owner ? (getPluginInstance(owner)?.wrap(loaded) ?? loaded) : loaded;
+}
+
 /** Load an activated plugin public surface or throw when activation policy blocks access. */
 // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Dynamic facade loaders use caller-supplied module surface types.
 export function loadActivatedBundledPluginPublicSurfaceModuleSync<T extends object>(params: {
@@ -232,10 +238,11 @@ export function loadActivatedBundledPluginPublicSurfaceModuleSync<T extends obje
   artifactBasename: string;
   env?: NodeJS.ProcessEnv;
 }): T {
-  loadFacadeActivationCheckRuntime().resolveActivatedBundledPluginPublicSurfaceAccessOrThrow(
-    buildFacadeActivationCheckParams(params),
-  );
-  return loadBundledPluginPublicSurfaceModuleSync<T>(params);
+  const access =
+    loadFacadeActivationCheckRuntime().resolveActivatedBundledPluginPublicSurfaceAccessOrThrow(
+      buildFacadeActivationCheckParams(params),
+    );
+  return wrapActivatedSurface(access.pluginId, loadBundledPluginPublicSurfaceModuleSync<T>(params));
 }
 
 /** Load an activated plugin public surface, returning null when activation policy blocks access. */
@@ -251,7 +258,7 @@ export function tryLoadActivatedBundledPluginPublicSurfaceModuleSync<T extends o
   if (!access.allowed) {
     return null;
   }
-  return loadBundledPluginPublicSurfaceModuleSync<T>(params);
+  return wrapActivatedSurface(access.pluginId, loadBundledPluginPublicSurfaceModuleSync<T>(params));
 }
 
 /** Async variant of tryLoadActivatedBundledPluginPublicSurfaceModuleSync for async call sites. */
@@ -267,7 +274,7 @@ export async function tryLoadActivatedBundledPluginPublicSurfaceModule<T extends
   if (!access.allowed) {
     return null;
   }
-  return loadBundledPluginPublicSurfaceModuleSync<T>(params);
+  return wrapActivatedSurface(access.pluginId, loadBundledPluginPublicSurfaceModuleSync<T>(params));
 }
 
 /** Reset facade runtime caches and activation-check test overrides. */

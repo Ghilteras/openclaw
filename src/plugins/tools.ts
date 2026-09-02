@@ -23,13 +23,8 @@ import {
 } from "./manifest-contract-eligibility.js";
 import type { PluginManifestRecord } from "./manifest-registry.js";
 import { hasManifestToolAvailability } from "./manifest-tool-availability.js";
-import { resolvePluginMetadataSnapshot } from "./plugin-metadata-snapshot.js";
 import type { PluginMetadataManifestView } from "./plugin-metadata-snapshot.types.js";
 import type { PluginRegistry, PluginToolRegistration } from "./registry-types.js";
-import {
-  withPluginRuntimePluginScope,
-  withPluginRuntimeRegistryScope,
-} from "./runtime/gateway-request-scope.js";
 import { buildPluginRuntimeLoadOptions } from "./runtime/load-context.js";
 import { resolvePluginRuntimeLoadContext } from "./runtime/load-context.resolve.js";
 import { findUndeclaredPluginToolNames } from "./tool-contracts.js";
@@ -37,14 +32,13 @@ import {
   buildPluginToolDescriptorCacheKey,
   capturePluginToolDescriptor,
   createPluginToolDescriptorConfigCacheKeyMemo,
-  pluginToolDescriptorCacheState,
   readCachedPluginToolDescriptors,
   type CachedPluginToolDescriptor,
   type PluginToolDescriptorConfigCacheKeyMemo,
   writeCachedPluginToolDescriptors,
 } from "./tool-descriptor-cache.js";
 import { createPluginToolAllowlist, type PluginToolAllowlist } from "./tool-grant-allowlist.js";
-import { copyPluginToolMeta, setPluginToolMeta } from "./tool-metadata.js";
+import { setPluginToolMeta } from "./tool-metadata.js";
 import type { OpenClawPluginToolContext } from "./types.js";
 
 type PluginToolFactoryTimingResult = "array" | "error" | "null" | "single";
@@ -65,141 +59,6 @@ const log = createSubsystemLogger("plugins/tools");
 const PLUGIN_TOOL_FACTORY_WARN_TOTAL_MS = 5_000;
 const PLUGIN_TOOL_FACTORY_WARN_FACTORY_MS = 1_000;
 const PLUGIN_TOOL_FACTORY_SUMMARY_LIMIT = 20;
-
-const scopedPluginTools = new WeakMap<AnyAgentTool, Map<string, AnyAgentTool>>();
-const pluginRegistryScopeIds = new WeakMap<PluginRegistry, number>();
-let nextPluginRegistryScopeId = 1;
-
-function pluginToolScopeKey(
-  entry: PluginToolRegistration,
-  pluginRegistry: PluginRegistry | undefined,
-): string {
-  let registryScopeId = 0;
-  if (pluginRegistry) {
-    registryScopeId = pluginRegistryScopeIds.get(pluginRegistry) ?? nextPluginRegistryScopeId++;
-    pluginRegistryScopeIds.set(pluginRegistry, registryScopeId);
-  }
-  return JSON.stringify([entry.pluginId, entry.source, registryScopeId]);
-}
-
-function runWithPluginToolScope<T>(
-  entry: PluginToolRegistration,
-  pluginRegistry: PluginRegistry | undefined,
-  run: () => T,
-): T {
-  return withPluginRuntimeRegistryScope(pluginRegistry, () =>
-    withPluginRuntimePluginScope(
-      {
-        pluginId: entry.pluginId,
-        ...(entry.source ? { pluginSource: entry.source } : {}),
-      },
-      run,
-    ),
-  );
-}
-
-function isAgentTool(value: unknown): value is AnyAgentTool {
-  return (
-    Boolean(value) &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    typeof (value as { execute?: unknown }).execute === "function"
-  );
-}
-
-function wrapPluginToolCallbacks(
-  entry: PluginToolRegistration,
-  pluginRegistry: PluginRegistry | undefined,
-  tool: AnyAgentTool,
-): AnyAgentTool {
-  const key = pluginToolScopeKey(entry, pluginRegistry);
-  const scopedByKey = scopedPluginTools.get(tool);
-  const cached = scopedByKey?.get(key);
-  if (cached) {
-    return cached;
-  }
-
-  const prepareArguments = tool.prepareArguments;
-  const scopedPrepareArguments = prepareArguments
-    ? (args: unknown) =>
-        runWithPluginToolScope(entry, pluginRegistry, () =>
-          Reflect.apply(prepareArguments, tool, [args]),
-        )
-    : undefined;
-  const scopedExecute = (
-    toolCallId: string,
-    params: unknown,
-    signal?: AbortSignal,
-    onUpdate?: unknown,
-  ) =>
-    runWithPluginToolScope(
-      entry,
-      pluginRegistry,
-      () =>
-        Reflect.apply(tool.execute, tool, [toolCallId, params, signal, onUpdate]) as ReturnType<
-          AnyAgentTool["execute"]
-        >,
-    );
-  const wrapped = new Proxy<AnyAgentTool>(tool, {
-    get(target, prop) {
-      if (prop === "prepareArguments" && scopedPrepareArguments) {
-        return scopedPrepareArguments;
-      }
-      if (prop === "execute") {
-        return scopedExecute;
-      }
-      return Reflect.get(target, prop, target);
-    },
-    getOwnPropertyDescriptor(target, prop) {
-      if (prop === "prepareArguments" && scopedPrepareArguments) {
-        return {
-          configurable: true,
-          enumerable: Object.prototype.propertyIsEnumerable.call(target, prop),
-          value: scopedPrepareArguments,
-          writable: true,
-        };
-      }
-      if (prop === "execute") {
-        return {
-          configurable: true,
-          enumerable: Object.prototype.propertyIsEnumerable.call(target, prop),
-          value: scopedExecute,
-          writable: true,
-        };
-      }
-      return Reflect.getOwnPropertyDescriptor(target, prop);
-    },
-  });
-
-  copyPluginToolMeta(tool, wrapped);
-  const nextScopedByKey = scopedByKey ?? new Map<string, AnyAgentTool>();
-  nextScopedByKey.set(key, wrapped);
-  scopedPluginTools.set(tool, nextScopedByKey);
-  return wrapped;
-}
-
-function wrapPluginToolFactoryResult(
-  entry: PluginToolRegistration,
-  pluginRegistry: PluginRegistry | undefined,
-  result: PluginToolFactoryResult,
-): PluginToolFactoryResult {
-  if (Array.isArray(result)) {
-    return result.map((tool) =>
-      isAgentTool(tool) ? wrapPluginToolCallbacks(entry, pluginRegistry, tool) : tool,
-    );
-  }
-  return isAgentTool(result) ? wrapPluginToolCallbacks(entry, pluginRegistry, result) : result;
-}
-
-function resolvePluginToolFactory(
-  entry: PluginToolRegistration,
-  pluginRegistry: PluginRegistry | undefined,
-  ctx: OpenClawPluginToolContext,
-) {
-  return runWithPluginToolScope(entry, pluginRegistry, () =>
-    wrapPluginToolFactoryResult(entry, pluginRegistry, entry.factory(ctx)),
-  );
-}
 
 function blocksHostRestrictedConversationReadTool(params: {
   pluginId: string;
@@ -356,30 +215,8 @@ function describePluginToolFactoryResult(
   return { result: "single", resultCount: 1 };
 }
 
-function createPluginToolFactoryTiming(params: {
-  pluginId: string;
-  names: string[];
-  durationMs: number;
-  elapsedMs: number;
-  resolved: PluginToolFactoryResult;
-  failed: boolean;
-  optional: boolean;
-}): PluginToolFactoryTiming {
-  const result = describePluginToolFactoryResult(params.resolved, params.failed);
-  return {
-    pluginId: params.pluginId,
-    names: params.names,
-    durationMs: params.durationMs,
-    elapsedMs: params.elapsedMs,
-    result: result.result,
-    resultCount: result.resultCount,
-    optional: params.optional,
-  };
-}
-
 function resolvePluginToolFactoryEntry(params: {
   entry: PluginToolRegistration;
-  pluginRegistry: PluginRegistry | undefined;
   ctx: OpenClawPluginToolContext;
   declaredNames: string[];
   factoryTimingStartedAt: number;
@@ -394,7 +231,7 @@ function resolvePluginToolFactoryEntry(params: {
   const factoryStartedAt = Date.now();
 
   try {
-    resolved = resolvePluginToolFactory(params.entry, params.pluginRegistry, params.ctx);
+    resolved = params.entry.factory(params.ctx);
   } catch (err) {
     failed = true;
     params.logError(`plugin tool failed (${params.entry.pluginId}): ${String(err)}`);
@@ -404,15 +241,14 @@ function resolvePluginToolFactoryEntry(params: {
   return {
     resolved,
     failed,
-    timing: createPluginToolFactoryTiming({
+    timing: {
       pluginId: params.entry.pluginId,
       names: params.declaredNames,
       durationMs: toElapsedMs(factoryEndedAt - factoryStartedAt),
       elapsedMs: toElapsedMs(factoryEndedAt - params.factoryTimingStartedAt),
-      resolved,
-      failed,
+      ...describePluginToolFactoryResult(resolved, failed),
       optional: params.entry.optional,
-    }),
+    },
   };
 }
 
@@ -619,37 +455,6 @@ function resolvePluginToolRuntimePluginIds(params: {
   return [...pluginIds].toSorted((left, right) => left.localeCompare(right));
 }
 
-function readPluginCacheSource(plugin: PluginManifestRecord): string {
-  const source = (plugin as { source?: unknown; manifestPath?: unknown }).source;
-  if (typeof source === "string" && source.trim()) {
-    return source;
-  }
-  const manifestPath = (plugin as { manifestPath?: unknown }).manifestPath;
-  if (typeof manifestPath === "string" && manifestPath.trim()) {
-    return manifestPath;
-  }
-  return plugin.id;
-}
-
-function buildPluginDescriptorCacheKey(params: {
-  plugin: PluginManifestRecord;
-  ctx: OpenClawPluginToolContext;
-  currentRuntimeConfig?: PluginLoadOptions["config"] | null;
-  configCacheKeyMemo?: PluginToolDescriptorConfigCacheKeyMemo;
-  clientCaps?: ReadonlySet<string>;
-}): string {
-  return buildPluginToolDescriptorCacheKey({
-    pluginId: params.plugin.id,
-    source: readPluginCacheSource(params.plugin),
-    rootDir: params.plugin.rootDir,
-    contractToolNames: params.plugin.contracts?.tools ?? [],
-    ctx: params.ctx,
-    currentRuntimeConfig: params.currentRuntimeConfig,
-    configCacheKeyMemo: params.configCacheKeyMemo,
-    clientCaps: params.clientCaps ? [...params.clientCaps] : undefined,
-  });
-}
-
 function cachedDescriptorsCoverToolNames(params: {
   descriptors: readonly CachedPluginToolDescriptor[];
   toolNames: readonly string[];
@@ -664,10 +469,8 @@ function createCachedDescriptorPluginTool(params: {
   descriptor: CachedPluginToolDescriptor;
   plugin: PluginManifestRecord;
   ctx: OpenClawPluginToolContext;
-  loadContext: ReturnType<typeof resolvePluginRuntimeLoadContext>;
-  runtimeOptions: PluginLoadOptions["runtimeOptions"];
 }): AnyAgentTool {
-  const { descriptor, displaySummary, hideFromChannelProgress } = params.descriptor;
+  const { descriptor, registry, displaySummary, hideFromChannelProgress } = params.descriptor;
   const pluginId = descriptor.owner.kind === "plugin" ? descriptor.owner.pluginId : "";
   const toolName = descriptor.name;
   const tool: AnyAgentTool = {
@@ -685,22 +488,8 @@ function createCachedDescriptorPluginTool(params: {
       ? { resultContentSource: params.descriptor.resultContentSource }
       : {}),
     async execute(toolCallId, executeParams, signal, onUpdate) {
-      const loadOptions = buildPluginRuntimeLoadOptions(params.loadContext, {
-        activate: false,
-        toolDiscovery: true,
-        onlyPluginIds: [pluginId],
-        ...(params.runtimeOptions ? { runtimeOptions: params.runtimeOptions } : {}),
-      });
-      const registry = resolvePluginToolRegistry({
-        loadOptions,
-        onlyPluginIds: [pluginId],
-        retainedRegistry: pluginToolDescriptorCacheState.runtimeRegistries.get(params.descriptor),
-        onRetainRegistry: (retainedRegistry) => {
-          pluginToolDescriptorCacheState.runtimeRegistries.set(params.descriptor, retainedRegistry);
-        },
-      });
-      const candidates = registry?.tools.filter((candidate) => candidate.pluginId === pluginId);
-      if (!candidates || candidates.length === 0) {
+      const candidates = registry.tools.filter((candidate) => candidate.pluginId === pluginId);
+      if (candidates.length === 0) {
         throw new Error(`plugin tool runtime unavailable (${pluginId}): ${toolName}`);
       }
       const requestedToolName = normalizeToolPolicyName(toolName);
@@ -718,21 +507,16 @@ function createCachedDescriptorPluginTool(params: {
       const resolveCandidateTool = (
         candidate: PluginToolRegistration,
       ): AnyAgentTool | undefined => {
-        const manifestPlugin = resolvePluginMetadataSnapshot({
-          config: params.loadContext.config,
-          workspaceDir: params.loadContext.workspaceDir,
-          env: params.loadContext.env,
-        }).byPluginId.get(pluginId);
         if (
           blocksHostRestrictedConversationReadRegistration({
             entry: candidate,
-            manifestPlugin,
+            manifestPlugin: params.plugin,
             ctx: params.ctx,
           })
         ) {
           return undefined;
         }
-        const resolved = resolvePluginToolFactory(candidate, registry, params.ctx);
+        const resolved = candidate.factory(params.ctx);
         const listRaw: unknown[] = Array.isArray(resolved) ? resolved : resolved ? [resolved] : [];
         for (const toolRaw of listRaw) {
           const malformedReason = describeMalformedPluginTool(toolRaw);
@@ -793,8 +577,6 @@ function resolveCachedPluginTools(params: {
   existingNormalized: Set<string>;
   pluginToolOwnersByName: Map<string, string>;
   ctx: OpenClawPluginToolContext;
-  loadContext: ReturnType<typeof resolvePluginRuntimeLoadContext>;
-  runtimeOptions: PluginLoadOptions["runtimeOptions"];
   currentRuntimeConfig?: PluginLoadOptions["config"] | null;
   configCacheKeyMemo: PluginToolDescriptorConfigCacheKeyMemo;
   clientCaps: ReadonlySet<string>;
@@ -848,7 +630,7 @@ function resolveCachedPluginTools(params: {
       continue;
     }
     const cached = readCachedPluginToolDescriptors(
-      buildPluginDescriptorCacheKey({
+      buildPluginToolDescriptorCacheKey({
         plugin,
         ctx: params.ctx,
         currentRuntimeConfig: params.currentRuntimeConfig,
@@ -917,8 +699,6 @@ function resolveCachedPluginTools(params: {
           descriptor: cachedDescriptor,
           plugin,
           ctx: params.ctx,
-          loadContext: params.loadContext,
-          runtimeOptions: params.runtimeOptions,
         }),
       );
     }
@@ -939,13 +719,8 @@ function resolveCachedPluginTools(params: {
 function resolvePluginToolRegistry(params: {
   loadOptions: PluginLoadOptions;
   onlyPluginIds?: readonly string[];
-  retainedRegistry?: PluginRegistry;
-  onRetainRegistry?: (registry: PluginRegistry) => void;
 }) {
   const requestedPluginIds = params.onlyPluginIds;
-  if (registryHasScopedPluginTools(params.retainedRegistry, requestedPluginIds)) {
-    return params.retainedRegistry;
-  }
   const activeRegistry = getLoadedRuntimePluginRegistry({
     loadOptions: params.loadOptions,
     workspaceDir: params.loadOptions.workspaceDir,
@@ -954,15 +729,11 @@ function resolvePluginToolRegistry(params: {
   if (registryHasScopedPluginTools(activeRegistry, requestedPluginIds)) {
     return activeRegistry;
   }
-  const registry = loadPluginRegistryHandle({
+  return loadPluginRegistryHandle({
     ...params.loadOptions,
     activate: false,
     ...(requestedPluginIds === undefined ? {} : { onlyPluginIds: [...requestedPluginIds] }),
   });
-  if (registryHasScopedPluginTools(registry, requestedPluginIds)) {
-    params.onRetainRegistry?.(registry);
-  }
-  return registry;
 }
 
 function registryHasScopedPluginTools(
@@ -1135,8 +906,6 @@ export function resolvePluginTools(params: {
     existingNormalized,
     pluginToolOwnersByName,
     ctx: params.context,
-    loadContext: context,
-    runtimeOptions,
     currentRuntimeConfig: currentRuntimeConfigForDescriptorCache,
     configCacheKeyMemo,
     clientCaps,
@@ -1272,7 +1041,6 @@ export function resolvePluginTools(params: {
     }
     const factoryResult = resolvePluginToolFactoryEntry({
       entry,
-      pluginRegistry: registry,
       ctx: params.context,
       declaredNames,
       factoryTimingStartedAt,
@@ -1424,6 +1192,7 @@ export function resolvePluginTools(params: {
         capturedDescriptors.push(
           capturePluginToolDescriptor({
             pluginId: entry.pluginId,
+            registry,
             tool,
             optional,
           }),
@@ -1459,7 +1228,7 @@ export function resolvePluginTools(params: {
       })
     ) {
       writeCachedPluginToolDescriptors({
-        cacheKey: buildPluginDescriptorCacheKey({
+        cacheKey: buildPluginToolDescriptorCacheKey({
           plugin: manifestPlugin,
           ctx: params.context,
           currentRuntimeConfig: currentRuntimeConfigForDescriptorCache,

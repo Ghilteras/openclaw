@@ -33,6 +33,7 @@ import {
   CodeModeHeadlessAbortError,
   CodeModeHeadlessTimeoutError,
 } from "./code-mode-worker.js";
+import { captureAgentPluginRuntimeRefresh } from "./plugin-runtime-refresh.js";
 import type { AgentToolUpdateCallback } from "./runtime/index.js";
 import { optionalStringEnum } from "./schema/typebox.js";
 import type { ToolDefinition } from "./sessions/index.js";
@@ -186,6 +187,7 @@ function createCodeModeExecDescription(
 }
 
 export function createCodeModeTools(ctx: CodeModeToolContext): AnyAgentTool[] {
+  const runtimeRefresh = captureAgentPluginRuntimeRefresh();
   // The surface planner owns activation. Capture limits once so an admitted
   // control remains executable during model overrides and restart recovery.
   const config = resolveCodeModeConfig(ctx.runtimeConfig ?? ctx.config, ctx.agentId);
@@ -218,6 +220,7 @@ export function createCodeModeTools(ctx: CodeModeToolContext): AnyAgentTool[] {
       signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback,
     ) => {
+      runtimeRefresh.assertCurrent();
       // Context closure fences new calls; the supplied signal owns in-flight
       // cancellation so sessions_yield can still finish its initiating handoff.
       ctx.abortSignal?.throwIfAborted();
@@ -244,7 +247,10 @@ export function createCodeModeTools(ctx: CodeModeToolContext): AnyAgentTool[] {
         }),
       );
       markCodeModePermissionChangeResult(result, signal);
-      return formatToolSearchControlResult(result, runtime, undefined, result.status);
+      return {
+        ...formatToolSearchControlResult(result, runtime, undefined, result.status),
+        ...(runtimeRefresh.isRequested() ? { terminate: runtimeRefresh.isPending() } : {}),
+      };
     },
   } as AnyAgentTool);
   const waitTool = markCodeModeControlTool({
@@ -265,6 +271,7 @@ export function createCodeModeTools(ctx: CodeModeToolContext): AnyAgentTool[] {
       signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback,
     ) => {
+      runtimeRefresh.assertActive();
       ctx.abortSignal?.throwIfAborted();
       let runtime: ToolSearchRuntime | undefined;
       const result = normalizeCodeModeTimeoutResult(
@@ -280,7 +287,10 @@ export function createCodeModeTools(ctx: CodeModeToolContext): AnyAgentTool[] {
         }),
       );
       markCodeModePermissionChangeResult(result, signal);
-      return formatToolSearchControlResult(result, runtime, undefined, result.status);
+      return {
+        ...formatToolSearchControlResult(result, runtime, undefined, result.status),
+        ...(runtimeRefresh.isRequested() ? { terminate: runtimeRefresh.isPending() } : {}),
+      };
     },
   } as AnyAgentTool);
   return [execTool, waitTool];

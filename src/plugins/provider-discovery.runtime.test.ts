@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => {
     resolveDiscoveredProviderPluginIds: vi.fn(),
     resolvePluginProvidersCore: vi.fn(),
     loadSource,
-    getCachedPluginModuleLoader: vi.fn(() => loadSource),
+    getPluginSetupModuleLoader: vi.fn(() => loadSource),
   };
 });
 
@@ -34,9 +34,9 @@ vi.mock("./providers.runtime.js", () => ({
   resolvePluginProvidersCore: mocks.resolvePluginProvidersCore,
 }));
 
-vi.mock("./plugin-module-loader-cache.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./plugin-module-loader-cache.js")>()),
-  getCachedPluginModuleLoader: mocks.getCachedPluginModuleLoader,
+vi.mock("./plugin-setup-module.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./plugin-setup-module.js")>()),
+  getPluginSetupModuleLoader: mocks.getPluginSetupModuleLoader,
 }));
 
 import { resolvePluginDiscoveryProvidersRuntime } from "./provider-discovery.runtime.js";
@@ -425,7 +425,7 @@ describe("resolvePluginDiscoveryProvidersRuntime", () => {
     expect(requireResolvePluginProvidersParams().onlyPluginIds).toEqual(["mixed-entry"]);
   });
 
-  it("loads discovery entries through the native-capable module loader", () => {
+  it("loads discovery entries without activating the runtime entry", () => {
     const staticProvider = createProvider({ id: "deepseek", mode: "static" });
     mocks.loadSource.mockReturnValue(staticProvider);
 
@@ -433,26 +433,8 @@ describe("resolvePluginDiscoveryProvidersRuntime", () => {
       { ...staticProvider, pluginId: "deepseek" },
     ]);
 
-    expect(mocks.getCachedPluginModuleLoader).toHaveBeenCalledOnce();
-    const calls = mocks.getCachedPluginModuleLoader.mock.calls as unknown[][];
-    const params = calls[0]?.[0] as
-      | {
-          modulePath?: string;
-          importerUrl?: string;
-          loaderFilename?: string;
-          preferBuiltDist?: boolean;
-          tryNative?: boolean;
-        }
-      | undefined;
-    expect(params).toEqual(
-      expect.objectContaining({
-        modulePath: "/tmp/deepseek/provider-discovery.ts",
-        importerUrl: expect.stringContaining("provider-discovery.runtime"),
-        loaderFilename: expect.stringContaining("provider-discovery.runtime"),
-        preferBuiltDist: true,
-      }),
-    );
-    expect(params?.tryNative).toBeUndefined();
+    expect(mocks.loadSource).toHaveBeenCalledExactlyOnceWith("/tmp/deepseek/provider-discovery.ts");
+    expect(mocks.resolvePluginProvidersCore).not.toHaveBeenCalled();
   });
 
   it("keeps unscoped discovery bounded for mixed live and static-only entries", () => {

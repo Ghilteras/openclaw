@@ -12,6 +12,7 @@ import {
 } from "./agent-tools.before-tool-call.js";
 import { runWithToolExecutionValidation } from "./agent-tools.execution-validation.js";
 import { getChannelAgentToolMeta } from "./channel-tool-metadata.js";
+import { captureAgentPluginRuntimeRefresh } from "./plugin-runtime-refresh.js";
 import type { AgentToolResult } from "./runtime/index.js";
 import { isAgentToolReplaySafe } from "./tool-replay-safety.js";
 import {
@@ -426,6 +427,7 @@ function sanitizeToolCallIdPart(value: string): string {
 }
 
 export class ToolSearchRuntime {
+  private readonly pluginRuntimeRefresh = captureAgentPluginRuntimeRefresh();
   private callSequence = 0;
   private readonly terminalTargetBatchByParent = new Map<string, boolean>();
   private readonly networkInvocations = new Map<string, { active: number; observed: boolean }>();
@@ -590,6 +592,7 @@ export class ToolSearchRuntime {
       onUpdate?: ToolSearchCallOptions["onUpdate"];
     },
   ) => {
+    this.pluginRuntimeRefresh.assertCurrent();
     catalog.callCount += 1;
     const normalizedInput = input ?? {};
     await assertCatalogOutputSchemaIsValid(entry);
@@ -627,6 +630,7 @@ export class ToolSearchRuntime {
     const validateInput = this.options.validateInput && entry.source === "openclaw";
     const executionTool = prepareToolSearchCatalogExecutionTool(entry, this.options);
     const runExecution = async () => {
+      this.pluginRuntimeRefresh.assertCurrent();
       const parentToolCallId = options?.parentToolCallId ?? toolCallId;
       const signal = options?.signal ?? this.ctx.abortSignal;
       const networkInvocation =
