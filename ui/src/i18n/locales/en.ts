@@ -2339,7 +2339,7 @@ export const en: TranslationMap & {
     cron: "Scheduled tasks and recurring agent runs.",
     tasks: "Background tasks: subagents, automation runs, CLI.",
     skills: "Manage agent skills and find new ones on ClawHub.",
-    plugins: "Manage plugins and add capabilities from ClawHub.",
+    plugins: "Browse installed plugins and open their settings.",
     skillWorkshop: "Review, refine, and apply proposals before they become live skills.",
     devices: "Paired devices, pairing approvals, and exec bindings.",
     cloudWorkers: "Profiles and machine sizes for cloud sessions.",
