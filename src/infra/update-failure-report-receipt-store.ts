@@ -14,14 +14,16 @@ import {
 
 export type UpdateFailureReportReceipt = {
   fallbackUrl?: string;
+  preparingSinceMs?: number;
   reservationId: string;
-  status: "pending" | "created" | "fallback";
+  status: "preparing" | "pending" | "created" | "fallback";
   url?: string;
 };
 
 type GatewayRestartSentinelDatabase = Pick<OpenClawStateKyselyDatabase, "gateway_restart_sentinel">;
 
 const RECEIPT_KEY_PREFIX = "update-failure-report:";
+const PREPARING_RECEIPT_STALE_AFTER_MS = 2 * 60_000;
 
 function receiptKey(attemptId: string): string {
   return `${RECEIPT_KEY_PREFIX}${createHash("sha256").update(attemptId).digest("hex")}`;
@@ -39,8 +41,13 @@ function parseReceipt(sentinel: RestartSentinel | null): UpdateFailureReportRece
   const value = safeParseJson(sentinel.payload.message);
   if (
     !isPlainRecord(value) ||
-    (value.status !== "pending" && value.status !== "created" && value.status !== "fallback") ||
+    (value.status !== "preparing" &&
+      value.status !== "pending" &&
+      value.status !== "created" &&
+      value.status !== "fallback") ||
     typeof value.reservationId !== "string" ||
+    (value.status === "preparing" &&
+      (typeof value.preparingSinceMs !== "number" || !Number.isFinite(value.preparingSinceMs))) ||
     (value.url !== undefined && typeof value.url !== "string") ||
     (value.fallbackUrl !== undefined && typeof value.fallbackUrl !== "string")
   ) {
@@ -49,6 +56,9 @@ function parseReceipt(sentinel: RestartSentinel | null): UpdateFailureReportRece
   return {
     reservationId: value.reservationId,
     status: value.status,
+    ...(typeof value.preparingSinceMs === "number"
+      ? { preparingSinceMs: value.preparingSinceMs }
+      : {}),
     ...(typeof value.url === "string" ? { url: value.url } : {}),
     ...(typeof value.fallbackUrl === "string" ? { fallbackUrl: value.fallbackUrl } : {}),
   };
@@ -85,8 +95,13 @@ export function reserveUpdateFailureReportReceiptRowSync(
 ): { receipt: UpdateFailureReportReceipt | null; reserved: boolean } {
   const sentinelKey = receiptKey(attemptId);
   const stateDb = getNodeSqliteKysely<GatewayRestartSentinelDatabase>(db);
-  const receipt: UpdateFailureReportReceipt = { reservationId, status: "pending" };
-  const row = buildRestartSentinelRow(buildReceiptPayload(receipt), Date.now(), sentinelKey);
+  const nowMs = Date.now();
+  const receipt: UpdateFailureReportReceipt = {
+    preparingSinceMs: nowMs,
+    reservationId,
+    status: "preparing",
+  };
+  const row = buildRestartSentinelRow(buildReceiptPayload(receipt), nowMs, sentinelKey);
   const result = executeSqliteQuerySync(
     db,
     stateDb
@@ -97,10 +112,70 @@ export function reserveUpdateFailureReportReceiptRowSync(
   if (result.numAffectedRows === 1n) {
     return { receipt, reserved: true };
   }
-  return { receipt: readReceipt(db, attemptId), reserved: false };
+  const current = readRestartSentinelRowForKeySync(db, sentinelKey);
+  const currentReceipt = parseReceipt(current.kind === "valid" ? current.sentinel : null);
+  if (
+    current.kind !== "valid" ||
+    currentReceipt?.status !== "preparing" ||
+    currentReceipt.preparingSinceMs === undefined ||
+    currentReceipt.preparingSinceMs > nowMs - PREPARING_RECEIPT_STALE_AFTER_MS
+  ) {
+    return { receipt: currentReceipt, reserved: false };
+  }
+  const replacement = buildRestartSentinelRow(
+    buildReceiptPayload(receipt),
+    nextRevision(current.sentinel.revision),
+    sentinelKey,
+  );
+  const replaced = executeSqliteQuerySync(
+    db,
+    stateDb
+      .updateTable("gateway_restart_sentinel")
+      .set(replacement)
+      .where("sentinel_key", "=", sentinelKey)
+      .where("updated_at_ms", "=", current.sentinel.revision),
+  );
+  return replaced.numAffectedRows === 1n
+    ? { receipt, reserved: true }
+    : { receipt: readReceipt(db, attemptId), reserved: false };
 }
 
-/** Finalizes only the process-owned pending reservation. */
+/** Makes one preparation ambiguity-safe immediately before issue creation starts. */
+export function markUpdateFailureReportReceiptPendingRowSync(
+  db: DatabaseSync,
+  attemptId: string,
+  reservationId: string,
+): boolean {
+  const sentinelKey = receiptKey(attemptId);
+  const current = readRestartSentinelRowForKeySync(db, sentinelKey);
+  const currentReceipt = parseReceipt(current.kind === "valid" ? current.sentinel : null);
+  if (
+    current.kind !== "valid" ||
+    !currentReceipt ||
+    currentReceipt.status !== "preparing" ||
+    currentReceipt.reservationId !== reservationId
+  ) {
+    return false;
+  }
+  const pending: UpdateFailureReportReceipt = { reservationId, status: "pending" };
+  const row = buildRestartSentinelRow(
+    buildReceiptPayload(pending),
+    nextRevision(current.sentinel.revision),
+    sentinelKey,
+  );
+  const stateDb = getNodeSqliteKysely<GatewayRestartSentinelDatabase>(db);
+  const result = executeSqliteQuerySync(
+    db,
+    stateDb
+      .updateTable("gateway_restart_sentinel")
+      .set(row)
+      .where("sentinel_key", "=", sentinelKey)
+      .where("updated_at_ms", "=", current.sentinel.revision),
+  );
+  return result.numAffectedRows === 1n;
+}
+
+/** Finalizes only a process-owned reservation in the required prior phase. */
 export function finalizeUpdateFailureReportReceiptRowSync(
   db: DatabaseSync,
   attemptId: string,
@@ -112,7 +187,7 @@ export function finalizeUpdateFailureReportReceiptRowSync(
   if (
     current.kind !== "valid" ||
     !currentReceipt ||
-    currentReceipt.status !== "pending" ||
+    currentReceipt.status !== (receipt.status === "fallback" ? "preparing" : "pending") ||
     currentReceipt.reservationId !== receipt.reservationId
   ) {
     return false;
@@ -134,7 +209,7 @@ export function finalizeUpdateFailureReportReceiptRowSync(
   return result.numAffectedRows === 1n;
 }
 
-/** Releases only the process-owned pending reservation before any external side effect. */
+/** Releases only the process-owned preparation before any external side effect. */
 export function releaseUpdateFailureReportReceiptRowSync(
   db: DatabaseSync,
   attemptId: string,
@@ -146,7 +221,7 @@ export function releaseUpdateFailureReportReceiptRowSync(
   if (
     current.kind !== "valid" ||
     !currentReceipt ||
-    currentReceipt.status !== "pending" ||
+    currentReceipt.status !== "preparing" ||
     currentReceipt.reservationId !== reservationId
   ) {
     return false;

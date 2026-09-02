@@ -26,6 +26,7 @@ import {
 } from "./restart-sentinel-store.js";
 import {
   finalizeUpdateFailureReportReceiptRowSync,
+  markUpdateFailureReportReceiptPendingRowSync,
   readUpdateFailureReportReceiptRowSync,
   releaseUpdateFailureReportReceiptRowSync,
   reserveUpdateFailureReportReceiptRowSync,
@@ -101,6 +102,18 @@ export function finalizeUpdateFailureReportReceipt(
     ({ db }) => finalizeUpdateFailureReportReceiptRowSync(db, attemptId, receipt),
     { env },
     { operationLabel: "update-failure-report.finalize" },
+  );
+}
+
+export function markUpdateFailureReportReceiptPending(
+  attemptId: string,
+  reservationId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return runOpenClawStateWriteTransaction(
+    ({ db }) => markUpdateFailureReportReceiptPendingRowSync(db, attemptId, reservationId),
+    { env },
+    { operationLabel: "update-failure-report.mark-pending" },
   );
 }
 

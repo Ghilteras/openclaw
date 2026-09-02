@@ -166,10 +166,23 @@ describe("update report live authority boundary", () => {
     vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
     mocks.getLatest.mockReturnValue(failure);
     mocks.refreshLatest.mockResolvedValue(failure);
-    mocks.createGithubIssueAsync.mockResolvedValue({
-      ok: true,
-      url: "https://github.com/openclaw/openclaw/issues/999999",
-    });
+    mocks.createGithubIssueAsync.mockImplementation(
+      async (
+        _issue: unknown,
+        _runGh: unknown,
+        hooks: {
+          afterAuthPreflight?: () => Promise<void> | void;
+          beforeIssueCreate?: () => Promise<void> | void;
+        },
+      ) => {
+        await hooks.afterAuthPreflight?.();
+        await hooks.beforeIssueCreate?.();
+        return {
+          ok: true,
+          url: "https://github.com/openclaw/openclaw/issues/999999",
+        };
+      },
+    );
   });
 
   afterEach(async () => {
@@ -206,7 +219,7 @@ describe("update report live authority boundary", () => {
     { change: "shared-auth", closeReason: "gateway auth changed" },
     { change: "invalidated", closeReason: "client invalidated: device-token-revoked" },
   ] as const)(
-    "blocks issue creation when $change authority closes during GitHub auth preflight",
+    "blocks issue creation when $change authority closes after auth preflight",
     async (testCase) => {
       let generation = "current";
       const client = createOperatorWsClient({ connId: `report-preflight-${testCase.change}` });
@@ -229,11 +242,15 @@ describe("update report live authority boundary", () => {
         async (
           _issue: unknown,
           _runGh: unknown,
-          hooks: { afterAuthPreflight?: () => Promise<void> | void },
+          hooks: {
+            afterAuthPreflight?: () => Promise<void> | void;
+            beforeIssueCreate?: () => Promise<void> | void;
+          },
         ) => {
+          await hooks.afterAuthPreflight?.();
           enteredAuthPreflight.resolve();
           await releaseAuthPreflight.promise;
-          await hooks.afterAuthPreflight?.();
+          await hooks.beforeIssueCreate?.();
           issueCreateCalls += 1;
           return {
             ok: true,

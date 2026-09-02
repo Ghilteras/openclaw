@@ -17,11 +17,16 @@ import {
 } from "./github-issue.js";
 import {
   finalizeUpdateFailureReportReceipt,
+  markUpdateFailureReportReceiptPending,
   readUpdateFailureReportReceipt,
   releaseUpdateFailureReportReceipt,
   reserveUpdateFailureReportReceipt,
   type UpdateFailureReportReceipt,
 } from "./restart-sentinel.js";
+import {
+  assertUpdateReportPreCreateState,
+  UpdateReportPreCreateGuardError,
+} from "./update-failure-report-precreate.js";
 import type { UpdateRunResult } from "./update-runner.js";
 
 const UPDATE_REPORT_BODY_MAX_BYTES = 16_000;
@@ -460,9 +465,12 @@ function resultFromExistingReceipt(
   receipt: UpdateFailureReportReceipt | null,
   savedReportPath: string,
 ): UpdateFailureReportSubmitResult {
-  if (receipt?.status === "pending") {
+  if (receipt?.status === "pending" || receipt?.status === "preparing") {
     return {
-      message: "This update attempt already has a report submission in progress.",
+      message:
+        receipt.status === "pending"
+          ? "This update attempt already has a report submission in progress."
+          : "This update attempt already has a report preparation in progress.",
       savedReportPath,
       status: "pending",
     };
@@ -496,17 +504,6 @@ function finalizeReceiptWithRetry(
   return false;
 }
 
-class UpdateReportPreCreateGuardError extends Error {
-  constructor(
-    message: string,
-    readonly reason: "authority" | "stale" | "validation",
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "UpdateReportPreCreateGuardError";
-  }
-}
-
 /** Consumes one reviewed preview and invokes the shared GitHub issue creator at most once. */
 export async function submitUpdateFailureReport(
   prepared: PreparedUpdateFailureReport,
@@ -519,6 +516,7 @@ export async function submitUpdateFailureReport(
     env?: NodeJS.ProcessEnv;
     finalizeReceipt?: typeof finalizeUpdateFailureReportReceipt;
     hasCurrentAuthority?: () => boolean;
+    markPending?: typeof markUpdateFailureReportReceiptPending;
     readReceipt?: typeof readUpdateFailureReportReceipt;
     releaseReceipt?: typeof releaseUpdateFailureReportReceipt;
     stateDir?: string;
@@ -562,7 +560,7 @@ export async function submitUpdateFailureReport(
     prepared.attemptId,
     stateEnv,
   );
-  if (existingReceipt) {
+  if (existingReceipt && existingReceipt.status !== "preparing") {
     if (existingReceipt.status === "created") {
       await discardSavedUpdateFailureReportBestEffort(
         prepared,
@@ -630,35 +628,15 @@ export async function submitUpdateFailureReport(
     throw new Error("Update report was not saved by its reservation owner.");
   }
 
-  const afterAuthPreflight = async () => {
-    if (options.hasCurrentAuthority && !options.hasCurrentAuthority()) {
+  const assertCurrentPreCreateState = () => assertUpdateReportPreCreateState(options);
+  const afterAuthPreflight = assertCurrentPreCreateState;
+  const beforeIssueCreate = async () => {
+    await assertCurrentPreCreateState();
+    const markPending = options.markPending ?? markUpdateFailureReportReceiptPending;
+    if (!markPending(prepared.attemptId, reservationId, stateEnv)) {
       throw new UpdateReportPreCreateGuardError(
-        "Update report submission requires a current authenticated client.",
-        "authority",
-      );
-    }
-    if (options.validateCurrentAttempt) {
-      let currentAttempt: boolean;
-      try {
-        currentAttempt = await options.validateCurrentAttempt();
-      } catch (error) {
-        throw new UpdateReportPreCreateGuardError(
-          "Update report status could not be rechecked before submission.",
-          "validation",
-          { cause: error },
-        );
-      }
-      if (!currentAttempt) {
-        throw new UpdateReportPreCreateGuardError(
-          "This failed update attempt is stale or unavailable.",
-          "stale",
-        );
-      }
-    }
-    if (options.hasCurrentAuthority && !options.hasCurrentAuthority()) {
-      throw new UpdateReportPreCreateGuardError(
-        "Update report submission requires a current authenticated client.",
-        "authority",
+        "Update report preparation is no longer owned by this request.",
+        "reservation",
       );
     }
   };
@@ -668,10 +646,16 @@ export async function submitUpdateFailureReport(
       createGithubIssueAsync(issue, undefined, hooks));
   let created: GithubIssueCreateResult;
   try {
-    created = await createIssue(prepared, { afterAuthPreflight });
+    created = await createIssue(prepared, { afterAuthPreflight, beforeIssueCreate });
   } catch (error) {
     if (!(error instanceof UpdateReportPreCreateGuardError)) {
       throw error;
+    }
+    if (error.reason === "reservation") {
+      return resultFromExistingReceipt(
+        (options.readReceipt ?? readUpdateFailureReportReceipt)(prepared.attemptId, stateEnv),
+        prepared.savedReportPath,
+      );
     }
     await discardSavedUpdateFailureReport(prepared, saved);
     if (!releaseReceipt(prepared.attemptId, reservationId, stateEnv)) {

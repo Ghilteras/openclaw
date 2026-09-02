@@ -3,7 +3,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { GithubIssueCreateAsyncHooks, SanitizedGithubIssue } from "./github-issue.js";
-import { finalizeUpdateFailureReportReceipt } from "./restart-sentinel.js";
+import {
+  finalizeUpdateFailureReportReceipt,
+  readUpdateFailureReportReceipt,
+} from "./restart-sentinel.js";
 import { prepareUpdateFailureReport, submitUpdateFailureReport } from "./update-failure-report.js";
 import type { UpdateRunResult } from "./update-runner.js";
 
@@ -31,6 +34,29 @@ function failedUpdate(overrides: Partial<UpdateRunResult> = {}): UpdateRunResult
     recovery: { serviceRestartSafe: true, version: "2026.8.1" },
     ...overrides,
   };
+}
+
+function mockCreatedIssue(url: string) {
+  return vi.fn(async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+    await hooks.afterAuthPreflight?.();
+    await hooks.beforeIssueCreate?.();
+    return { ok: true as const, url };
+  });
+}
+
+function mockFallbackIssue(fallbackUrl: string, message = "GitHub CLI unavailable") {
+  return vi.fn(async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+    await hooks.afterAuthPreflight?.();
+    return { fallbackUrl, message, ok: false as const };
+  });
+}
+
+function mockAmbiguousIssue(message: string) {
+  return vi.fn(async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+    await hooks.afterAuthPreflight?.();
+    await hooks.beforeIssueCreate?.();
+    return { ambiguous: true as const, message, ok: false as const };
+  });
 }
 
 describe("update failure report", () => {
@@ -66,11 +92,9 @@ describe("update failure report", () => {
     await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(
       submitUpdateFailureReport(prepared, prepared.previewDigest, {
-        createIssue: vi.fn(() => ({
-          fallbackUrl: "https://github.com/openclaw/openclaw/issues/new?title=update",
-          message: "GitHub CLI unavailable",
-          ok: false as const,
-        })),
+        createIssue: mockFallbackIssue(
+          "https://github.com/openclaw/openclaw/issues/new?title=update",
+        ),
         env: { HOME: home, OPENCLAW_STATE_DIR: stateDir },
         stateDir,
       }),
@@ -112,10 +136,7 @@ describe("update failure report", () => {
       { attemptId: "attempt-once", result: failedUpdate() },
       { stateDir },
     );
-    const createIssue = vi.fn(() => ({
-      ok: true as const,
-      url: "https://github.com/openclaw/openclaw/issues/123",
-    }));
+    const createIssue = mockCreatedIssue("https://github.com/openclaw/openclaw/issues/123");
 
     const [first, second] = await Promise.all([
       submitUpdateFailureReport(prepared, prepared.previewDigest, { createIssue, stateDir }),
@@ -136,7 +157,7 @@ describe("update failure report", () => {
     await expect(fs.stat(prepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("cancels the reservation when authority closes after auth preflight", async () => {
+  it("cancels preparation when authority closes immediately before issue creation", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(
       { attemptId: "attempt-auth-preflight-authority", result: failedUpdate() },
@@ -146,8 +167,9 @@ describe("update failure report", () => {
     let issueCreateCalls = 0;
     const createIssue = vi.fn(
       async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
-        authorityCurrent = false;
         await hooks.afterAuthPreflight?.();
+        authorityCurrent = false;
+        await hooks.beforeIssueCreate?.();
         issueCreateCalls += 1;
         return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/123" };
       },
@@ -168,6 +190,7 @@ describe("update failure report", () => {
     const retryCreateIssue = vi.fn(
       async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
         await hooks.afterAuthPreflight?.();
+        await hooks.beforeIssueCreate?.();
         issueCreateCalls += 1;
         return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/124" };
       },
@@ -183,7 +206,7 @@ describe("update failure report", () => {
     expect(issueCreateCalls).toBe(1);
   });
 
-  it("cancels the reservation when the canonical attempt changes after auth preflight", async () => {
+  it("cancels preparation when the canonical attempt changes immediately before issue creation", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(
       { attemptId: "attempt-auth-preflight-stale", result: failedUpdate() },
@@ -193,8 +216,9 @@ describe("update failure report", () => {
     let issueCreateCalls = 0;
     const createIssue = vi.fn(
       async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
-        currentAttempt = false;
         await hooks.afterAuthPreflight?.();
+        currentAttempt = false;
+        await hooks.beforeIssueCreate?.();
         issueCreateCalls += 1;
         return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/123" };
       },
@@ -214,6 +238,7 @@ describe("update failure report", () => {
     const retryCreateIssue = vi.fn(
       async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
         await hooks.afterAuthPreflight?.();
+        await hooks.beforeIssueCreate?.();
         issueCreateCalls += 1;
         return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/124" };
       },
@@ -245,6 +270,7 @@ describe("update failure report", () => {
     const createIssue = vi.fn(
       async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
         await hooks.afterAuthPreflight?.();
+        await hooks.beforeIssueCreate?.();
         issueCreateCalls += 1;
         return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/123" };
       },
@@ -263,6 +289,7 @@ describe("update failure report", () => {
     const retryCreateIssue = vi.fn(
       async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
         await hooks.afterAuthPreflight?.();
+        await hooks.beforeIssueCreate?.();
         issueCreateCalls += 1;
         return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/124" };
       },
@@ -296,11 +323,13 @@ describe("update failure report", () => {
     const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
     let finishFallback!: () => void;
     const createIssue = vi.fn(
-      () =>
-        new Promise<{ fallbackUrl: string; message: string; ok: false }>((resolve) => {
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        await hooks.afterAuthPreflight?.();
+        return await new Promise<{ fallbackUrl: string; message: string; ok: false }>((resolve) => {
           finishFallback = () =>
             resolve({ fallbackUrl, message: "GitHub CLI unavailable", ok: false });
-        }),
+        });
+      },
     );
     const winner = submitUpdateFailureReport(prepared, prepared.previewDigest, {
       createIssue,
@@ -319,6 +348,60 @@ describe("update failure report", () => {
     expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
   });
 
+  it("reclaims an expired pre-create preparation without letting its old owner submit", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-expired-preparation", result: failedUpdate() },
+      { stateDir },
+    );
+    let nowMs = 1_800_000_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    let releaseOldPreparation!: () => void;
+    const oldPreparationGate = new Promise<void>((resolve) => {
+      releaseOldPreparation = resolve;
+    });
+    let issueCreateCalls = 0;
+    const oldCreateIssue = vi.fn(
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        await hooks.afterAuthPreflight?.();
+        await oldPreparationGate;
+        await hooks.beforeIssueCreate?.();
+        issueCreateCalls += 1;
+        return { ok: true as const, url: "https://github.com/openclaw/openclaw/issues/122" };
+      },
+    );
+
+    const oldSubmission = submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue: oldCreateIssue,
+      stateDir,
+    });
+    await vi.waitFor(() => expect(oldCreateIssue).toHaveBeenCalledOnce());
+    expect(
+      readUpdateFailureReportReceipt(prepared.attemptId, {
+        OPENCLAW_STATE_DIR: stateDir,
+      }),
+    ).toMatchObject({ status: "preparing" });
+
+    nowMs += 10 * 60_000;
+    const replacement = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue: mockCreatedIssue("https://github.com/openclaw/openclaw/issues/123"),
+      stateDir,
+    });
+    releaseOldPreparation();
+    const oldResult = await oldSubmission;
+    now.mockRestore();
+
+    expect(replacement).toMatchObject({
+      status: "created",
+      url: "https://github.com/openclaw/openclaw/issues/123",
+    });
+    expect(oldResult).toMatchObject({
+      status: "duplicate",
+      url: "https://github.com/openclaw/openclaw/issues/123",
+    });
+    expect(issueCreateCalls).toBe(0);
+  });
+
   it.each([
     ["returns false", () => false],
     [
@@ -334,7 +417,7 @@ describe("update failure report", () => {
       { stateDir },
     );
     const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
-    const createIssue = vi.fn(() => ({ ok: true as const, url: issueUrl }));
+    const createIssue = mockCreatedIssue(issueUrl);
     const finalizeReceipt = vi.fn(finalizeUpdateFailureReportReceipt).mockImplementationOnce(fail);
 
     const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
@@ -361,7 +444,7 @@ describe("update failure report", () => {
       { stateDir },
     );
     const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
-    const createIssue = vi.fn(() => ({ ok: true as const, url: issueUrl }));
+    const createIssue = mockCreatedIssue(issueUrl);
     const finalizeReceipt = vi.fn(() => false);
 
     const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
@@ -404,7 +487,7 @@ describe("update failure report", () => {
       { stateDir },
     );
     const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
-    const createIssue = vi.fn(() => ({ ok: true as const, url: issueUrl }));
+    const createIssue = mockCreatedIssue(issueUrl);
     const realRm = fs.rm.bind(fs);
     const rm = vi.spyOn(fs, "rm").mockImplementation(async (target, options) => {
       if (target === prepared.savedReportPath) {
@@ -440,7 +523,7 @@ describe("update failure report", () => {
       { stateDir },
     );
     const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
-    const createIssue = vi.fn(() => ({ ok: true as const, url: issueUrl }));
+    const createIssue = mockCreatedIssue(issueUrl);
     const finalizeReceipt = vi.fn(() => false);
     const recoveryPath = `${prepared.savedReportPath}.result.json`;
     const realLink = fs.link.bind(fs);
@@ -483,11 +566,7 @@ describe("update failure report", () => {
       { stateDir },
     );
     const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
-    const createIssue = vi.fn(() => ({
-      fallbackUrl,
-      message: "GitHub CLI unavailable",
-      ok: false as const,
-    }));
+    const createIssue = mockFallbackIssue(fallbackUrl);
     const finalizeReceipt = vi.fn(() => false);
 
     const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
@@ -515,10 +594,13 @@ describe("update failure report", () => {
     );
     let resolveIssue!: (result: { ok: true; url: string }) => void;
     const createIssue = vi.fn(
-      () =>
-        new Promise<{ ok: true; url: string }>((resolve) => {
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        await hooks.afterAuthPreflight?.();
+        await hooks.beforeIssueCreate?.();
+        return await new Promise<{ ok: true; url: string }>((resolve) => {
           resolveIssue = resolve;
-        }),
+        });
+      },
     );
 
     const submission = submitUpdateFailureReport(prepared, prepared.previewDigest, {
@@ -545,20 +627,25 @@ describe("update failure report", () => {
       { attemptId: "attempt-timeout", result: failedUpdate() },
       { stateDir },
     );
-    const createIssue = vi.fn(() => ({
-      ambiguous: true as const,
-      message: "spawnSync gh ETIMEDOUT",
-      ok: false as const,
-    }));
+    const createIssue = mockAmbiguousIssue("spawnSync gh ETIMEDOUT");
+    let nowMs = 1_800_000_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
 
     const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
       createIssue,
       stateDir,
     });
+    expect(
+      readUpdateFailureReportReceipt(prepared.attemptId, {
+        OPENCLAW_STATE_DIR: stateDir,
+      }),
+    ).toMatchObject({ status: "pending" });
+    nowMs += 10 * 60_000;
     const second = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
       createIssue,
       stateDir,
     });
+    now.mockRestore();
 
     expect(first).toMatchObject({ status: "pending" });
     expect(first).not.toHaveProperty("fallbackUrl");

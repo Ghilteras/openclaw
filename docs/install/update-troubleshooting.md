@@ -43,7 +43,8 @@ until an administrator confirms that preview. OpenClaw then uses the existing
 GitHub CLI issue flow and saves the sanitized report locally. It first makes a
 silent, read-only request with the active `github.com` account. A missing CLI or
 a failed, unavailable, or timed-out authentication check returns a prefilled
-issue link without starting issue creation. Once issue creation starts, a
+issue link without starting issue creation. An interrupted preparation can be
+retried after its local reservation expires. Once issue creation starts, a
 timeout, signal, nonzero exit, or malformed response without a verified issue
 URL leaves the attempt pending without a replay link, because the issue-creation
 outcome may be unknown. The action is tied to one update-attempt identity and

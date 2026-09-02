@@ -22,6 +22,7 @@ type RunGhAsync = (args: readonly string[], options: { input: string }) => Promi
 
 export type GithubIssueCreateAsyncHooks = {
   afterAuthPreflight?: () => Promise<void> | void;
+  beforeIssueCreate?: () => Promise<void> | void;
 };
 
 const GITHUB_ISSUE_CREATE_TIMEOUT_MS = 30_000;
@@ -114,6 +115,7 @@ export async function createGithubIssueAsync(
   if (authResult.error || authResult.status !== 0) {
     return resolveGithubAuthPreflightFailure(issue, authResult);
   }
+  await hooks.beforeIssueCreate?.();
   return resolveGithubIssueCreateResult(
     issue,
     await runGh(githubIssueCreateArgs(issue), { input: issue.body }),

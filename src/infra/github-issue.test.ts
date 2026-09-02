@@ -234,11 +234,14 @@ describe("createGithubIssue", () => {
     async ({ result, message }) => {
       const fallbackUrl = "https://github.com/openclaw/openclaw/issues/new?title=update";
       const runGh = vi.fn(async () => result);
+      const afterAuthPreflight = vi.fn();
+      const beforeIssueCreate = vi.fn();
 
       await expect(
         createGithubIssueAsync(
           { body: "sanitized body", title: "Update failed", url: fallbackUrl },
           runGh,
+          { afterAuthPreflight, beforeIssueCreate },
         ),
       ).resolves.toEqual({
         fallbackUrl,
@@ -247,6 +250,8 @@ describe("createGithubIssue", () => {
       });
       expect(runGh).toHaveBeenCalledTimes(1);
       expect(runGh).toHaveBeenCalledWith(authPreflightArgs, { input: "" });
+      expect(afterAuthPreflight).toHaveBeenCalledOnce();
+      expect(beforeIssueCreate).not.toHaveBeenCalled();
     },
   );
 
@@ -286,10 +291,11 @@ describe("createGithubIssue", () => {
     );
   });
 
-  it("rechecks the caller guard after auth preflight and before issue creation", async () => {
+  it("rechecks the caller guard immediately before issue creation", async () => {
     const guardError = new Error("report authority expired");
     const runGh = vi.fn().mockResolvedValueOnce(authSuccess);
-    const afterAuthPreflight = vi.fn(() => {
+    const afterAuthPreflight = vi.fn();
+    const beforeIssueCreate = vi.fn(() => {
       throw guardError;
     });
 
@@ -301,10 +307,11 @@ describe("createGithubIssue", () => {
           url: "https://github.com/openclaw/openclaw/issues/new?title=update",
         },
         runGh,
-        { afterAuthPreflight },
+        { afterAuthPreflight, beforeIssueCreate },
       ),
     ).rejects.toBe(guardError);
     expect(afterAuthPreflight).toHaveBeenCalledOnce();
+    expect(beforeIssueCreate).toHaveBeenCalledOnce();
     expect(runGh).toHaveBeenCalledOnce();
     expect(runGh).toHaveBeenCalledWith(authPreflightArgs, { input: "" });
   });
