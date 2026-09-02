@@ -45,9 +45,11 @@ after service recovery and cleanup finish.
 After a final interactive update failure, **Diagnose update failure** and
 **Report update failure** are separate choices. Reporting first shows the exact
 sanitized issue body and defaults confirmation to **No**. After confirmation,
-OpenClaw uses an authenticated GitHub CLI when available; otherwise it keeps the
-sanitized report locally and provides a prefilled issue link. `--yes`, `--json`,
-non-interactive runs, and managed-service handoffs never submit a report.
+OpenClaw uses the GitHub CLI and keeps the sanitized report locally. If the CLI
+cannot start, it provides a prefilled issue link. If the CLI starts but does not
+return a verified issue URL, the attempt stays pending and offers no replay link
+because an issue may already exist. `--yes`, `--json`, non-interactive runs, and
+managed-service handoffs never submit a report.
 
 ## Options
 
