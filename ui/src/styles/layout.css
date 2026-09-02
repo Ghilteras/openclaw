@@ -1368,7 +1368,8 @@ openclaw-settings-save-indicator:empty {
 
 .sidebar-recent-sessions__head {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22px 22px;
   align-items: center;
   gap: 8px;
   min-height: 24px;
@@ -1389,12 +1390,18 @@ openclaw-settings-save-indicator:empty {
   align-items: center;
   gap: var(--sidebar-row-gap);
   min-width: 0;
-  flex: 1 1 auto;
+  grid-area: 1 / 1;
   padding: 2px 0;
   border: none;
   background: transparent;
   color: inherit;
   text-align: left;
+}
+
+.sidebar-session-group-toggle .sidebar-recent-sessions__label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-session-group-toggle__lead {
@@ -1455,6 +1462,8 @@ openclaw-settings-save-indicator:empty {
 
 .sidebar-session-group-count {
   flex: 0 0 auto;
+  order: 1;
+  margin-left: auto;
   color: var(--muted);
   font-size: calc(10px * var(--control-ui-text-scale));
   font-variant-numeric: tabular-nums;
@@ -1557,6 +1566,7 @@ openclaw-settings-save-indicator:empty {
    reachable on touch pointers where hover does not exist. */
 .sidebar-session-group-actions {
   display: inline-flex;
+  grid-area: 1 / 2;
   align-items: center;
   justify-content: center;
   width: 22px;
@@ -1574,6 +1584,14 @@ openclaw-settings-save-indicator:empty {
     color var(--duration-fast) ease;
 }
 
+a.sidebar-session-group-actions {
+  grid-column: 3;
+}
+
+.sidebar-session-group-actions[aria-disabled="true"] {
+  color: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
 .sidebar-recent-sessions__head:where(:hover, :has(:focus-visible)) .sidebar-session-group-actions,
 .sidebar-session-group-actions[aria-expanded="true"],
 .sidebar-session-group-actions.sidebar-session-sort--filtered {
@@ -1581,7 +1599,7 @@ openclaw-settings-save-indicator:empty {
   pointer-events: auto;
 }
 
-.sidebar-session-group-actions:is(:hover, :focus-visible),
+.sidebar-session-group-actions:not([aria-disabled="true"]):is(:hover, :focus-visible),
 .sidebar-session-group-actions[aria-expanded="true"] {
   background: color-mix(in srgb, var(--bg-hover) 78%, transparent);
   color: var(--text);

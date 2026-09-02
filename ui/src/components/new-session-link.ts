@@ -16,7 +16,10 @@ export function renderNewSessionLink(params: {
 }) {
   const disabled = Boolean(params.disabledReason);
   const href = `${pathForRoute("new-session", params.basePath)}${newSessionSearch(params.agentId, params.target)}`;
-  return html`<openclaw-tooltip .content=${params.disabledReason ?? params.label}>
+  return html`<openclaw-tooltip
+    .content=${params.disabledReason ?? params.label}
+    .openOnClick=${disabled}
+  >
     <a
       class=${params.className}
       role="link"

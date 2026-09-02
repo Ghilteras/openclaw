@@ -5663,6 +5663,8 @@ export const en: TranslationMap & {
       groups: "Groups",
       coding: "Coding",
       catalogViewOptions: "View options",
+      catalogCreateUnavailable:
+        "New sessions are unavailable for {catalog} with this agent. Check its model and runtime settings.",
       hideFromSidebar: "Hide from sidebar",
       sectionHidden: "{section} hidden.",
       sectionHiddenRecovery: "Show it again in Settings > Appearance > Sidebar.",
