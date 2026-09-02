@@ -176,7 +176,7 @@ export async function proveRetentionUi(params: {
       await paginate("05-archive-second-page");
     }
     report.pagination = params.smoke
-      ? "smoke roster fits one page; massive/scale require active and archived page changes"
+      ? "smoke skips pagination; scale/massive verify active and archived page changes"
       : "active and archived page changes observed";
     await page
       .locator("openclaw-sessions-page .sessions-toolbar__search input")
