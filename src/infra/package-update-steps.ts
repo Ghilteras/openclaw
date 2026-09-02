@@ -728,6 +728,7 @@ async function pathEntriesMatch(left: string, right: string): Promise<boolean> {
 
 async function fingerprintPackageTree(packageRoot: string): Promise<string> {
   const fingerprint = createHash("sha256");
+  const hardlinkOwners = new Map<string, string>();
   const visitedCanonicalEntries = new Set<string>();
   const visit = async (entryPath: string, relativePath: string): Promise<void> => {
     const stat = await fs.lstat(entryPath);
@@ -764,6 +765,12 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string> {
     }
     visitedCanonicalEntries.add(await fs.realpath(entryPath));
     if (stat.isFile()) {
+      let hardlinkOwner: string | null = null;
+      if (stat.nlink > 1 && stat.ino !== 0) {
+        const hardlinkKey = `${stat.dev}:${stat.ino}`;
+        hardlinkOwner = hardlinkOwners.get(hardlinkKey) ?? relativePath;
+        hardlinkOwners.set(hardlinkKey, hardlinkOwner);
+      }
       const contents = createHash("sha256");
       const handle = await fs.open(entryPath, "r");
       try {
@@ -786,6 +793,8 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string> {
           "file",
           ...metadata,
           stat.size,
+          stat.nlink,
+          hardlinkOwner,
           contents.digest("hex"),
         ])}\n`,
       );
