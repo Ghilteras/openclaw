@@ -68,22 +68,21 @@ type UpdateFailureReportContext = {
 };
 
 function stripPrivatePaths(value: string): string {
+  // An unquoted final path component and trailing prose are grammatically
+  // indistinguishable. Treat only the physical line containing a path as
+  // private instead of guessing at a filename boundary.
+  const privatePathLine =
+    /\$OPENCLAW_STATE_DIR[\\/]|(?:^|[^\p{L}\p{N}._~-])(?:\/+|\\\\|[A-Za-z]:[\\/]|~[\\/])/u;
   return value
-    .replace(/(["'])\/+[^"'`\r\n]*\1/gu, "$1[redacted-path]$1")
-    .replace(/(["'])\\\\[^"'`\r\n]*\1/gu, "$1[redacted-path]$1")
-    .replace(/(["'])[A-Za-z]:\\[^"'`\r\n]*\1/gu, "$1[redacted-path]$1")
-    .replace(
-      /(^|[^\p{L}\p{N}._~-])\/+(?:(?:[^\s/"'`<>\\]|\\ )+(?: +(?:[^\s/"'`<>\\]|\\ )+)*\/)*(?:[^\s/"'`<>\\]|\\ )+/gmu,
-      "$1[redacted-path]",
+    .split(/(\r\n|[\n\r\u2028\u2029])/u)
+    .map((line) =>
+      /^(?:\r\n|[\n\r\u2028\u2029])$/u.test(line)
+        ? line
+        : privatePathLine.test(line)
+          ? "[redacted-path]"
+          : line,
     )
-    .replace(
-      /\\\\(?:(?:[^\s\\"'`<>]+)(?: +[^\s\\"'`<>]+)*\\)*(?:[^\s\\"'`<>]+)/gu,
-      "[redacted-path]",
-    )
-    .replace(
-      /\b[A-Za-z]:\\(?:(?:[^\s\\"'`<>]+)(?: +[^\s\\"'`<>]+)*\\)*(?:[^\s\\"'`<>]+)/gu,
-      "[redacted-path]",
-    );
+    .join("");
 }
 
 function stripExecutableRecoveryCommands(value: string): string {

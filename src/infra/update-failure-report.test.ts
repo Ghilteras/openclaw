@@ -43,7 +43,8 @@ describe("update failure report", () => {
         attemptId: "attempt-redaction",
         error: `opaque raw chat payload token=${secret} ${home}/private/error.log`,
         result: failedUpdate({
-          reason: "build-failed at /Users/Alice Smith/private/project after checksum mismatch",
+          reason:
+            "build-failed at /Users/Alice Smith/private/customer list.txt after checksum mismatch",
           steps: [
             {
               ...failedUpdate().steps[0]!,
@@ -81,16 +82,15 @@ describe("update failure report", () => {
     expect(saved).toContain("Failed phase:");
     expect(saved).toContain("Update target:");
     expect(saved).toContain("🦞");
-    expect(saved).toContain("after checksum mismatch");
-    expect(saved).toContain("after quoted marker");
-    expect(saved).toContain("after unc marker");
-    expect(saved).toContain("after windows marker");
+    expect(saved).toContain("[redacted-path]");
     expect(saved).not.toContain("�");
     expect(saved).not.toContain(secret);
     expect(saved).not.toContain(home);
     expect(saved).not.toContain("/var/lib/openclaw");
     expect(saved).not.toContain("/Users/alice");
     expect(saved).not.toContain("Alice Smith");
+    expect(saved).not.toContain("customer list.txt");
+    expect(saved).not.toContain("after checksum mismatch");
     expect(saved).not.toContain("https://example.com/?next=/docs");
     expect(saved).not.toContain("opaque raw chat payload");
     expect(saved).not.toContain("raw-command-secret");
