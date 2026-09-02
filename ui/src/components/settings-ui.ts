@@ -202,6 +202,7 @@ export function renderSettingsToggle(props: {
   checked: boolean;
   onChange: (checked: boolean) => boolean | void;
   disabled?: boolean;
+  ariaDisabled?: boolean;
   ariaLabel: string;
 }): TemplateResult {
   return html`
@@ -210,6 +211,7 @@ export function renderSettingsToggle(props: {
       size="s"
       .checked=${live(props.checked)}
       ?disabled=${props.disabled ?? false}
+      aria-disabled=${props.ariaDisabled ? "true" : "false"}
       @change=${(event: Event) => {
         const target = event.currentTarget as HTMLElement & { checked: boolean };
         if (props.onChange(target.checked) === false) {

@@ -237,33 +237,30 @@ Home can include a bounded, quoted work-context reference with your message. Tha
 
 ## Manage plugins
 
-Open **Plugins** in the sidebar, or use `/settings/plugins` relative to the
-configured Control UI base path, to browse and manage plugins without leaving
-the Control UI. For example, a base path of `/openclaw` uses
-`/openclaw/settings/plugins`. The page is always available, even when every
-optional plugin is disabled.
+Open **Plugins** in the sidebar, or use `/plugins` relative to the configured
+Control UI base path. For example, a base path of `/openclaw` uses
+`/openclaw/plugins`. The page is always available, even when every optional
+plugin is disabled.
 
-Plugins is a hub with four tabs: **Installed** and **Discover** manage plugin
-code at `/settings/plugins`, **Skills** hosts the per-agent skill manager at
-`/skills`, and **Workshop** hosts Skill Workshop proposal review at
-`/skills/workshop`. Each tab keeps its own URL, and the sidebar shows the
-single Plugins entry for all of them.
+The workspace has **Plugins** and **Skills** tabs. **Plugins** opens the
+operator-facing **Your plugins** inventory. **Skills** opens the per-agent skill
+manager at `/skills` and offers **Workshop** as a secondary action.
 
-The **Installed** tab shows the full local inventory grouped by category, with
-overview counts. Each row opens a detail view; its overflow (`…`) menu enables
-or disables the plugin and offers **Remove** for externally installed plugins.
-It also lists configured [MCP servers](/cli/mcp) and supports adding, disabling,
-and removing them inline. The same server controls live on **Settings → MCP**.
-The **Discover** tab is the store: featured plugins included with OpenClaw,
-official external plugins, and one-click MCP connectors for popular services.
-Typing in the search box queries
-[ClawHub](https://clawhub.ai/plugins) inline and appends a **From ClawHub**
-section with download counts and source-verification badges. Deep links can
-target the store directly with `/settings/plugins/discover`.
+**Your plugins** shows up to 12 installed plugins, prioritizing enabled plugins,
+plugins that need setup, and plugins that need attention. Use the expanding
+search field to filter the full inventory, or choose **Show all** to browse every
+installed plugin. Each card shows the plugin description and current state. An
+administrator can use the switch on the card to enable or disable the plugin.
+Choose a card or its settings action to open that plugin's details.
+
+Use the settings action beside **Your plugins**, or open `/settings/plugins`, to
+see the complete plugin inventory grouped by category. It also lists
+configured [MCP servers](/cli/mcp) and supports adding, disabling, and removing
+them inline. The same server controls live on **Settings → MCP**.
 
 The **Skills** tab keeps the skill status report, enable/disable toggles, API
-key entry, and inline ClawHub skill search, scoped to the selected agent. The
-**Workshop** tab keeps the Skill Workshop board and Today review flow for
+key entry, and inline ClawHub skill search, scoped to the selected agent.
+**Workshop** keeps the Skill Workshop board and Today review flow for
 [skill proposals](/tools/skill-workshop). **Find skill ideas** reviews a bounded
 window of substantial sessions from newest to oldest and leaves any results as
 pending proposals. The panel shows cumulative coverage; **Scan earlier work**
@@ -271,26 +268,22 @@ continues from the persisted cursor, then becomes **Scan new work** after older
 history is exhausted. Manual history review works while autonomous self-learning
 is disabled and uses the selected agent's configured model.
 
-Included plugins are already present on the Gateway and show **Enable** or
-**Disable** instead of **Install**. For example, Workboard is included with
-OpenClaw but disabled by default, so its action is **Enable**. Bundled plugins
-cannot be removed, only disabled.
+Included plugins are already present on the Gateway. For example, Workboard is
+included with OpenClaw but disabled by default, so its card switch starts off.
+Bundled plugins can be disabled but not removed.
 
-Reading the catalog and searching ClawHub require `operator.read`. Installing,
-enabling, disabling, or removing a plugin and changing MCP servers require
-`operator.admin`; those actions stay disabled for read-only operators.
+Reading the inventory requires `operator.read`. Enabling or disabling a plugin
+and changing MCP servers require `operator.admin`; those actions stay disabled
+for read-only operators.
 
-ClawHub installs run through the Gateway and keep the same trust, integrity,
-and plugin-install policy checks as other Gateway-mediated installs. Installing
-or removing plugin code requires a Gateway restart. Enabling or disabling an
-installed plugin can apply without a restart when the plugin and current
-Gateway runtime support it; otherwise the UI reports that a restart is
-required. OAuth-backed MCP connectors need a one-time
+Enabling or disabling an installed plugin can apply without a restart when the
+plugin and current Gateway runtime support it; otherwise the UI reports that a
+restart is required. OAuth-backed MCP connectors need a one-time
 `openclaw mcp login <name>` from the CLI after they are added.
 
-The page intentionally focuses on inventory, discovery, install, enablement,
-and removal. Use [`openclaw plugins`](/cli/plugins) for arbitrary npm, git, or
-local-path sources, updates, and advanced plugin configuration.
+The page intentionally focuses on the installed inventory, plugin details, and
+enablement. Use [`openclaw plugins`](/cli/plugins) for install sources, updates,
+removal, and advanced plugin configuration.
 
 ## Apps and extensions
 
@@ -464,7 +457,7 @@ This label does not change which request the approval buttons resolve.
   <Accordion title="Cron, tasks, plugins, skills, devices, exec approvals">
     - Automations (cron jobs): stat cards (automation count, failing count, scheduler state, next wake) above an Automations/Run history tab switch; the Automations tab lists jobs in a filterable table (All/Active/Paused, search, schedule and last-run filters, per-row action menu) with starter suggestions below, and the Run history tab shows recent runs across all automations (`cron.*`).
     - Tasks: live active and recent background task ledger with linked sessions and cancellation (`tasks.*`). Chat's Background tasks rail groups running and finished work; selecting a rail row opens that task's live status and transcript or prompt/output inspector in the detail sidebar.
-    - Plugins: browse the installed inventory and curated store, search ClawHub, install and remove plugin code, and enable or disable installed plugins (`plugins.*`); MCP server rows edit `mcp.servers` through the config methods.
+    - Plugins: browse and search the installed inventory, open plugin settings, and enable or disable installed plugins (`plugins.*`); MCP server rows in settings edit `mcp.servers` through the config methods.
     - Skills: status, enable/disable, install, API key updates (`skills.*`).
     - Devices: one inventory joins paired device records, the node catalog, and live presence (`device.pair.list`, `node.list`, `system-presence`). The Gateway host is pinned first; paired clients show connection status, roles, tokens, capabilities, and commands. Duplicate pairings collapse into an expandable group, and **Clean up N stale** bulk-removes admin-confirmed offline duplicates that were auto-approved (silent local, trusted-CIDR, or SSH-verified) or predate approval provenance. Entries can be removed (`node.pair.remove`, `device.pair.remove`), device pairing and node re-approvals handled inline (`device.pair.*`, `node.pair.approve`/`reject`), and mobile setup codes created from the same card.
       Resource meters show Gateway host load, memory, disk, and uptime from `system.info`, and node meters appear when the node reports `hostStats`. The connected page refreshes host stats every 60 seconds and alongside quiet node reloads; node stats also refresh on `node.hostStats` events. Capability chips explain each capability on hover. **Desktop** opens that machine in a standalone desktop window (the docked Desktop panel stays hidden on Settings routes) and appears only when the Gateway reports an available desktop environment. For a node, enable `desktop.host.enabled: true` in its config, add `desktop.stream` to `gateway.nodes.commands.allow`, and restart both the node and Gateway; the node then reconnects with a pending reapproval for the new command, which you approve inline or with `openclaw nodes approve <requestId>`. A dashed Desktop chip explains this setup when only the command is advertised.
@@ -486,7 +479,7 @@ This label does not change which request the approval buttons resolve.
     - Model Setup (`/settings/model-setup`) is a subpage of Model Providers, launched from its header. Detection runs on the page without holding navigation open: **Back to app** remains available while checks finish, and returning to setup starts a fresh check. Activation waits for the Gateway to apply the verified configuration; if it cannot apply it in place, setup shows that a restart is required. Verification stays unavailable until the saved configuration is active and pending restart work has finished, including after reconnecting or reopening the page. Setup keeps your selected model and displays the Gateway's reason; after the restart, use **Try again** or **Verify & use selected model** if the page has not continued automatically.
     - Agents: a settings page (**Settings → Agents**, `/settings/agents`) with an **Agent defaults** row for the shared template plus per-agent tabs (Overview, Files, Tools, Skills, Channels, Automations, Memory). The Overview tab edits the agent's identity — display name, emoji, and an avatar image that is downscaled and size-bounded in the browser before `agents.update`. Saving stores configured identity fields and mirrors them to the workspace `IDENTITY.md`; configured values take precedence over manual edits to the same file fields. The Tools tab shows the effective GitHub execution account and keeps per-agent overrides under advanced admin settings, with device authorization and one-use PAT setup. Common personal and System connections live on Profile.
     - Profile: a settings page with the default agent's identity, the authenticated person's editable profile and verified sign-in identity, separate Git co-author consent, and My GitHub/System GitHub connections. **Usage statistics** opens the usage view rather than loading all usage statistics into Profile.
-    - MCP has a dedicated settings page with server rows (transport, enablement, OAuth/filter/parallel summaries), direct add/enable/disable/remove controls, common operator commands, and the scoped `mcp` config editor. The Plugins page remains the home for one-click connectors and discovery.
+    - MCP has a dedicated settings page with server rows (transport, enablement, OAuth/filter/parallel summaries), direct add/enable/disable/remove controls, common operator commands, and the scoped `mcp` config editor.
     - Model Providers: a settings page listing every configured model provider with its brand icon, auth state (`models.authStatus`), model availability (`models.list`), live plan/quota/billing data where the provider reports it (`usage.status`), and local session spend for the last 30 days (`sessions.usage`). The initial page reuses the Gateway's prepared model catalog. **Refresh** explicitly discovers the live provider catalog, then re-reads credential state and provider usage; discovery failures stay visible without discarding the last successful model list. If the Gateway is preparing model authentication, the page shows an unavailable-status warning rather than treating it as a lost connection or a sign-out. Use **Refresh** after setup finishes; auth-status diagnostics do not block chat bootstrap.
     - Connection: a settings page (under **Connections**) owning the dashboard's own gateway link — WebSocket URL, gateway token, password, and default session key — plus the latest handshake snapshot (status, uptime, tick interval, last channels refresh). The offline login gate handles the disconnected case; this page edits the connection while connected.
     - Apply and restart with validation (`config.apply`), then wake the last active session.
@@ -578,7 +571,7 @@ Typical workflow:
 1. Open **MCP** from the sidebar.
 2. Check the summary cards for total, enabled, OAuth, and filtered server counts.
 3. Review each server row for transport, enablement, auth, filters, timeouts, and command hints.
-4. Add, enable, disable, or remove servers directly on the MCP page. Choose Streamable HTTP, SSE, or stdio explicitly; stdio command lines accept quoted arguments such as paths with spaces. Use the **Plugins** page for one-click connectors and discovery.
+4. Add, enable, disable, or remove servers directly on the MCP page. Choose Streamable HTTP, SSE, or stdio explicitly; stdio command lines accept quoted arguments such as paths with spaces.
 5. Edit the scoped `mcp` config section for advanced server fields such as environment variables, working directories, headers, TLS/mTLS paths, OAuth metadata, tool filters, and Codex projection metadata.
 6. Use **Save** for a config write, or **Save & Publish** when the running Gateway should apply the changed config.
 7. Run `openclaw mcp status --verbose`, `openclaw mcp doctor --probe`, or `openclaw mcp reload` from a terminal for static diagnostics, live proof, or cached-runtime disposal.
@@ -690,7 +683,7 @@ When this preference is off, the macOS app keeps its native link-browser sidebar
 Select **+** beside the chat composer to open attachments and session capabilities in one menu:
 
 - **Skills** enables or disables individual skills for this session.
-- **Connectors** enables or disables configured MCP servers for this session. A **session** tag marks values that differ from the inherited configuration. **Browse connectors** opens the Plugins page on **Discover**.
+- **Connectors** enables or disables configured MCP servers for this session. A **session** tag marks values that differ from the inherited configuration.
 - **Web search** enables or disables managed web search plus native OpenAI and Codex search for this session.
 - **Manage plugins** opens the Plugins page.
 

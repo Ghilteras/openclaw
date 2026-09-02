@@ -110,6 +110,7 @@ describe("navigationIconForRoute", () => {
       agents: "bot",
       skills: "zap",
       plugins: "puzzle",
+      "plugin-settings": "puzzle",
       "skill-workshop": "wrench",
       devices: "monitorSmartphone",
       "cloud-workers": "server",
@@ -213,6 +214,7 @@ describe("titleForRoute", () => {
       agents: "Agents",
       skills: "Skills",
       plugins: "Plugins",
+      "plugin-settings": "Plugins",
       "skill-workshop": "Skill Workshop",
       devices: "Devices",
       "cloud-workers": "Cloud workers",
@@ -266,6 +268,7 @@ describe("subtitleForRoute", () => {
       agents: "Workspaces, tools, identities.",
       skills: "Skills and API keys.",
       plugins: "Install and manage optional capabilities.",
+      "plugin-settings": "Install and manage optional capabilities.",
       "skill-workshop": "Review, refine, and apply proposals before they become live skills.",
       devices: "Paired devices, pairing approvals, and exec bindings.",
       "cloud-workers": "Profiles and machine sizes for cloud sessions.",
@@ -305,7 +308,8 @@ describe("pathForRoute", () => {
     expect(pathForRoute("connection")).toBe("/settings/connection");
     expect(pathForRoute("debug")).toBe("/debug");
     expect(pathForRoute("logs")).toBe("/logs");
-    expect(pathForRoute("plugins")).toBe("/settings/plugins");
+    expect(pathForRoute("plugins")).toBe("/plugins");
+    expect(pathForRoute("plugin-settings")).toBe("/settings/plugins");
     expect(pathForRoute("approvals")).toBe("/settings/approvals");
     expect(pathForRoute("labs")).toBe("/settings/labs");
     expect(pathForRoute("cloud-workers")).toBe("/settings/cloud-workers");
@@ -344,8 +348,8 @@ describe("routeIdFromPath", () => {
     expect(routeIdFromPath("/logs")).toBe("logs");
     expect(routeIdFromPath("/dreaming")).toBeNull();
     expect(routeIdFromPath("/dreams")).toBeNull();
-    expect(routeIdFromPath("/settings/plugins")).toBe("plugins");
-    expect(routeIdFromPath("/plugins")).toBeNull();
+    expect(routeIdFromPath("/settings/plugins")).toBe("plugin-settings");
+    expect(routeIdFromPath("/plugins")).toBe("plugins");
     expect(routeIdFromPath("/settings/about")).toBe("about");
     expect(routeIdFromPath("/settings/labs")).toBe("labs");
     expect(routeIdFromPath("/labs")).toBeNull();
@@ -359,7 +363,7 @@ describe("routeIdFromPath", () => {
   it("handles base paths", () => {
     expect(routeIdFromPath("/ui/chat", "/ui")).toBe("chat");
     expect(routeIdFromPath("/apps/openclaw/sessions", "/apps/openclaw")).toBe("sessions");
-    expect(routeIdFromPath("/ui/settings/plugins", "/ui")).toBe("plugins");
+    expect(routeIdFromPath("/ui/settings/plugins", "/ui")).toBe("plugin-settings");
     expect(routeIdFromPath("/xx/chat/main", "/ui")).toBeNull();
   });
 
@@ -518,6 +522,7 @@ describe("SIDEBAR_NAV_ROUTES", () => {
     expect(isPluginsHubRoute("plugins")).toBe(true);
     expect(isPluginsHubRoute("skills")).toBe(true);
     expect(isPluginsHubRoute("skill-workshop")).toBe(true);
+    expect(isPluginsHubRoute("plugin-settings")).toBe(false);
     expect(isPluginsHubRoute("sessions")).toBe(false);
   });
 
@@ -537,6 +542,7 @@ describe("SIDEBAR_NAV_ROUTES", () => {
       "agents",
       "labs",
       "model-providers",
+      "plugin-settings",
       "mcp",
       "memory",
       "automation",
