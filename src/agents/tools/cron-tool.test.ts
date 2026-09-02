@@ -1502,7 +1502,6 @@ describe("cron tool", () => {
       message: "hello",
       lightContext: true,
       fallbacks: [" openrouter/gpt-4.1-mini ", "anthropic/claude-haiku-3-5"],
-      toolsAllow: [" exec ", " read "],
       failureAlert: { after: 3, cooldownMs: 60_000 },
     });
 
@@ -2559,7 +2558,6 @@ describe("cron tool", () => {
       id: "job-5",
       model: " openrouter/deepseek/deepseek-r1 ",
       fallbacks: [" openrouter/gpt-4.1-mini ", "anthropic/claude-haiku-3-5"],
-      toolsAllow: [" exec ", " read "],
     });
 
     const params = readGatewayCall(1).params as
@@ -2831,7 +2829,7 @@ describe("cron tool", () => {
       model: null,
     });
   });
-  it.each([undefined, null, [], ["exec"], ["*"]])(
+  it.each([undefined, null])(
     "creates a schedule without capturing a per-job tool list (%j)",
     async (toolsAllow) => {
       const resolveCreatorToolAuthority = vi.fn(async () => {
@@ -2856,6 +2854,24 @@ describe("cron tool", () => {
       const params = expectSingleGatewayCallMethod("cron.add");
       expect(params?.payload).toEqual({ kind: "agentTurn", message: "Read the project notes" });
       expect(params?.agentId).toBe("main");
+    },
+  );
+
+  it.each([{ toolsAllow: [] }, { toolsAllow: ["read"] }, { toolsAllow: ["*"] }])(
+    "rejects an obsolete tool restriction %j before writing",
+    async ({ toolsAllow }) => {
+      await expect(
+        createTestCronTool().execute("obsolete-cap", {
+          action: "add",
+          job: {
+            name: "task",
+            schedule: { kind: "every", everyMs: 60_000 },
+            sessionTarget: "isolated",
+            payload: { kind: "agentTurn", message: "run", toolsAllow },
+          },
+        }),
+      ).rejects.toThrow("Per-job tool restrictions are no longer supported");
+      expect(callGatewayMock).not.toHaveBeenCalled();
     },
   );
 

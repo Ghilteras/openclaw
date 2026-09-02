@@ -28,6 +28,7 @@ import {
 import { resolveCronDeliveryPreviews } from "../../cron/delivery-preview.js";
 import { assertCronDeliveryInputNonBlankFields } from "../../cron/delivery-target-validation.js";
 import { resolveCronListSnapshotRevision } from "../../cron/list-snapshot-revision.js";
+import { assertNoNewCronToolAllowlist } from "../../cron/normalize-payload.js";
 import { normalizeCronJobCreate, normalizeCronJobPatch } from "../../cron/normalize.js";
 import { toPublicCronJob } from "../../cron/public-job.js";
 import { CRON_JOB_SCRATCH_MAX_BYTES } from "../../cron/scratch-contract.js";
@@ -806,6 +807,7 @@ export const cronHandlers: GatewayRequestHandlers = {
         : undefined;
     let normalized: unknown;
     try {
+      assertNoNewCronToolAllowlist(params);
       assertCronDeliveryInputNonBlankFields((params as { delivery?: unknown } | null)?.delivery);
       normalized =
         normalizeCronJobCreate(params, {
@@ -939,6 +941,7 @@ export const cronHandlers: GatewayRequestHandlers = {
     let normalizedPatch: ReturnType<typeof normalizeCronJobPatch>;
     try {
       const rawPatch = (params as { patch?: unknown } | null)?.patch;
+      assertNoNewCronToolAllowlist(rawPatch);
       const rawDisplayName =
         rawPatch && typeof rawPatch === "object"
           ? (rawPatch as { displayName?: unknown }).displayName

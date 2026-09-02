@@ -13,6 +13,20 @@ import { snapshotOwnCronRecord } from "./own-record.js";
 
 type UnknownRecord = Record<string, unknown>;
 
+/** Reject newly authored caps without invalidating legacy rows on disk. */
+export function assertNoNewCronToolAllowlist(value: unknown): void {
+  if (!isRecord(value)) {
+    return;
+  }
+  for (const input of [value, value.payload]) {
+    if (isRecord(input) && Object.hasOwn(input, "toolsAllow") && input.toolsAllow != null) {
+      throw new Error(
+        "Per-job tool restrictions are no longer supported. Remove toolsAllow or --tools and configure tools on the owning agent; scheduled work uses its current permissions.",
+      );
+    }
+  }
+}
+
 function normalizeTrimmedStringArray(
   value: unknown,
   options?: { allowNull?: boolean },

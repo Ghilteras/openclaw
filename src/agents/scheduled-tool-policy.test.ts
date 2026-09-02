@@ -5,12 +5,12 @@ import {
 } from "./scheduled-tool-policy.js";
 
 describe("resolveScheduledToolPolicyContext", () => {
-  it("requires both a persisted cap and valid server provenance", () => {
+  it("requires valid server provenance, not a persisted cap", () => {
     expect(
       resolveScheduledToolPolicyContext({
         scheduledToolPolicy: { version: 1, mode: "trusted" },
       }),
-    ).toBeUndefined();
+    ).toEqual({ version: 1, mode: "trusted" });
     expect(
       resolveScheduledToolPolicyContext({
         toolsAllow: ["write"],
@@ -27,10 +27,9 @@ describe("resolveScheduledToolPolicyContext", () => {
     ).toBeUndefined();
   });
 
-  it("normalizes account provenance for explicitly capped runs", () => {
+  it("normalizes account provenance independently of legacy caps", () => {
     expect(
       resolveScheduledToolPolicyContext({
-        toolsAllow: [],
         scheduledToolPolicy: {
           version: 1,
           mode: "account",
@@ -139,7 +138,7 @@ describe("resolveScheduledToolCallerContext", () => {
     ).toEqual({ accountId: "creator", channel: undefined, local: true, scheduled: true });
   });
 
-  it("attaches the restrict-only exec pin from the persisted job field", () => {
+  it("does not turn a legacy exec pin into current runtime policy", () => {
     expect(
       resolveScheduledToolPolicyContext({
         toolsAllow: ["exec"],
@@ -149,11 +148,10 @@ describe("resolveScheduledToolCallerContext", () => {
     ).toEqual({
       version: 1,
       mode: "trusted",
-      execTarget: { host: "gateway", ask: "always" },
     });
   });
 
-  it("preserves a trusted context's pin when re-resolved through the same API", () => {
+  it("does not resurrect a legacy pin when re-resolving trusted owner context", () => {
     const first = resolveScheduledToolPolicyContext({
       toolsAllow: ["exec"],
       scheduledToolPolicy: { version: 1, mode: "trusted" },
@@ -166,11 +164,10 @@ describe("resolveScheduledToolCallerContext", () => {
     expect(again).toEqual({
       version: 1,
       mode: "trusted",
-      execTarget: { host: "gateway", ask: "always" },
     });
   });
 
-  it("preserves the pin when re-resolving an already-resolved context", () => {
+  it("keeps account identity without replaying a legacy execution target", () => {
     const first = resolveScheduledToolPolicyContext({
       toolsAllow: ["exec"],
       scheduledToolPolicy: {
@@ -181,13 +178,14 @@ describe("resolveScheduledToolCallerContext", () => {
       },
       execTarget: { version: 1, host: "gateway", ask: "always" },
     });
-    expect(first?.execTarget).toEqual({ host: "gateway", ask: "always" });
+    expect(first?.execTarget).toBeUndefined();
     const again = resolveScheduledToolPolicyContext({
       toolsAllow: ["exec"],
       scheduledToolPolicy: first,
       execTarget: first?.execTarget,
     });
-    expect(again?.execTarget).toEqual({ host: "gateway", ask: "always" });
+    expect(again?.execTarget).toBeUndefined();
+    expect(again?.ownerAccountId).toBe("creator");
   });
 
   it("ignores invalid exec pin shapes instead of widening or failing", () => {

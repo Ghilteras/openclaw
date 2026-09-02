@@ -65,7 +65,7 @@ export function registerCronMutationOptions(command: Command, mode: "add" | "edi
       "Use lightweight bootstrap context for agent jobs",
       create ? false : undefined,
     )
-    .option("--tools <list>", "Tool allow-list (e.g. exec,read,write or exec read write)")
+    .option("--tools <list>", "Removed: configure tools on the owning agent instead")
     .option("--announce", "Fallback-deliver final text to a chat", create ? false : undefined)
     .option("--deliver", "Deprecated (use --announce). Fallback-delivers final text to a chat.")
     .option("--no-deliver", "Disable runner fallback delivery")

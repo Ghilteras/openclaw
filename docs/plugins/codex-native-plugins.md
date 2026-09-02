@@ -172,7 +172,9 @@ that access. Scheduling does not bypass approvals or grant access to another
 agent's account.
 
 There is no separate read-only or narrower per-job tool policy. Use an agent
-with the appropriate permissions for scheduled work. See
+with the appropriate permissions for scheduled work. New `toolsAllow` or CLI
+`--tools` requests are rejected with guidance to configure the owning agent;
+legacy stored values are ignored, not advertised as an enforced restriction. See
 [Automations](/automation/cron-jobs#codex-apps-in-scheduled-automations).
 
 ## Manage plugins from chat
