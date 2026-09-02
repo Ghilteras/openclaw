@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { createAssistantMessageEventStream, type Model } from "openclaw/plugin-sdk/llm";
 import { afterEach, describe, expect, it } from "vitest";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
+import { redactModelVisibleToolPayloadTextWithConfig } from "../logging/redact.js";
 import { createOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   createOpenClawReadTool,
@@ -264,8 +265,11 @@ describe("fresh producer results through persistence and model guards", () => {
         manager.flushPendingPersistence();
         const reloaded = SessionManager.open(scope, state.workspaceDir).buildSessionContext()
           .messages;
-        expect(text(toolResult(reloaded, 2))).toBe(finalText);
-        expect(text(toolResult(await dispatch(reloaded, context), 2))).toBe(finalText);
+        // Persistence deliberately redacts token-shaped strings. A random
+        // counterScope can match one; that is not output-budget truncation.
+        const persistedText = redactModelVisibleToolPayloadTextWithConfig(finalText);
+        expect(text(toolResult(reloaded, 2))).toBe(persistedText);
+        expect(text(toolResult(await dispatch(reloaded, context), 2))).toBe(persistedText);
       } finally {
         runtime.cleanup();
         await state.cleanup();
