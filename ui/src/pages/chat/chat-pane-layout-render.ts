@@ -158,6 +158,23 @@ export abstract class ChatPaneLayoutRender extends ChatPaneBrowserAnnotationRend
       desktopAvailable,
       desktopSource: resolveChatPaneDesktopTarget(selectedSession),
       hasBoard: !this.compact && board.hasBoard,
+      canvasCommentAvailable:
+        !this.compact &&
+        board.face === "dashboard" &&
+        board.snapshot.widgets.some(
+          (widget) =>
+            widget.tabId === board.activeTabId &&
+            widget.contentKind === "html" &&
+            widget.grantState !== "pending" &&
+            widget.grantState !== "rejected",
+        ),
+      canvasCommentMode:
+        this.canvasCommentTarget ===
+        `${this.resolveBoardSessionKey(board.snapshot.sessionKey)}\u0000${board.activeTabId}`,
+      onToggleCanvasComment: () => {
+        const target = `${this.resolveBoardSessionKey(board.snapshot.sessionKey)}\u0000${board.activeTabId}`;
+        this.canvasCommentTarget = this.canvasCommentTarget === target ? "" : target;
+      },
       chat,
       workspace: renderSessionWorkspaceRail(sessionWorkspace, { embedded: true }),
       tasks: renderBackgroundTasksRail(backgroundTasks, { embedded: true }),

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { stripInboundMetadata } from "../../../../src/auto-reply/reply/strip-inbound-meta.ts";
 import { GatewayRequestError } from "../../api/gateway.ts";
 import type { ChatAttachment } from "../../lib/chat/chat-types.ts";
 import {
@@ -30,6 +31,11 @@ import { reconcileChatRunLifecycle } from "./run-lifecycle.ts";
 
 const attachmentsToRelease: ChatAttachment[] = [];
 const attachmentDataUrl = "data:application/pdf;base64,JVBERi0xLjQK";
+
+function expectAnnotationPrompt(message: unknown, contexts: string[], userText: string): void {
+  expect(message).toContain(JSON.stringify({ annotations: contexts }));
+  expect(stripInboundMetadata(String(message))).toBe(userText);
+}
 
 beforeEach(() => {
   installOutboxBrowserStorage();
@@ -257,14 +263,20 @@ describe("composeBrowserAnnotationContext", () => {
   it("materializes an annotation-only message", () => {
     const attachment = createBrowserAnnotationAttachment("only", "Inspect the marked region.");
 
-    expect(composeBrowserAnnotationContext("", [attachment])).toBe("Inspect the marked region.");
+    expectAnnotationPrompt(
+      composeBrowserAnnotationContext("", [attachment]),
+      ["Inspect the marked region."],
+      "",
+    );
   });
 
   it("prepends annotation context to the user's draft", () => {
     const attachment = createBrowserAnnotationAttachment("mixed", "Browser context");
 
-    expect(composeBrowserAnnotationContext("Please fix this", [attachment])).toBe(
-      "Browser context\n\nPlease fix this",
+    expectAnnotationPrompt(
+      composeBrowserAnnotationContext("Please fix this", [attachment]),
+      ["Browser context"],
+      "Please fix this",
     );
   });
 
@@ -272,8 +284,10 @@ describe("composeBrowserAnnotationContext", () => {
     const first = createBrowserAnnotationAttachment("first", "First context");
     const second = createBrowserAnnotationAttachment("second", "Second context");
 
-    expect(composeBrowserAnnotationContext("Compare them", [first, second])).toBe(
-      "First context\n\nSecond context\n\nCompare them",
+    expectAnnotationPrompt(
+      composeBrowserAnnotationContext("Compare them", [first, second]),
+      ["First context", "Second context"],
+      "Compare them",
     );
   });
 
@@ -283,8 +297,10 @@ describe("composeBrowserAnnotationContext", () => {
     const attachments = [removed, remaining];
     attachments.splice(0, 1);
 
-    expect(composeBrowserAnnotationContext("Continue", attachments)).toBe(
-      "Remaining context\n\nContinue",
+    expectAnnotationPrompt(
+      composeBrowserAnnotationContext("Continue", attachments),
+      ["Remaining context"],
+      "Continue",
     );
   });
 });
@@ -299,7 +315,7 @@ describe("handleSendChat browser annotation context", () => {
 
     await handleSendChat(host);
 
-    expect(findChatSendPayload(host).message).toBe("Inspect this page");
+    expectAnnotationPrompt(findChatSendPayload(host).message, ["Inspect this page"], "");
   });
 
   it("routes /new before materializing annotation context", async () => {
@@ -370,7 +386,7 @@ describe("handleSendChat browser annotation context", () => {
 
     await handleSendChat(host);
 
-    expect(findChatSendPayload(host).message).toBe("Review the page\n\nwait");
+    expectAnnotationPrompt(findChatSendPayload(host).message, ["Review the page"], "wait");
     expect(host.request).not.toHaveBeenCalledWith("chat.abort", expect.anything());
   });
 
@@ -398,7 +414,11 @@ describe("handleSendChat browser annotation context", () => {
     await handleSendChat(host);
 
     const modelPrompt = findChatSendPayload(host);
-    expect(modelPrompt.message).toBe("Review the annotated page\n\nExplain the highlighted issue");
+    expectAnnotationPrompt(
+      modelPrompt.message,
+      ["Review the annotated page"],
+      "Explain the highlighted issue",
+    );
     expect(modelPrompt.attachments).toEqual([expect.objectContaining({ mimeType: "image/png" })]);
     expect(host.chatAttachments).toEqual([]);
   });
@@ -547,7 +567,11 @@ describe("handleSendChat browser annotation context", () => {
 
     await handleSendChat(host);
 
-    expect(findChatSendPayload(host).message).toBe("Review the annotated page\n\n/review-this");
+    expectAnnotationPrompt(
+      findChatSendPayload(host).message,
+      ["Review the annotated page"],
+      "/review-this",
+    );
   });
 
   it.each(["annotation", "home"])(
@@ -574,7 +598,7 @@ describe("handleSendChat browser annotation context", () => {
       const expected =
         source === "home"
           ? "Use the marked area\n\nStable browser context"
-          : "Stable browser context\n\nUse the marked area";
+          : composeBrowserAnnotationContext("Use the marked area", [attachment]);
 
       const send = handleSendChat(host);
       await vi.waitFor(() => expect(host.chatQueue).toHaveLength(1));

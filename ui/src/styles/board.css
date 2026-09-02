@@ -330,6 +330,39 @@ openclaw-board-widget-cell {
   width: 100%;
 }
 
+.board-widget__comment-overlay {
+  cursor: crosshair;
+  inset: 0;
+  overflow: hidden;
+  position: absolute;
+  z-index: 6;
+}
+
+.board-widget__comment-highlight {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 80%);
+  pointer-events: none;
+  position: absolute;
+}
+
+.board-widget__comment-label {
+  background: var(--accent-fill);
+  border-radius: 5px;
+  color: var(--accent-fg);
+  font-size: 11px;
+  left: 10px;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
+  padding: 4px 7px;
+  pointer-events: none;
+  position: absolute;
+  text-overflow: ellipsis;
+  top: 10px;
+  white-space: nowrap;
+}
+
 .board-widget__plugin-loading,
 .board-widget__disabled-plugin,
 .workboard-widget__state {

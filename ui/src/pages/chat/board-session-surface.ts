@@ -30,6 +30,8 @@ type BoardSessionSurfaceProps = {
   divider: TemplateResult;
   canMutate: boolean;
   canGrant: boolean;
+  commentMode?: boolean;
+  onCommentCaptured?: () => void;
   callbacks: BoardViewCallbacks;
   widgetFrameUrl: BoardWidgetFrameUrl;
   workboardCardChip?: WorkboardCardChipProps | null;
@@ -193,6 +195,8 @@ function renderBoardView(props: BoardSessionSurfaceProps) {
         .callbacks=${props.callbacks}
         .canMutate=${props.canMutate}
         .canGrant=${props.canGrant}
+        .commentMode=${props.commentMode}
+        @canvas-comment-captured=${props.onCommentCaptured}
       ></openclaw-board-view>
     </div>
   `;

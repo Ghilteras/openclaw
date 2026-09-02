@@ -357,6 +357,7 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
 
   protected renderBoardPrimary(board: ResolvedBoardView, chat: TemplateResult) {
     const sessionKey = this.resolveBoardSessionKey(board.snapshot.sessionKey);
+    const commentTarget = `${sessionKey}\u0000${board.activeTabId}`;
     const shouldRender =
       board.hasBoard &&
       Boolean(sessionKey) &&
@@ -373,6 +374,10 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
         divider: this.renderBoardDivider("bottom"),
         canMutate: board.provider.canMutate,
         canGrant: board.provider.canGrant,
+        commentMode: this.canvasCommentTarget === commentTarget,
+        onCommentCaptured: () => {
+          this.canvasCommentTarget = "";
+        },
         callbacks: {
           appViewGeneration: board.provider.appViewGeneration,
           applyOps: (ops) => board.provider.applyOps(ops),

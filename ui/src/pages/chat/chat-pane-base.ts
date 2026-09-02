@@ -302,6 +302,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     dock: BoardTab["chatDock"];
   } | null = null;
   @litState() protected boardChatDockSize: BoardChatDockSize = boardChatDockLayout.load();
+  @litState() protected canvasCommentTarget = "";
   @litState() protected resetConfirmationOpen = false;
   protected deferredSessionHydrationRequestVersion = 0;
   protected sessionCompanionHydrationKey = "";

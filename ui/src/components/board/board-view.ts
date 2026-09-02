@@ -85,6 +85,7 @@ class OpenClawBoardView extends OpenClawLightDomElement {
   @property({ type: Boolean }) canMutate = true;
   @property({ type: Boolean }) canGrant = true;
   @property({ type: Boolean }) fitAutoContent = false;
+  @property({ type: Boolean }) commentMode = false;
 
   @state() private previewItems: BoardGridItem[] | null = null;
   @state() private gestureName = "";
@@ -102,8 +103,7 @@ class OpenClawBoardView extends OpenClawLightDomElement {
   private readonly contentHeights = new Map<string, number>();
   // Hybrid devices flip pointer capability live (mouse dock/undock); CSS moves
   // the bar between overlay and in-flow, so auto-height rows must re-layout.
-  private readonly finePointerQuery =
-    typeof window.matchMedia === "function" ? window.matchMedia(FINE_POINTER_QUERY) : null;
+  private readonly finePointerQuery = globalThis.matchMedia?.(FINE_POINTER_QUERY) ?? null;
   private readonly handlePointerModeChange = () => this.requestUpdate();
 
   override connectedCallback(): void {
@@ -688,6 +688,7 @@ class OpenClawBoardView extends OpenClawLightDomElement {
                 .busy=${this.mutationPending}
                 .canMutate=${this.canMutate}
                 .canGrant=${this.canGrant}
+                .commentMode=${this.commentMode}
               ></openclaw-board-widget-cell>
             `;
           },
