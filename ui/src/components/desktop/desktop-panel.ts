@@ -5,6 +5,7 @@ import type {
   EnvironmentsListResult,
   WorkerDesktopLaunchResult,
 } from "@openclaw/gateway-protocol";
+import type { ControlUiFocusBuildTarget } from "@openclaw/session-url-contract";
 import { html, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
@@ -59,6 +60,9 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
   /** Whether a newly ready embedded presentation owns its initial inventory refresh. */
   @property({ type: Boolean }) refreshOnPresentation = true;
   @property({ attribute: false }) onDocumentClose: (() => void) | null = null;
+  @property({ attribute: false }) onFocusTargetChange:
+    | ((target: Extract<ControlUiFocusBuildTarget, { kind: "desktop" }>) => void)
+    | null = null;
 
   /** Browser tests replace the transport without opening a real RFB socket. */
   desktopClientFactory: () => Pick<DesktopClient, "connect"> = () => new DesktopClient();
@@ -84,7 +88,8 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
   private operationId = 0;
   private launchOperationId = 0;
   private controlTakeoverRecoveryUsed = false;
-  private sourceSelection: "pending" | "resolved" | "picker" = "pending";
+  // Automatic resolution follows the session; an explicit choice owns its pop-out target.
+  @state() private sourceSelection: "pending" | "resolved" | "explicit" | "picker" = "pending";
   private readonly sessionSource = new DesktopSessionController(
     this,
     () => this.environmentId,
@@ -183,6 +188,15 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
       }
     }
     this.dockLayout.syncReservation();
+    this.onFocusTargetChange?.({
+      kind: "desktop",
+      control: this.controlling,
+      ...(this.sourceSelection === "picker"
+        ? {}
+        : this.sourceSelection === "explicit" || this.sessionKey === null
+          ? { source: this.environmentId }
+          : { session: this.sessionKey }),
+    });
   }
 
   handleToggleRequest(event: Event): void {
@@ -308,6 +322,7 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
             return;
           }
           if (requestedSource !== null) {
+            this.sourceSelection = "resolved";
             await this.connectEnvironment(requestedSource, this.documentControl);
           } else if (this.requestedSource !== null || this.sessionKey !== null) {
             this.noticeText = t("desktop.sourceUnavailable");
@@ -320,7 +335,7 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
   }
 
   private async connectRequestedEnvironment(environmentId: string): Promise<void> {
-    this.returnToPicker("resolved");
+    this.returnToPicker("explicit");
     this.environmentId = environmentId;
     this.state = "connecting";
     const operationId = this.operationId;
@@ -336,15 +351,14 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
   }
 
   private async connectEnvironment(
-    environmentId: string,
+    environmentId: string | null,
     control: boolean,
     options: { preserveNotice?: boolean; takeoverRecovery?: boolean } = {},
   ): Promise<void> {
     const client = this.client;
-    if (!client || !this.available || (this.embedded && !this.presented)) {
+    if (!environmentId || !client || !this.available || (this.embedded && !this.presented)) {
       return;
     }
-    this.sourceSelection = "resolved";
     if (this.environmentId !== environmentId) {
       this.clearLaunchState();
       this.credentials = undefined;
@@ -602,7 +616,10 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
       environments: this.environments,
       loading: this.loading,
       onRefresh: () => void this.refreshEnvironments(),
-      onConnect: (environmentId) => void this.connectEnvironment(environmentId, false),
+      onConnect: (environmentId) => {
+        this.sourceSelection = "explicit";
+        void this.connectEnvironment(environmentId, false);
+      },
     });
     const credentials = renderDesktopCredentials({
       ardAccount: this.credentialAuth === "ard-account",
@@ -621,10 +638,7 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
           void this.refreshEnvironments();
           return;
         }
-        if (!this.environmentId) {
-          return;
-        }
-        if (this.state === "inventory-error") {
+        if (this.state === "inventory-error" && this.environmentId) {
           void this.connectRequestedEnvironment(this.environmentId);
           return;
         }
@@ -639,11 +653,7 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
       launchingApp: this.launchingApp,
       showApps: this.source?.kind === "environment",
       onLaunch: (app) => void this.launchApp(app),
-      onTakeControl: () => {
-        if (this.environmentId) {
-          void this.connectEnvironment(this.environmentId, true);
-        }
-      },
+      onTakeControl: () => void this.connectEnvironment(this.environmentId, true),
       onDisconnect: () => this.returnToPicker(),
     });
     if (this.documentMode) {
@@ -656,11 +666,7 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
         picker,
         credentials,
         recovery,
-        onControlToggle: () => {
-          if (this.environmentId) {
-            void this.connectEnvironment(this.environmentId, !this.controlling);
-          }
-        },
+        onControlToggle: () => void this.connectEnvironment(this.environmentId, !this.controlling),
         onKeyboardFocus: () => this.mobileKeyboard.focus(),
         onKeyboardEvent: (event) => this.mobileKeyboard.handleKeyboardEvent(event),
         onKeyboardInput: (event) => this.mobileKeyboard.handleInput(event),
