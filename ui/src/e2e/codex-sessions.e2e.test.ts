@@ -797,9 +797,7 @@ suite.define(() => {
       await warning.waitFor({ state: "visible" });
       await expect.poll(() => tooltipTitleText(warning)).toContain("[NODE_LIST_FAILED]");
       await expect.poll(() => tooltipTitleText(warning)).toContain("pairing database is locked");
-      await expect
-        .poll(() => tooltipTitleText(warning))
-        .toContain("Settings > Automation > Plugins");
+      await expect.poll(() => tooltipTitleText(warning)).toContain("Settings > Plugins");
       expect(await page.locator('[data-session-catalog-host="node:registry"]').count()).toBe(0);
 
       if (captureUiProofEnabled) {
@@ -810,45 +808,23 @@ suite.define(() => {
         });
       }
 
-      await page.goto(`${suite.server.baseUrl}settings/automation?section=plugins&advanced=1`);
-      const expandPluginSetting = async (pluginLabel: string) => {
-        const pluginGroup = page
-          .getByText(pluginLabel, { exact: true })
-          .locator("xpath=ancestor::details[1]");
-        await pluginGroup.locator(":scope > summary").click();
-        const configGroup = pluginGroup
-          .getByText("Config", { exact: true })
-          .locator("xpath=ancestor::details[1]");
-        await configGroup.locator(":scope > summary").click();
-        const catalogGroup = configGroup
-          .getByText("Session Catalog", { exact: true })
-          .locator("xpath=ancestor::details[1]");
-        await catalogGroup.locator(":scope > summary").click();
+      const readDiscoverySetting = async (
+        pluginId: string,
+        settingLabel: string,
+        expected: boolean,
+      ) => {
+        await page.goto(`${suite.server.baseUrl}settings/plugins/${pluginId}`);
+        const setting = page.locator(".settings-row", { hasText: settingLabel });
+        await setting.waitFor({ state: "visible" });
+        expect(await setting.getByText("eligible paired nodes.", { exact: false }).count()).toBe(1);
+        expect(
+          await setting
+            .locator("wa-switch")
+            .evaluate((element) => (element as HTMLElement & { checked: boolean }).checked),
+        ).toBe(expected);
       };
-      await expandPluginSetting("Anthropic");
-      await expandPluginSetting("Codex");
-      const codexSetting = page.locator(".settings-row", { hasText: "Discover Codex Sessions" });
-      const claudeSetting = page.locator(".settings-row", {
-        hasText: "Discover Claude Code Sessions",
-      });
-      await codexSetting.waitFor({ state: "visible" });
-      await claudeSetting.waitFor({ state: "visible" });
-      expect(await codexSetting.getByText("eligible paired nodes.", { exact: false }).count()).toBe(
-        1,
-      );
-      expect(
-        await claudeSetting.getByText("eligible paired nodes.", { exact: false }).count(),
-      ).toBe(1);
-      expect(
-        await codexSetting
-          .locator("wa-switch")
-          .evaluate((element) => (element as HTMLElement & { checked: boolean }).checked),
-      ).toBe(true);
-      expect(
-        await claudeSetting
-          .locator("wa-switch")
-          .evaluate((element) => (element as HTMLElement & { checked: boolean }).checked),
-      ).toBe(false);
+      await readDiscoverySetting("codex", "Discover Codex Sessions", true);
+      await readDiscoverySetting("anthropic", "Discover Claude Code Sessions", false);
 
       if (captureUiProofEnabled) {
         await page.screenshot({

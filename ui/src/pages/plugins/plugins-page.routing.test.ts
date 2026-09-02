@@ -80,7 +80,7 @@ describe("PluginsPage routing", () => {
     await switchToSettingsSurface(page, routeData);
 
     expect(context.replace).not.toHaveBeenCalled();
-    expect(page.querySelector(".plugins-toolbar")).not.toBeNull();
+    expect(page.querySelector('.plugins-settings-search input[type="search"]')).not.toBeNull();
   });
 
   it("opens the plugin selected by a settings detail path", async () => {
@@ -98,15 +98,15 @@ describe("PluginsPage routing", () => {
     await switchToSettingsSurface(page, routeData);
 
     await vi.waitFor(() => {
-      expect(page.querySelector('[data-detail-plugin-id="workboard"]')).not.toBeNull();
+      expect(page.querySelector("h1")?.textContent).toContain("Workboard");
     });
     expect(request).toHaveBeenCalledWith("plugins.inspect", { pluginId: "workboard" });
 
-    page.querySelector<HTMLButtonElement>(".plugins-detail__close")?.click();
+    page.querySelector<HTMLButtonElement>(".plugins-settings-back")?.click();
     await page.updateComplete;
     expect(context.replace).toHaveBeenCalledWith("plugin-settings", {
       pathname: "/settings/plugins",
     });
-    expect(page.querySelector('[data-detail-plugin-id="workboard"]')).toBeNull();
+    expect(page.querySelector("h1")?.textContent).toContain("Plugins");
   });
 });

@@ -201,6 +201,7 @@ suite.define(() => {
           content:
             "*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; }",
         });
+        await page.evaluate(() => document.fonts.ready.then(() => undefined));
         await waitForControlUiRoute(page, { pathname: "/plugins", routeId: "plugins" });
         await page.getByRole("heading", { name: "Installed plugins" }).waitFor();
         const pluginsHeader = await headerGeometry(page);
