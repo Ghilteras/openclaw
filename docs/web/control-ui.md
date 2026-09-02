@@ -325,7 +325,7 @@ The menu groups routine actions first: **Pin/Unpin**, **Rename**, **Mark as unre
 - **Icon & color** opens one picker with color swatches, an icon grid, and **Reset to default**. It stays open while you change both; the sidebar reflects your changes.
 - **Move to group** includes **New group** and **Remove from group**. Multi-user gateways also offer **Assign to** ([session ownership](/concepts/multi-user#assigning-an-owner)).
 - **Fork conversation** creates a separate conversation; while a run is active, it forks from the last completed message.
-- **Copy** offers a session link, conversation text as Markdown, and the session ID. The link requires normal Gateway authentication and session access; copying it does not grant access. Markdown loads the available conversation history, not just the messages currently visible.
+- **Copy** offers a session link, conversation text as Markdown, and the session ID. The link requires normal Gateway authentication and session access; copying it does not grant access. Markdown loads the available conversation history, not just the messages currently visible. Both copied Markdown and `/export` downloads retain the conversation's sender labels, so messages from different participants remain distinguishable.
 - **Open in** offers a new browser tab or window. Desktop chat also offers **Split right** and **Split below**. Eligible local workspaces expose native editor destinations, and the chat header includes **Continue in terminal** in this submenu.
 
 ### Session placement
