@@ -23,6 +23,7 @@ import { runCliProcessChild } from "./cli-process-child.test-helpers.js";
 import {
   closeActiveGatewayServers,
   EMPTY_STABILITY_SNAPSHOT,
+  runIsolatedGatewayCli,
   startAgentTurnGateway,
   startCronListGateway,
   startGatewayStabilityRpcServer,
@@ -134,52 +135,6 @@ function expectUnreachableGatewayTransportFailure(
   expect(result.stderr).toContain("Gateway not reachable");
   expect(result.stderr).toContain(UNREACHABLE_GATEWAY_URL);
   expect(result.stderr).not.toContain("gateway timeout");
-}
-
-async function runIsolatedGatewayCli(params: {
-  args: string[];
-  root: string;
-  stateDir: string;
-  configPath: string;
-  env?: NodeJS.ProcessEnv;
-  onStdout?: (stdout: string) => void;
-}): Promise<{
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  stdout: string;
-  stderr: string;
-}> {
-  return await runCliProcessChild({
-    nodeArgs: ["--import", "tsx", "src/entry.ts", ...params.args],
-    env: {
-      ...process.env,
-      HOME: params.root,
-      USERPROFILE: params.root,
-      // CI shard runners export NODE_COMPILE_CACHE; in a source checkout entry.ts
-      // then respawns a detached grandchild that shares this child's stdio pipes,
-      // so a SIGKILLed parent leaves an orphan holding them open. Keep these
-      // children single-process; entry.compile-cache owns that respawn contract.
-      NODE_DISABLE_COMPILE_CACHE: "1",
-      NODE_ENV: undefined,
-      NODE_OPTIONS: undefined,
-      OPENCLAW_CONFIG_PATH: params.configPath,
-      OPENCLAW_SKIP_CHANNELS: "1",
-      OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
-      OPENCLAW_GATEWAY_PASSWORD: undefined,
-      OPENCLAW_GATEWAY_TOKEN: undefined,
-      OPENCLAW_GATEWAY_URL: undefined,
-      OPENCLAW_HOME: params.root,
-      OPENCLAW_NO_RESPAWN: "1",
-      OPENCLAW_STATE_DIR: params.stateDir,
-      DISCORD_BOT_TOKEN: undefined,
-      TWILIO_ACCOUNT_SID: undefined,
-      TWILIO_AUTH_TOKEN: undefined,
-      TWILIO_FROM_NUMBER: undefined,
-      VITEST: undefined,
-      ...params.env,
-    },
-    onStdout: params.onStdout,
-  });
 }
 
 describe("gateway-backed CLI process exit", () => {
