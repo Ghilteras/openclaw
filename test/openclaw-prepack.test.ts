@@ -183,7 +183,11 @@ process.exit(result.status ?? 1);
 
 type BundledChannelSmokeLayout = "source" | "installed-env" | "installed-path";
 
-function runStandaloneBundledChannelSmoke(entrySource: string, layout: BundledChannelSmokeLayout) {
+function runStandaloneBundledChannelSmoke(
+  entrySource: string,
+  layout: BundledChannelSmokeLayout,
+  prepareDependencies?: (packageRoot: string) => void,
+) {
   const fixture = createBundledChannelSmokeFixture(entrySource);
   const { rootDir } = fixture;
   let { packageRoot } = fixture;
@@ -193,6 +197,7 @@ function runStandaloneBundledChannelSmoke(entrySource: string, layout: BundledCh
     renameSync(packageRoot, installedRoot);
     packageRoot = installedRoot;
   }
+  prepareDependencies?.(packageRoot);
   const temporaryRoot = path.join(rootDir, "smoke-temp");
   mkdirSync(temporaryRoot);
   const sentinelPath = path.join(temporaryRoot, "unrelated.txt");
@@ -235,6 +240,63 @@ function runStandaloneBundledChannelSmoke(entrySource: string, layout: BundledCh
 
 describe("standalone bundled channel smoke", () => {
   const layouts = ["source", "installed-env", "installed-path"] as const;
+  it.each(layouts.flatMap((layout) => [false, true].map((missing) => ({ layout, missing }))))(
+    "resolves pnpm-linked dependencies in $layout with missing=$missing",
+    ({ layout, missing }) => {
+      const entrySource = `
+        import assert from "node:assert/strict";
+        import { realpathSync } from "node:fs";
+        import { fileURLToPath } from "node:url";
+        import { channelId } from "fixture-direct";
+        ${layout === "installed-env" ? "" : 'assert.ok(realpathSync(fileURLToPath(import.meta.url)).replaceAll("\\\\", "/").includes("/node_modules/openclaw/dist/"));'}
+        export default {
+          kind: "bundled-channel-entry",
+          loadChannelPlugin() { return { id: channelId }; },
+        };
+      `;
+      const observed = runStandaloneBundledChannelSmoke(entrySource, layout, (packageRoot) => {
+        const nodeModules = path.join(packageRoot, "node_modules");
+        const store = path.join(nodeModules, ".pnpm");
+        const direct = path.join(store, "fixture-direct@1/node_modules/fixture-direct");
+        const transitive = path.join(store, "fixture-transitive@1/node_modules/fixture-transitive");
+        for (const [directory, name] of [
+          [direct, "fixture-direct"],
+          [transitive, "fixture-transitive"],
+        ] as const) {
+          mkdirSync(directory, { recursive: true });
+          writeFileSync(
+            path.join(directory, "package.json"),
+            JSON.stringify({ name, version: "1.0.0", type: "module", exports: "./index.js" }),
+          );
+        }
+        writeFileSync(
+          path.join(direct, "index.js"),
+          'export { channelId } from "fixture-transitive";\n',
+        );
+        writeFileSync(
+          path.join(transitive, "index.js"),
+          'export const channelId = "fixture-channel";\n',
+        );
+        symlinkSync(direct, path.join(nodeModules, "fixture-direct"), "junction");
+        if (!missing) {
+          symlinkSync(
+            transitive,
+            path.join(path.dirname(direct), "fixture-transitive"),
+            "junction",
+          );
+        }
+      });
+      expect(observed.result.status, observed.result.stderr).toBe(missing ? 1 : 0);
+      if (missing) {
+        expect(observed.result.stderr).toContain("ERR_MODULE_NOT_FOUND");
+        expect(observed.result.stderr).toContain("fixture-transitive");
+      } else {
+        expect(observed.result.stdout).toContain("channel=1");
+      }
+      expect(observed.entrySource).toBe(entrySource);
+      expect(observed.temporaryEntries).toEqual(["unrelated.txt"]);
+    },
+  );
   it.each(
     layouts.flatMap((layout) => [
       { layout, invalid: false },
