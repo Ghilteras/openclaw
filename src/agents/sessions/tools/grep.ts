@@ -5,7 +5,6 @@
  */
 import { statSync } from "node:fs";
 import path from "node:path";
-import { createInterface } from "node:readline";
 import { resolveNonNegativeIntegerOption } from "@openclaw/normalization-core/number-coercion";
 import { Type } from "typebox";
 import { releaseChildProcessOutputAfterExit } from "../../../process/child-process.js";
@@ -52,6 +51,10 @@ const grepSchema = Type.Object({
   limit: Type.Optional(Type.Number({ description: "Max matches; default 100." })),
 });
 const DEFAULT_LIMIT = 100;
+const GREP_JSON_RECORD_MAX_BYTES = 1024 * 1024;
+const GREP_JSON_RECORD_INITIAL_BYTES = 64 * 1024;
+const GREP_JSON_RECORD_OVERSIZED_ERROR =
+  "grep stopped because ripgrep emitted a JSON record larger than 1 MiB; narrow the path or pattern, exclude generated/minified files, or inspect the file with a bounded read";
 
 type RipgrepJsonText = { text?: string; bytes?: string };
 
@@ -173,10 +176,8 @@ export function createGrepToolDefinition(
             }
           | undefined;
         let childClosed = false;
-        let rl: ReturnType<typeof createInterface> | undefined;
         let killedDueToLimit = false;
         const cleanup = () => {
-          rl?.close();
           signal?.removeEventListener("abort", onAbort);
         };
         const settle = (fn: () => void): boolean => {
@@ -266,13 +267,14 @@ export function createGrepToolDefinition(
             });
             releaseChildProcessOutputAfterExit(spawnedChild.nodeChildProcess);
             child = spawnedChild;
-            rl = createInterface({ input: spawnedChild.stdout });
             let stderr = "";
             let stderrDroppedBytes = 0;
             let matchCount = 0;
             let matchLimitReached = false;
             let linesTruncated = false;
             const outputLines: string[] = [];
+            let recordBuffer: Buffer | undefined;
+            let recordBytes = 0;
 
             // Decode stderr as UTF-8 at the stream so pipe chunk boundaries
             // cannot split multibyte characters into U+FFFD replacement noise.
@@ -290,9 +292,6 @@ export function createGrepToolDefinition(
                 stopChild();
               }
             };
-            // readline re-emits input failures, then drops its input listener on close.
-            // Keep the direct guard until child exit so later stdout errors stay handled.
-            rl.on("error", (error) => onStreamError("stdout", error));
             spawnedChild.stdout?.on("error", (error) => onStreamError("stdout", error));
             spawnedChild.stderr?.on("error", (error) => onStreamError("stderr", error));
 
@@ -303,7 +302,7 @@ export function createGrepToolDefinition(
               lineText?: string;
             }> = [];
             const nativeFiles = new Map<string, Map<number, string>>();
-            rl.on("line", (line) => {
+            const handleJsonRecord = (line: string) => {
               if (!line.trim() || settled || killedDueToLimit) {
                 return;
               }
@@ -362,6 +361,66 @@ export function createGrepToolDefinition(
               if (matchLimitReached && (customOps || !inLastWindow || lineNumber === windowEnd)) {
                 stopChild(true);
               }
+            };
+            const appendRecordPart = (part: Buffer): boolean => {
+              if (part.length === 0) {
+                return true;
+              }
+              const nextBytes = recordBytes + part.length;
+              if (nextBytes > GREP_JSON_RECORD_MAX_BYTES) {
+                recordBuffer = undefined;
+                recordBytes = 0;
+                if (settle(() => reject(new Error(GREP_JSON_RECORD_OVERSIZED_ERROR)))) {
+                  stopChild();
+                }
+                return false;
+              }
+              if (!recordBuffer || recordBuffer.length < nextBytes) {
+                const nextCapacity = Math.min(
+                  GREP_JSON_RECORD_MAX_BYTES,
+                  Math.max(
+                    nextBytes,
+                    recordBuffer
+                      ? recordBuffer.length * 2
+                      : Math.min(GREP_JSON_RECORD_INITIAL_BYTES, GREP_JSON_RECORD_MAX_BYTES),
+                  ),
+                );
+                const nextBuffer = Buffer.allocUnsafe(nextCapacity);
+                recordBuffer?.copy(nextBuffer, 0, 0, recordBytes);
+                recordBuffer = nextBuffer;
+              }
+              part.copy(recordBuffer, recordBytes);
+              recordBytes = nextBytes;
+              return true;
+            };
+            const emitRecord = () => {
+              let end = recordBytes;
+              if (end > 0 && recordBuffer?.[end - 1] === 0x0d) {
+                end -= 1;
+              }
+              const line = recordBuffer?.toString("utf8", 0, end) ?? "";
+              recordBytes = 0;
+              handleJsonRecord(line);
+            };
+            spawnedChild.stdout?.on("data", (chunk: Buffer) => {
+              if (settled || killedDueToLimit) {
+                return;
+              }
+              let offset = 0;
+              for (let index = 0; index < chunk.length; index += 1) {
+                if (chunk[index] !== 0x0a) {
+                  continue;
+                }
+                if (!appendRecordPart(chunk.subarray(offset, index))) {
+                  return;
+                }
+                emitRecord();
+                if (settled || killedDueToLimit) {
+                  return;
+                }
+                offset = index + 1;
+              }
+              appendRecordPart(chunk.subarray(offset));
             });
 
             spawnedChild.nodeChildProcess.on("error", (error) => {
@@ -370,6 +429,9 @@ export function createGrepToolDefinition(
             });
             spawnedChild.nodeChildProcess.on("close", (code) => {
               childClosed = true;
+              if (recordBytes > 0 && !settled && !killedDueToLimit) {
+                emitRecord();
+              }
               void (async () => {
                 if (settled) {
                   return;

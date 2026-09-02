@@ -20,6 +20,9 @@ vi.mock("../../utils/tools-manager.js", () => ({
 }));
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const GREP_JSON_RECORD_MAX_BYTES = 1024 * 1024;
+const GREP_JSON_RECORD_OVERSIZED_ERROR =
+  "grep stopped because ripgrep emitted a JSON record larger than 1 MiB";
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -63,11 +66,39 @@ function grepRow(
   })}\n`;
 }
 
+function grepRowWithWireBytes(bytes: number): Buffer {
+  const emptyRow = grepRow(1, { text: "" }).slice(0, -1);
+  return Buffer.from(
+    grepRow(1, { text: "x".repeat(bytes - Buffer.byteLength(emptyRow)) }).slice(0, -1),
+  );
+}
+
 function textContent(
   result: Awaited<ReturnType<ReturnType<typeof createGrepToolDefinition>["execute"]>>,
 ): string {
   const first = result.content[0];
   return first?.type === "text" ? (first.text ?? "") : "";
+}
+
+async function startMockGrep(signal?: AbortSignal) {
+  const child = createChild();
+  vi.mocked(spawnCommand).mockReturnValue(child as never);
+  vi.mocked(ensureTool).mockResolvedValue("rg");
+  const result = createGrepToolDefinition(process.cwd()).execute(
+    "framing",
+    { pattern: "foo" },
+    signal,
+    undefined,
+    {} as never,
+  );
+  await vi.waitFor(() => expect(spawnCommand).toHaveBeenCalledOnce());
+  return { child, result };
+}
+
+function closeChild(child: MockChild, code: number | null, stdout?: string | Buffer) {
+  child.stdout.end(stdout);
+  child.stderr.end();
+  child.emit("close", code);
 }
 
 describe("grep tool streaming", () => {
@@ -713,7 +744,135 @@ describe("grep tool streaming", () => {
     },
   );
 
-  it("keeps stdout guarded after a stderr failure closes readline", async () => {
+  it("rejects an oversized ripgrep JSON record before EOF", async () => {
+    const { child, result } = await startMockGrep();
+    const rejection = result.catch((error: unknown) => error);
+
+    try {
+      for (let chunk = 0; chunk < 17; chunk += 1) {
+        child.stdout.write(Buffer.alloc(64 * 1024, 0x78));
+      }
+      await vi.waitFor(() => expect(child.kill).toHaveBeenCalledOnce());
+      await expect(rejection).resolves.toEqual(
+        expect.objectContaining({
+          message: expect.stringContaining(GREP_JSON_RECORD_OVERSIZED_ERROR),
+        }),
+      );
+    } finally {
+      closeChild(child, 1);
+    }
+  });
+
+  it("frames below-cap JSON split across chunks and UTF-8 boundaries", async () => {
+    const { child, result } = await startMockGrep();
+
+    const row = Buffer.from(grepRow(1, { text: `needle ${"中".repeat(4096)}\n` }));
+    const split = row.indexOf(Buffer.from("中")) + 1;
+    child.stdout.write(row.subarray(0, split));
+    for (let offset = split; offset < row.length; offset += 257) {
+      child.stdout.write(row.subarray(offset, offset + 257));
+    }
+    closeChild(child, 0);
+
+    expect(textContent(await result)).toContain("needle 中中中");
+  });
+
+  it("processes multiple records from one chunk", async () => {
+    const { child, result } = await startMockGrep();
+    closeChild(child, 0, grepRow(1) + grepRow(2));
+
+    expect(textContent(await result)).toBe("match.txt:1: foo\nmatch.txt:2: foo");
+  });
+
+  it("accepts a JSON record exactly at the wire-record ceiling", async () => {
+    const { child, result } = await startMockGrep();
+    closeChild(
+      child,
+      0,
+      Buffer.concat([grepRowWithWireBytes(GREP_JSON_RECORD_MAX_BYTES), Buffer.from("\n")]),
+    );
+
+    await expect(result).resolves.toMatchObject({
+      details: { linesTruncated: true },
+    });
+    expect(child.killed).toBe(false);
+  });
+
+  it("rejects byte 1,048,577 before parsing or returning partial matches", async () => {
+    const { child, result } = await startMockGrep();
+    const rejection = result.catch((error: unknown) => error);
+
+    child.stdout.write(grepRow(1));
+    child.stdout.write(Buffer.alloc(GREP_JSON_RECORD_MAX_BYTES + 1, 0x78));
+    await expect(rejection).resolves.toEqual(
+      expect.objectContaining({
+        message: expect.stringContaining(GREP_JSON_RECORD_OVERSIZED_ERROR),
+      }),
+    );
+    expect(child.killed).toBe(true);
+    closeChild(child, null);
+  });
+
+  it("does not parse an oversized record or a later record in the same chunk", async () => {
+    const { child, result } = await startMockGrep();
+
+    child.stdout.write(
+      Buffer.concat([
+        Buffer.alloc(GREP_JSON_RECORD_MAX_BYTES + 1, 0x78),
+        Buffer.from(`\n${grepRow(1)}`),
+      ]),
+    );
+    await expect(result).rejects.toThrow(GREP_JSON_RECORD_OVERSIZED_ERROR);
+    closeChild(child, null);
+  });
+
+  it.each([
+    { name: "abort first", first: "abort", expected: "Operation aborted" },
+    { name: "overflow first", first: "overflow", expected: GREP_JSON_RECORD_OVERSIZED_ERROR },
+  ] as const)("keeps first settlement when $name", async ({ first, expected }) => {
+    const controller = new AbortController();
+    const { child, result } = await startMockGrep(controller.signal);
+    const rejection = result.catch((error: unknown) => error);
+
+    if (first === "abort") {
+      controller.abort();
+      child.stdout.write(Buffer.alloc(GREP_JSON_RECORD_MAX_BYTES + 1, 0x78));
+    } else {
+      child.stdout.write(Buffer.alloc(GREP_JSON_RECORD_MAX_BYTES + 1, 0x78));
+      controller.abort();
+    }
+    await expect(rejection).resolves.toEqual(
+      expect.objectContaining({ message: expect.stringContaining(expected) }),
+    );
+    expect(child.kill).toHaveBeenCalledOnce();
+    closeChild(child, null);
+  });
+
+  it("handles late stream and child errors after overflow", async () => {
+    const { child, result } = await startMockGrep();
+
+    child.stdout.write(Buffer.alloc(GREP_JSON_RECORD_MAX_BYTES + 1, 0x78));
+    await expect(result).rejects.toThrow(GREP_JSON_RECORD_OVERSIZED_ERROR);
+    expect(() => {
+      child.stdout.emit("error", new Error("late stdout"));
+      child.stderr.emit("error", new Error("late stderr"));
+      child.emit("error", new Error("late child"));
+    }).not.toThrow();
+    closeChild(child, null);
+  });
+
+  it.each([
+    { name: "unterminated EOF", prefix: "", suffix: "" },
+    { name: "CRLF", prefix: "", suffix: "\r\n" },
+    { name: "malformed then valid", prefix: "{not json}\n", suffix: "\n" },
+  ])("preserves $name record handling", async ({ prefix, suffix }) => {
+    const { child, result } = await startMockGrep();
+    closeChild(child, 0, `${prefix}${grepRow(1).slice(0, -1)}${suffix}`);
+
+    expect(textContent(await result)).toBe("match.txt:1: foo");
+  });
+
+  it("keeps stdout guarded after a stderr failure", async () => {
     const child = createChild();
     vi.mocked(spawnCommand).mockReturnValue(child as never);
     vi.mocked(ensureTool).mockResolvedValue("rg");
