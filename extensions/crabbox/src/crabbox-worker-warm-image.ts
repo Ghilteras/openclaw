@@ -8,6 +8,7 @@ import {
   type parseCrabboxProfile,
   type resolveCrabboxProvisionProfile,
 } from "./crabbox-worker-profile.js";
+import { CRABBOX_COMMAND_SETTLEMENT_TIMEOUT_MS } from "./crabbox-worker-timeouts.js";
 import {
   parseCheckpointAvailability,
   parseCheckpointJson,
@@ -61,23 +62,30 @@ function allocationArgs(context: AllocationContext): string[] {
 const WARM_IMAGE_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
 const WARM_IMAGE_REFRESH_MS = 24 * 60 * 60 * 1_000;
 const WARM_IMAGE_COMMAND_TIMEOUT_MS = 60_000;
-// Scrub and create ride a full `crabbox run`/snapshot round trip (SSH, workspace
-// owner, coordinator posts); 60s starves them under coordinator latency and the
-// capture silently degrades to cold-only. Live-measured on AWS 2026-08-26.
-const WARM_IMAGE_CAPTURE_TIMEOUT_MS = 180_000;
-// Machine0 image save stops the source and waits for image availability even with --wait=false.
-const WARM_IMAGE_MACHINE0_CAPTURE_TIMEOUT_MS = 600_000;
+// Scrubbing and native submission include SSH/coordinator round trips, not image readiness.
+const WARM_IMAGE_COMMAND_ROUND_TRIP_TIMEOUT_MS = 180_000;
+// Match Crabbox checkpoint create's bounded native wait, and pass it explicitly.
+const WARM_IMAGE_NATIVE_WAIT_TIMEOUT_MS = 45 * 60_000;
 
-const checkpointCaptureTimeoutMs = (provider: string) =>
-  provider === "machine0" ? WARM_IMAGE_MACHINE0_CAPTURE_TIMEOUT_MS : WARM_IMAGE_CAPTURE_TIMEOUT_MS;
+function checkpointCaptureTimeoutMs(provider: string): number {
+  // Crabbox Machine0 stops/restores with separate default 15m windows; Daytona
+  // grants 3m for source recovery after its native wait. Neither is image waiting.
+  const sourceLifecycleMs =
+    provider === "machine0" ? 30 * 60_000 : provider === "daytona" ? 180_000 : 0;
+  return (
+    WARM_IMAGE_COMMAND_ROUND_TRIP_TIMEOUT_MS + WARM_IMAGE_NATIVE_WAIT_TIMEOUT_MS + sourceLifecycleMs
+  );
+}
 
 export function resolveCrabboxWarmImageCaptureTimeoutMs(provider: string): number {
   // Bound collection, verification, missing-image deletion, capacity reclamation,
   // and predecessor retirement as well as scrub/create; core must await the owner.
   return (
     5 * WARM_IMAGE_COMMAND_TIMEOUT_MS +
-    WARM_IMAGE_CAPTURE_TIMEOUT_MS +
-    checkpointCaptureTimeoutMs(provider)
+    WARM_IMAGE_COMMAND_ROUND_TRIP_TIMEOUT_MS +
+    checkpointCaptureTimeoutMs(provider) +
+    // Each timed-out command must join its child/tree before core closes the owner.
+    7 * CRABBOX_COMMAND_SETTLEMENT_TIMEOUT_MS
   );
 }
 
@@ -531,7 +539,7 @@ export function createCrabboxWarmImageManager(dependencies: {
             context,
             "scrub",
             dependencies.runArgs(context),
-            WARM_IMAGE_CAPTURE_TIMEOUT_MS,
+            WARM_IMAGE_COMMAND_ROUND_TRIP_TIMEOUT_MS,
             SCRUB_WORKER_STATE,
           );
           // A stopped allocation or manual recovery must not start another paid operation.
@@ -563,6 +571,8 @@ export function createCrabboxWarmImageManager(dependencies: {
                 // Crabbox owns pending capture recovery; wait for the exact checkpoint
                 // before enrollment. The command deadline still bounds the whole operation.
                 "--wait",
+                "--wait-timeout",
+                `${WARM_IMAGE_NATIVE_WAIT_TIMEOUT_MS / 60_000}m`,
                 "--json",
                 // Daytona requires explicit permission to stop the scrubbed source for capture.
                 ...(context.provider === "daytona" ? ["--no-reboot=false"] : []),

@@ -121,10 +121,18 @@ describe("Crabbox project snapshot provisioning", () => {
     ).toBeUndefined();
   });
 
-  it.each(["aws", "azure", "gcp"])(
-    "settles a retained %s checkpoint before enrollment without repeating capture",
-    async (backend) => {
+  it.each([
+    { backend: "aws", lifecycleMs: 0 },
+    { backend: "azure", lifecycleMs: 0 },
+    { backend: "gcp", lifecycleMs: 0 },
+    { backend: "daytona", lifecycleMs: 3 * 60_000 },
+    { backend: "machine0", lifecycleMs: 30 * 60_000 },
+  ])(
+    "settles a retained $backend checkpoint through native waiting and source restoration before enrollment",
+    async ({ backend, lifecycleMs }) => {
       const events: string[] = [];
+      const startedAt = Date.now();
+      const clock = vi.spyOn(Date, "now").mockReturnValue(startedAt);
       const { options, observe } = projectOptions(events);
       const entered = createDeferred<void>();
       const available = createDeferred<void>();
@@ -139,6 +147,18 @@ describe("Crabbox project snapshot provisioning", () => {
           return commandResult({ code: 1, stderr: "http 503: checkpoint_pending" });
         }
         await available.promise;
+        // Native availability can take almost Crabbox's 45m wait, with provider-owned
+        // stop/restoration outside it. The old 3m/10m process cap killed that work.
+        const elapsedMs = 45 * 60_000 - 15_000 + lifecycleMs;
+        clock.mockReturnValue(startedAt + elapsedMs);
+        if (call.options.timeoutMs <= elapsedMs) {
+          return commandResult({ code: null, killed: true, termination: "timeout" });
+        }
+        const waitTimeoutIndex = call.argv.indexOf("--wait-timeout");
+        expect(call.argv.slice(waitTimeoutIndex, waitTimeoutIndex + 2)).toEqual([
+          "--wait-timeout",
+          "45m",
+        ]);
         return checkpointResult(CHECKPOINT_ID, operationLeaseId("retained-capture"), "available");
       });
       const provision = expect(
