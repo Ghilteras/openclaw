@@ -765,7 +765,14 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
       }
     }
     const stat = await fs.lstat(entryPath);
-    const metadata = [stat.mode & 0o7777, stat.uid, stat.gid];
+    // ctime changes when ownership, ACLs, capabilities, or extended attributes
+    // change. The package root is checked separately before its rollback rename.
+    const metadata = [
+      stat.mode & 0o7777,
+      stat.uid,
+      stat.gid,
+      relativePath === "" ? null : stat.ctimeMs,
+    ];
     if (stat.isSymbolicLink()) {
       const linkTarget = await fs.readlink(entryPath);
       fingerprint.update(`${JSON.stringify([relativePath, "symlink", ...metadata, linkTarget])}\n`);
@@ -976,11 +983,25 @@ async function swapStagedNpmInstall(params: {
   let hadPackage = false;
   let previousVersion: string | null = null;
   let previousPackageFingerprint: string | null = null;
+  let parkedPackageRootCtimeMs: number | null = null;
   const shims: Array<{ source: string; destination: string; backup: string | null }> = [];
   const rollback: Array<() => Promise<void>> = [];
   let packageRollbackVerified = false;
   const restoreSwap = async (): Promise<string[]> => {
     const messages: string[] = [];
+    if (parkedPackageRootCtimeMs !== null) {
+      try {
+        if ((await fs.lstat(backupRoot)).ctimeMs !== parkedPackageRootCtimeMs) {
+          packageRollbackVerified = false;
+          messages.push("rollback verification failed: parked package metadata changed");
+        }
+      } catch (verificationError) {
+        packageRollbackVerified = false;
+        messages.push(
+          `rollback package-metadata verification failed: ${formatErrorMessage(verificationError)}`,
+        );
+      }
+    }
     for (const restore of rollback.toReversed()) {
       try {
         await restore();
@@ -1108,6 +1129,7 @@ async function swapStagedNpmInstall(params: {
       }
     });
     if (hadPackage) {
+      parkedPackageRootCtimeMs = (await fs.lstat(backupRoot)).ctimeMs;
       packageRollbackVerified = previousPackageFingerprint !== null;
     }
     await activateStagedNpmPackageRoot(params.stage.packageRoot, targetPackageRoot);

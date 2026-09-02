@@ -442,6 +442,62 @@ describe("package update recovery safety", () => {
     });
   });
 
+  it("restores the old package when post-backup metadata capture fails", async () => {
+    await withTestDir({ prefix: "openclaw-package-recovery-backup-stat-" }, async (base) => {
+      const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+      const packageRoot = path.join(globalRoot, "openclaw");
+      const packageEntry = path.join(packageRoot, "dist", "index.js");
+      await writePackageRoot(packageRoot, "1.0.0");
+      await fs.writeFile(packageEntry, "original old package\n", "utf8");
+      const lstat = fs.lstat.bind(fs);
+      const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+        if (path.basename(String(args[0])).startsWith(".openclaw.package-backup-")) {
+          throw Object.assign(new Error("backup metadata unavailable"), { code: "EACCES" });
+        }
+        return await lstat(...args);
+      });
+
+      let result: Awaited<ReturnType<typeof runGlobalPackageUpdateSteps>>;
+      try {
+        result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: async ({ name, argv }) => {
+            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
+            if (!stagePrefix) {
+              throw new Error("missing stage prefix");
+            }
+            await writePackageRoot(
+              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
+              "2.0.0",
+            );
+            return {
+              name,
+              command: argv.join(" "),
+              cwd: stagePrefix,
+              durationMs: 0,
+              exitCode: 0,
+            };
+          },
+          timeoutMs: 1000,
+        });
+      } finally {
+        lstatSpy.mockRestore();
+      }
+
+      expect(result.afterVersion).toBe("1.0.0");
+      expect(result.recovery).toMatchObject({
+        serviceRestartSafe: false,
+        packageRollbackVerified: false,
+      });
+      expect(result.failedStep?.stderrTail).toContain("backup metadata unavailable");
+      await expect(fs.readFile(packageEntry, "utf8")).resolves.toBe("original old package\n");
+    });
+  });
+
   it("does not verify rollback when candidate Doctor alters the parked old package", async () => {
     await withTestDir({ prefix: "openclaw-package-recovery-altered-backup-" }, async (base) => {
       const globalRoot = path.join(base, "prefix", "lib", "node_modules");
