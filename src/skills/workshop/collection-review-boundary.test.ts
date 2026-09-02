@@ -3,6 +3,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { CronStoredJob } from "../../cron/types.js";
+import type { PluginHookSkillChangedEvent } from "../../plugins/hook-types.js";
 import { createOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createTrackedTempDirs } from "../../test-utils/tracked-temp-dirs.js";
 import { getSkillsSnapshotVersion } from "../runtime/refresh-state.js";
@@ -14,7 +15,11 @@ import {
 } from "./collection-review-state.js";
 import { resolveWorkshopSkillsDir } from "./skills-root.js";
 
-const dispatchCommittedSkillChangeBestEffort = vi.hoisted(() => vi.fn(async () => {}));
+type ReviewChange = Pick<PluginHookSkillChangedEvent, "action">;
+
+const dispatchCommittedSkillChangeBestEffort = vi.hoisted(() =>
+  vi.fn(async (_change: ReviewChange) => {}),
+);
 const snapshotCommittedSkillArtifactBestEffort = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("../lifecycle/skill-change-hook.js", () => ({
   dispatchCommittedSkillChangeBestEffort,

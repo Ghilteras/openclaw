@@ -796,7 +796,7 @@ function renderJobsTable(props: CronProps, hasAnyJobsFilters: boolean) {
   `;
 }
 
-function isSystemOwnedCronJob(job: CronJob | undefined): boolean {
+function isSystemOwnedCronJob(job: CronJob | null | undefined): boolean {
   return Boolean(
     job &&
     (isSystemOwnedCronDeclaration(job.declarationKey) ||
