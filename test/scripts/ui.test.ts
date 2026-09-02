@@ -317,6 +317,7 @@ describe("scripts/ui windows spawn behavior", () => {
           "scripts/ui.js",
           "scripts/ui.mts",
           "scripts/pnpm-runner.mts",
+          "scripts/run-node-package-bin.mts",
           "scripts/windows-cmd-helpers.mjs",
           "scripts/lib/build-identity.mts",
           "scripts/lib/output-root-guard.mjs",

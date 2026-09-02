@@ -9,6 +9,7 @@ import { normalizeControlUiBuildInfo } from "../ui/src/build-info-normalizers.ts
 import { resolveBuildIdentityEnvironment } from "./lib/build-identity.mts";
 import { assertRealOutputRoot } from "./lib/output-root-guard.mjs";
 import { resolvePnpmRunner } from "./pnpm-runner.mts";
+import { resolveNodePackageBin } from "./run-node-package-bin.mts";
 import { buildCmdExeCommandLine, resolveWindowsCmdExePath } from "./windows-cmd-helpers.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -428,20 +429,10 @@ export function runUiCli(argv: string[] = process.argv.slice(2)): void {
   }
 
   const [tool, ...args] = script;
-  // Hoisted installs can retain UI-local shims pointing at removed packages.
-  // Resolve the declared bin from the same dependency scope as the preflight.
-  const manifestPath = requireFromUi.resolve(`${tool}/package.json`);
-  const { bin } = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
-    bin: Record<string, string>;
-  };
-  const entry = bin[tool];
-  if (!entry) {
-    throw new Error(`${tool} does not declare its executable`);
-  }
   const env = action === "build" ? resolveUiBuildEnvironment() : process.env;
   const toolCall = resolveSpawnCall(
     process.execPath,
-    [path.resolve(path.dirname(manifestPath), entry), ...args, ...rest],
+    [resolveNodePackageBin(tool, requireFromUi), ...args, ...rest],
     env,
   );
   if (action === "build") {
