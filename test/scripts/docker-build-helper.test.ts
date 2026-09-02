@@ -6110,7 +6110,8 @@ source "$ROOT_DIR/scripts/lib/docker-e2e-logs.sh"
     expect(packageRunner).toContain('MUSL_IMAGE_NAME="openclaw-docker-e2e-musl:local"');
     expect(packageRunner.match(/verify-fs-safe-native\.mjs[^\n]+--mode require/gu)).toHaveLength(3);
     expect(packageRunner).toContain("bash scripts/e2e/bun-global-install-smoke.sh");
-    expect(updateRunner).toContain("--mode require");
+    expect(updateRunner).toContain('mv "$platform_package" "$platform_package.omitted"');
+    expect(updateRunner).toContain("--mode fallback");
   });
 
   it("keeps private bundled plugins discoverable without persisting a curated registry", () => {
