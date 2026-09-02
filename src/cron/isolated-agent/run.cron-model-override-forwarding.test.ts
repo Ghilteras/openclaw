@@ -503,6 +503,47 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     expect(firstMockArg(runEmbeddedAgentMock).thinkLevel).toBe("low");
   });
 
+  it("rejects a rooted turn before a configured CLI runtime starts", async () => {
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("codex");
+
+    const result = await runCronIsolatedAgentTurn(
+      makeParams({
+        executionRoot: {
+          workspaceDir: "/tmp/workshop-skills",
+          cwd: "/tmp/workshop-skills",
+          sessionRoot: "/tmp/workshop-skills",
+          requireWritableSandbox: true,
+        },
+      }),
+    );
+
+    expect(result).toMatchObject({
+      status: "error",
+      admissionDisposition: "rejected",
+      error:
+        "collection review requires the embedded agent runtime; the configured CLI runtime cannot be rooted at the Workshop directory",
+    });
+    expect(runWithModelFallbackMock).not.toHaveBeenCalled();
+    expect(runCliAgentMock).not.toHaveBeenCalled();
+    expect(runEmbeddedAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps a rooted turn on the embedded runtime", async () => {
+    mockRunCronFallbackPassthrough();
+    const executionRoot = {
+      workspaceDir: "/tmp/workshop-skills",
+      cwd: "/tmp/workshop-skills",
+      sessionRoot: "/tmp/workshop-skills",
+      requireWritableSandbox: true,
+    };
+
+    const result = await runCronIsolatedAgentTurn(makeParams({ executionRoot }));
+
+    expect(result.status).toBe("ok");
+    expect(runEmbeddedAgentMock).toHaveBeenCalledWith(expect.objectContaining(executionRoot));
+    expect(runCliAgentMock).not.toHaveBeenCalled();
+  });
+
   it("uses a stored cron-session thinking preference before configured defaults", async () => {
     resolveAllowedModelRefMock.mockReturnValue({
       ref: { provider: "openai", model: "gpt-5.6-luna" },

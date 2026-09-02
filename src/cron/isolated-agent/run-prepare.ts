@@ -55,6 +55,7 @@ import {
   loadCronExternalContentRuntime,
   loadSessionAccessorRuntime,
   resolveCronAgentTurnMessage,
+  resolveCronRuntimeSelection,
   retireRolledCronSessionMcpRuntime,
   type RunCronAgentTurnParams,
   type WithRunSession,
@@ -87,7 +88,6 @@ import {
   resolveHookExternalContentSource,
   isThinkingLevelSupported,
   resolveSupportedThinkingLevel,
-  resolveEffectiveAgentRuntime,
   resolveSessionRuntimeOverrideForProvider,
   resolveThinkingDefault,
 } from "./run.runtime.js";
@@ -435,14 +435,20 @@ export async function prepareCronRunContext(params: {
       hookThinking: isGmailHook ? runtimeCfg.hooks?.gmail?.thinking : undefined,
       sessionThinking: cronSession.sessionEntry.thinkingLevel,
     });
-    const effectiveAgentRuntime = resolveEffectiveAgentRuntime({
+    const { effectiveAgentRuntime, rejectedExecutionRoot } = resolveCronRuntimeSelection({
       cfg: cfgWithAgentDefaults,
       provider,
       modelId: model,
       agentId: modelOwner.agentId,
       sessionKey: agentSessionKey,
       sessionEntry: cronSession.sessionEntry,
+      executionRoot: input.executionRoot,
+      release: sessionWorkAdmission.release,
+      withRunSession,
     });
+    if (rejectedExecutionRoot) {
+      return { ok: false, result: rejectedExecutionRoot };
+    }
     let requestedThinkLevel = thinkingSelection.requestedThinkLevel;
     if (!requestedThinkLevel) {
       requestedThinkLevel = resolveThinkingDefault({
@@ -512,7 +518,6 @@ export async function prepareCronRunContext(params: {
       });
 
     const { formattedTime, timeLine } = resolveCronStyleNow(runtimeCfg, now);
-    const originalMessage = resolveCronAgentTurnMessage(input);
     // Current jobs stay detached; a bounded tail preserves context without transcript continuation.
     const currentConversationContext =
       input.job.sessionTarget === "current" && agentPayload && sourceSessionKey && sourceEntry
@@ -524,8 +529,8 @@ export async function prepareCronRunContext(params: {
           })
         : undefined;
     const message = currentConversationContext
-      ? `${currentConversationContext}\n\n${originalMessage}`
-      : originalMessage;
+      ? `${currentConversationContext}\n\n${resolveCronAgentTurnMessage(input)}`
+      : resolveCronAgentTurnMessage(input);
     const base = `[cron:${input.job.id} ${input.job.name}] ${message}`.trim();
     const isExternalHook =
       hookExternalContentSource !== undefined || isExternalHookSession(baseSessionKey);

@@ -4,6 +4,7 @@ import { retireSessionMcpRuntime } from "../../agents/agent-bundle-mcp-tools.js"
 import { hasAnyAuthProfileStoreSource } from "../../agents/auth-profiles/source-check.js";
 import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import type { CliDeps } from "../../cli/outbound-send-deps.js";
+import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import type {
@@ -13,7 +14,7 @@ import type {
   CronStoredJob,
 } from "../types.js";
 import type { MutableCronSession } from "./run-session-state.js";
-import { logWarn } from "./run.runtime.js";
+import { logWarn, resolveEffectiveAgentRuntime } from "./run.runtime.js";
 import type { RunCronAgentTurnResult } from "./run.types.js";
 
 export type RunCronAgentTurnParams = {
@@ -48,6 +49,42 @@ export function resolveCronAgentTurnMessage(input: RunCronAgentTurnParams): stri
 export type WithRunSession = (
   result: Omit<RunCronAgentTurnResult, "sessionId" | "sessionKey">,
 ) => RunCronAgentTurnResult;
+
+export function resolveCronRuntimeSelection(params: {
+  cfg: OpenClawConfig;
+  provider: string;
+  modelId: string;
+  agentId: string;
+  sessionKey: string;
+  sessionEntry: Pick<
+    SessionEntry,
+    "agentHarnessId" | "agentRuntimeOverride" | "modelSelectionLocked"
+  >;
+  executionRoot?: RunCronAgentTurnParams["executionRoot"];
+  release: () => void;
+  withRunSession: WithRunSession;
+}): { effectiveAgentRuntime: string; rejectedExecutionRoot?: RunCronAgentTurnResult } {
+  const effectiveAgentRuntime = resolveEffectiveAgentRuntime({
+    cfg: params.cfg,
+    provider: params.provider,
+    modelId: params.modelId,
+    agentId: params.agentId,
+    sessionKey: params.sessionKey,
+    sessionEntry: params.sessionEntry,
+  });
+  if (!params.executionRoot || effectiveAgentRuntime === "openclaw") {
+    return { effectiveAgentRuntime };
+  }
+  params.release();
+  return {
+    effectiveAgentRuntime,
+    rejectedExecutionRoot: params.withRunSession({
+      status: "error",
+      error:
+        "collection review requires the embedded agent runtime; the configured CLI runtime cannot be rooted at the Workshop directory",
+    }),
+  };
+}
 
 const sessionAccessorRuntimeLoader = createLazyImportLoader(
   () => import("../../config/sessions/session-accessor.js"),

@@ -530,6 +530,44 @@ describe("skill collection review boundary", () => {
       await tempDirs.cleanup();
     }
   });
+
+  it("records a rejected runtime without committing a backup or advancing the snapshot", async () => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-runtime-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const beforeVersion = getSkillsSnapshotVersion();
+    const error =
+      "collection review requires the embedded agent runtime; the configured CLI runtime cannot be rooted at the Workshop directory";
+    try {
+      await writeSkill(skillsRoot, "procedure", "Procedure", "# Procedure\n");
+      const result = await runSkillCollectionReviewForAgent({
+        config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
+        agentId: "main",
+        job: createReviewJob("skill-review-runtime"),
+        env: testState.env,
+        runTurn: async () => ({
+          status: "error",
+          admissionDisposition: "rejected",
+          error,
+          summary: error,
+        }),
+      });
+
+      expect(result).toMatchObject({ status: "error", error, summary: error });
+      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.workshop).toEqual(
+        expect.objectContaining({ error }),
+      );
+      expect(getSkillsSnapshotVersion()).toBe(beforeVersion);
+      expect(listSkillCollectionReviewOutcomes({ env: testState.env })).toEqual([]);
+      await expect(
+        fs.readFile(path.join(skillsRoot, "procedure", "SKILL.md"), "utf8"),
+      ).resolves.toContain("# Procedure");
+    } finally {
+      await testState.cleanup();
+    }
+  });
 });
 
 function createReviewJob(id: string): CronStoredJob {
