@@ -211,12 +211,17 @@ console.log("Linger=yes");
       }
       const driver = `
 import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { readSystemdUserLingerStatus, enableSystemdUserLinger } from ${JSON.stringify(new URL("./systemd-linger.ts", import.meta.url).href)};
-process.getuid = () => 1000;
+const realGetuid = process.getuid;
 assert.deepEqual(await readSystemdUserLingerStatus({ env: { USER: "selected" } }), { user: "selected", linger: "yes" });
+// Only the synchronous sudo decision is synthetic; logging must see the real filesystem owner.
+mock.method(process, "getuid", () => 1000, { times: 1 });
 assert.equal((await enableSystemdUserLinger({ env: { USER: "selected" }, sudoMode: "non-interactive" })).ok, true);
-process.getuid = () => 0;
+assert.equal(process.getuid, realGetuid);
+mock.method(process, "getuid", () => 0, { times: 1 });
 assert.equal((await enableSystemdUserLinger({ env: {}, user: "explicit" })).ok, true);
+assert.equal(process.getuid, realGetuid);
 `;
       await runDriver(driver, { HOME: home, PATH: home, BOUNDARY_PARENT_ONLY: "synthetic-parent" });
       const calls = (await fs.readFile(callsPath, "utf8"))
