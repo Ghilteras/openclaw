@@ -48,6 +48,12 @@ jobs:
           printf 'diagnostic_source=%s\n' "$actual_head"
           git status --short
 
+      - name: Materialize the canonical CI action-tree layout
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-harness
+          git ls-files -z -- .github/actions | git checkout-index --force --prefix=.ci-harness/ --stdin -z
+
       - name: Try to exclude workspace from Windows Defender (best-effort)
         shell: pwsh
         run: |
@@ -69,11 +75,11 @@ jobs:
           REQUESTED_NODE_VERSION: "22.23.2"
         run: |
           set -euo pipefail
-          source .github/actions/setup-pnpm-store-cache/ensure-node.sh
+          source .ci-harness/.github/actions/setup-pnpm-store-cache/ensure-node.sh
           openclaw_ensure_node "$REQUESTED_NODE_VERSION"
 
       - name: Setup pnpm
-        uses: ./.github/actions/setup-pnpm-store-cache
+        uses: ./.ci-harness/.github/actions/setup-pnpm-store-cache
         with:
           cache-mode: restore
           node-version: "22.23.2"
