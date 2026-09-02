@@ -153,9 +153,10 @@ collection. It uses `skill_workshop` action `restore_collection` under the same
 agent-scoped lock. Restore refuses if any affected skill changed after cleanup.
 
 Each attempt is persisted under the agent id review key before the model starts.
-Review is admitted only for collections of at most
-200 skills and 240,000 total `SKILL.md` bytes. Larger collections stay unchanged.
-The reconciled result must stay inside the same byte limit.
+There is no skill-count admission cap like the old 200-skill limit. The inventory
+is bounded to 10,000 files and six directory levels. A larger tree fails the
+review with a recorded error; split or prune the agent's Workshop directory by
+hand before running it again.
 
 Every completed review records its kept, written, and dropped skill names in
 the shared state database, including the reason for each drop. OpenClaw retains

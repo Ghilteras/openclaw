@@ -36,7 +36,7 @@ export function buildCollectionReviewPrompt(
     "Keep SKILL.md files around or under 10,000 characters when practical; this is guidance, not an enforced limit.",
     "For every dropped skill, include exactly one final-output line: DROP <skill-name>: <short reason>.",
     "Do not edit files outside this directory. Finish with a concise summary after any DROP lines.",
-    "This review has no collection-size cap.",
+    "There is no skill-count admission cap like the old 200-skill limit. The inventory is bounded to 10,000 files and six directory levels; a larger tree fails the review with a recorded error. Split or prune the Workshop directory by hand before running it again.",
     "",
     "Recorded usage (name useCount lastUsedDaysAgo):",
     ...visibleUsageRows.map(

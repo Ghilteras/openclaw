@@ -66,6 +66,15 @@ type ReviewSkillFile = {
 };
 
 const MAX_WORKSHOP_REVIEW_ENTRIES = 10_000;
+const WORKSHOP_REVIEW_INVENTORY_LIMIT_ERROR =
+  "Skill collection review inventory exceeds 10,000 files or six directory levels. Split or prune the Workshop directory by hand, then run the review again.";
+
+class WorkshopReviewInventoryLimitError extends Error {
+  constructor() {
+    super(WORKSHOP_REVIEW_INVENTORY_LIMIT_ERROR);
+    this.name = "WorkshopReviewInventoryLimitError";
+  }
+}
 
 export async function runSkillCollectionReviewForAgent(params: {
   config: OpenClawConfig;
@@ -96,7 +105,11 @@ export async function runSkillCollectionReviewForAgent(params: {
       assertCurrent(lease);
       await fs.mkdir(skillsRoot, { recursive: true });
       const before = await resolveReviewSkills(params.config, params.env);
-      const beforeFiles = await snapshotWorkshopSkillFiles(skillsRoot);
+      const beforeFiles = await snapshotWorkshopSkillFiles(skillsRoot).catch((error: unknown) => {
+        assertCurrent(lease);
+        recordSkillCollectionReviewStatus({ attemptedAtMs, error }, stateOptions);
+        throw error;
+      });
       const backup = await createCollectionBackup({
         skillsRoot,
         skillDirs: before.map((skill) => path.relative(skillsRoot, skill.baseDir)),
@@ -156,7 +169,18 @@ export async function runSkillCollectionReviewForAgent(params: {
         const reviewErrors: string[] = [];
         const dropReasons = parseDropReasons(turnResult.outputText);
         const after = await resolveReviewSkills(params.config, params.env);
-        const afterFiles = await snapshotWorkshopSkillFiles(skillsRoot);
+        let afterFiles: Map<string, ReviewSkillFile>;
+        try {
+          afterFiles = await snapshotWorkshopSkillFiles(skillsRoot);
+        } catch (error) {
+          if (error instanceof WorkshopReviewInventoryLimitError) {
+            await restoreWorkshopReviewTreeFromBackup({
+              skillsRoot,
+              backupDir: backup.backupDir,
+            });
+          }
+          throw error;
+        }
         const beforeByName = new Map(before.map((skill) => [skill.name, skill]));
         const afterByDir = new Map(
           after.map((skill) => [path.relative(skillsRoot, skill.baseDir), skill]),
@@ -382,6 +406,9 @@ async function snapshotWorkshopSkillFiles(
     descend: (entry) => !entry.name.startsWith(".") && entry.name !== "node_modules",
   });
   if (walked.truncated || walked.failedDirs?.length) {
+    if (walked.truncated) {
+      throw new WorkshopReviewInventoryLimitError();
+    }
     throw new Error("Could not fully inspect the Skill Workshop directory.");
   }
   const skillsRootAccess = await root(skillsRoot);
@@ -408,6 +435,22 @@ async function snapshotWorkshopSkillFiles(
       }),
   );
   return new Map(snapshots.map((snapshot) => [snapshot.relativePath, snapshot]));
+}
+
+// Only for a turn that blew past the inventory bound: the tree can no longer be enumerated, so
+// unscanned content must not survive. Entries that existed before the turn but were never loaded
+// as skills are lost with it; that is the accepted cost of a bounded, fail-closed review.
+async function restoreWorkshopReviewTreeFromBackup(params: {
+  skillsRoot: string;
+  backupDir: string;
+}): Promise<void> {
+  await fs.rm(params.skillsRoot, { recursive: true, force: true });
+  await fs.cp(path.join(params.backupDir, "skills"), params.skillsRoot, {
+    recursive: true,
+    errorOnExist: true,
+    force: false,
+    preserveTimestamps: true,
+  });
 }
 
 function resolveWorkshopSkillDirectory(
