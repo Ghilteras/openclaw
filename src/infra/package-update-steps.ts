@@ -733,15 +733,18 @@ type PackageTreeFingerprint = {
 };
 
 type PackageRootIdentity =
-  | { kind: "available"; dev: bigint; ino: bigint }
-  | { kind: "unavailable" };
+  | { kind: "inode"; dev: bigint; ino: bigint }
+  | { kind: "birthtime"; birthtimeNs: bigint; dev: bigint };
 
 async function readPackageRootIdentity(packageRoot: string): Promise<PackageRootIdentity | null> {
   try {
     const stat = await fs.lstat(packageRoot, { bigint: true });
-    return stat.ino === 0n
-      ? { kind: "unavailable" }
-      : { kind: "available", dev: stat.dev, ino: stat.ino };
+    if (stat.ino !== 0n) {
+      return { kind: "inode", dev: stat.dev, ino: stat.ino };
+    }
+    return stat.birthtimeNs > 0n
+      ? { kind: "birthtime", birthtimeNs: stat.birthtimeNs, dev: stat.dev }
+      : null;
   } catch {
     return null;
   }
@@ -754,10 +757,11 @@ function packageRootIdentitiesMatch(
   if (!left || !right || left.kind !== right.kind) {
     return false;
   }
-  return (
-    left.kind === "unavailable" ||
-    (right.kind === "available" && left.dev === right.dev && left.ino === right.ino)
-  );
+  return left.kind === "inode"
+    ? right.kind === "inode" && left.dev === right.dev && left.ino === right.ino
+    : right.kind === "birthtime" &&
+        left.dev === right.dev &&
+        left.birthtimeNs === right.birthtimeNs;
 }
 
 async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeFingerprint | null> {
