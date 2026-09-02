@@ -15,7 +15,6 @@ import {
   type OpenClawStateDatabaseOptions,
 } from "../../state/openclaw-state-db.js";
 import { withOpenClawStateLease } from "../../state/openclaw-state-lease.js";
-import type { SkillCollectionReconcileResult } from "./collection-contracts.js";
 import {
   databaseOptions,
   ensureSkillWorkshopSchema,
@@ -23,6 +22,9 @@ import {
 } from "./store-sqlite-schema.js";
 
 const REVIEW_CLAIM_MS = 11 * 60_000;
+// The Workshop owns one global skill collection, so its review lease, status entry, and
+// history all live under this single key. Experience reviews stay per workspace.
+const COLLECTION_REVIEW_KEY = "workshop";
 // Bound history so unattended weekly maintenance cannot grow state forever.
 const SKILL_COLLECTION_REVIEW_RETENTION_COUNT = 90;
 const SKILL_COLLECTION_REVIEW_HISTORY_LIMIT = 20;
@@ -39,7 +41,14 @@ type SkillCollectionReviewOutcome = {
   backupId: string;
   kept: string[];
   written: string[];
-  dropped: SkillCollectionReconcileResult["dropped"];
+  dropped: Array<{ name: string; reason: string }>;
+};
+
+export type SkillCollectionReviewResult = {
+  backupId: string;
+  kept: string[];
+  written: string[];
+  dropped: Array<{ name: string; reason: string }>;
 };
 
 export type SkillCollectionReviewStatus = {
@@ -56,26 +65,27 @@ export type SkillExperienceReviewStatus = {
   usage?: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
 };
 
-function experienceReviewKey(agentId: string, workspaceDir: string): string {
-  return sha256Hex(`${agentId}\0${path.resolve(workspaceDir)}`);
+function workspaceKey(workspaceDir: string): string {
+  return sha256Hex(path.resolve(workspaceDir));
 }
 
 export async function withSkillCollectionReviewClaim<T>(
-  agentId: string,
-  run: () => Promise<T>,
+  run: (
+    lease: import("../../state/openclaw-state-lease.js").OpenClawStateLeaseContext,
+  ) => Promise<T>,
   options: OpenClawStateDatabaseOptions = {},
 ): Promise<T> {
   return await withOpenClawStateLease(
     {
-      scope: "skill-collection-review",
-      key: agentId,
+      scope: "skill-collection",
+      key: COLLECTION_REVIEW_KEY,
       database: { scope: "shared", options },
       leaseMs: REVIEW_CLAIM_MS,
       waitMs: 0,
       leaseLabel: "skill collection review claim",
       operationLabel: "skill-collection.review",
     },
-    async () => await run(),
+    async (lease) => await run(lease),
   );
 }
 
@@ -101,7 +111,6 @@ export function readSkillReviewOutcomes(options: OpenClawStateDatabaseOptions = 
 }
 
 export function recordSkillCollectionReviewStatus(
-  agentId: string,
   review: { attemptedAtMs: number; succeededAtMs?: number; error?: unknown },
   options: OpenClawStateDatabaseOptions = {},
 ): void {
@@ -115,27 +124,32 @@ export function recordSkillCollectionReviewStatus(
           attemptedAtMs: review.attemptedAtMs,
           ...(review.succeededAtMs !== undefined ? { succeededAtMs: review.succeededAtMs } : {}),
         };
-  recordReviewEntry("collectionReviews", agentId, status, options);
+  recordReviewEntry(
+    "collectionReviews",
+    COLLECTION_REVIEW_KEY,
+    status,
+    {
+      lastAttemptAtMs: status.attemptedAtMs,
+      ...(status.succeededAtMs !== undefined ? { lastSuccessAtMs: status.succeededAtMs } : {}),
+      lastError: status.error ?? null,
+    },
+    options,
+  );
 }
 
 export function recordSkillExperienceReviewOutcome(
-  agentId: string,
   workspaceDir: string,
   review: SkillExperienceReviewStatus,
   options: OpenClawStateDatabaseOptions = {},
 ): void {
-  recordReviewEntry(
-    "experienceReviews",
-    experienceReviewKey(agentId, workspaceDir),
-    review,
-    options,
-  );
+  recordReviewEntry("experienceReviews", workspaceKey(workspaceDir), review, {}, options);
 }
 
 function recordReviewEntry(
   field: "collectionReviews" | "experienceReviews",
   entryKey: string,
   review: SkillCollectionReviewStatus | SkillExperienceReviewStatus,
+  columns: Partial<Omit<SkillCuratorState, "lastResult">>,
   options: OpenClawStateDatabaseOptions,
 ): void {
   updateConfigMachineState<SkillCuratorState>(
@@ -147,6 +161,7 @@ function recordReviewEntry(
         lastSuccessAtMs: null,
         lastError: null,
         ...current,
+        ...columns,
         lastResult: {
           ...state,
           [field]: {
@@ -171,7 +186,7 @@ function parseStoredNames(value: string, field: string): string[] {
   return parsed;
 }
 
-function parseStoredDrops(value: string): SkillCollectionReconcileResult["dropped"] {
+function parseStoredDrops(value: string): SkillCollectionReviewResult["dropped"] {
   const parsed: unknown = JSON.parse(value);
   if (!Array.isArray(parsed)) {
     throw new Error("Invalid dropped entries in stored skill collection review.");
@@ -186,7 +201,6 @@ function parseStoredDrops(value: string): SkillCollectionReconcileResult["droppe
 }
 
 export function listSkillCollectionReviewOutcomes(
-  agentId: string,
   options: SkillWorkshopStoreOptions = {},
 ): SkillCollectionReviewOutcome[] {
   ensureSkillWorkshopSchema(options);
@@ -197,7 +211,6 @@ export function listSkillCollectionReviewOutcomes(
     kysely
       .selectFrom("skill_workshop_collection_reviews")
       .select(["backup_id", "create_time", "kept_names_json", "written_names_json", "dropped_json"])
-      .where("owner_agent_id", "=", agentId)
       .orderBy("create_time", "desc")
       .orderBy("review_id", "desc")
       .limit(SKILL_COLLECTION_REVIEW_HISTORY_LIMIT),
@@ -211,9 +224,8 @@ export function listSkillCollectionReviewOutcomes(
 }
 
 export function recordSkillCollectionReviewHistory(
-  agentId: string,
   nowMs: number,
-  result: SkillCollectionReconcileResult,
+  result: SkillCollectionReviewResult,
   options: SkillWorkshopStoreOptions = {},
 ): void {
   ensureSkillWorkshopSchema(options);
@@ -223,7 +235,6 @@ export function recordSkillCollectionReviewHistory(
       db,
       kysely.insertInto("skill_workshop_collection_reviews").values({
         review_id: randomUUID(),
-        owner_agent_id: agentId,
         backup_id: result.backupId,
         create_time: nowMs,
         kept_names_json: JSON.stringify(result.kept),
@@ -234,7 +245,6 @@ export function recordSkillCollectionReviewHistory(
     const retainedReviewIds = kysely
       .selectFrom("skill_workshop_collection_reviews")
       .select("review_id")
-      .where("owner_agent_id", "=", agentId)
       .orderBy("create_time", "desc")
       .orderBy("review_id", "desc")
       .limit(SKILL_COLLECTION_REVIEW_RETENTION_COUNT);
@@ -242,7 +252,6 @@ export function recordSkillCollectionReviewHistory(
       db,
       kysely
         .deleteFrom("skill_workshop_collection_reviews")
-        .where("owner_agent_id", "=", agentId)
         .where("review_id", "not in", retainedReviewIds),
     );
   }, databaseOptions(options));
