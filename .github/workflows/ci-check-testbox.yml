@@ -6,6 +6,10 @@ on:
         type: string
         description: "Testbox session ID"
         required: true
+      auth_alias_diagnostic:
+        type: boolean
+        description: "Diagnostic branch only: one frozen auth alias shard, without Testbox hydration"
+        default: false
       timeout_minutes:
         type: number
         description: "Maximum GitHub job runtime for long Testbox commands"
@@ -28,7 +32,7 @@ env:
 
 jobs:
   check:
-    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    if: ${{ !inputs.auth_alias_diagnostic && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     permissions:
       contents: read
     name: "check"
@@ -142,3 +146,67 @@ jobs:
           # Blacksmith's runner teardown does not wait for its 290-second grace.
           timeout --signal=KILL 5s sudo ss -K state established \
             "( sport = :${runner_ssh_local_port} )" || true
+
+  auth-alias-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.auth_alias_diagnostic
+    name: "auth-alias-diagnostic (original 60-file plan)"
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - name: Checkout frozen failing source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 5e6117d17d92dcac2ef6da6d609eb423b089a77a
+          persist-credentials: false
+      - name: Checkout diagnostic tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-diagnostic
+          sparse-checkout: |
+            scripts/ci-auth-alias-diagnostic.mts
+            test/ci-auth-alias-trace.ts
+            test/ci-auth-alias-plan.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Setup original Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          node-version: "24.19.0"
+          cache-mode: restore
+          dependency-cache: "true"
+          install-bun: "false"
+      - name: Restore original transform cache when still available
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/tmp/openclaw-vitest-fs-cache
+          key: openclaw/openclaw-vitest-fs-v3-protected-Linux-X64-node-24.x-ae268412ad10ac346dafcea62179aeb75bdca3459d9611bcfdc71f37219d70cd-33603238117-1
+      - name: Restore original compile cache when still available
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/tmp/openclaw-node-compile-cache
+          key: openclaw/openclaw-node-compile-v3-test-protected-Linux-X64-node-24.x-33603238117-1
+      - name: Instrument identity and isolate disk-backed state
+        run: node .ci-diagnostic/scripts/ci-auth-alias-diagnostic.mts prepare
+      - name: Run original shard once
+        env:
+          OPENCLAW_VITEST_FS_MODULE_CACHE_PATH: /var/tmp/openclaw-vitest-fs-cache
+          OPENCLAW_VITEST_FS_MODULE_CACHE_WRITER: "0"
+          NODE_COMPILE_CACHE: /var/tmp/openclaw-node-compile-cache
+          OPENCLAW_NODE_COMPILE_CACHE_WRITER: "0"
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import tsx scripts/ci-run-node-test-shard.mts 2>&1 | tee .artifacts/ci-auth-alias-diagnostic/run.log
+      - name: Upload synthetic diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: auth-alias-diagnostic-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            .artifacts/ci-auth-alias-diagnostic/trace/*.jsonl
+            .artifacts/ci-auth-alias-diagnostic/receipt.json
+            .artifacts/ci-auth-alias-diagnostic/plan.json
+            .artifacts/ci-auth-alias-diagnostic/run.log
