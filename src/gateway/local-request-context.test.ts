@@ -295,7 +295,7 @@ describe("local gateway request context", () => {
     loadOwner.mockRestore();
   });
 
-  it("uses the prepared local owner when a catalog read times out", async () => {
+  it("uses the published local owner for an ordinary catalog read", async () => {
     const cfg = {
       agents: {
         list: [
@@ -319,9 +319,10 @@ describe("local gateway request context", () => {
       metadataSnapshot: { index: { plugins: [] }, plugins: [] } as never,
       modelCatalog: { entries: [], routeVariants: [] },
     } satisfies PublishedModelCatalogOwnerCandidate;
-    const loadOwner = vi
-      .spyOn(preparedModelCatalog, "loadPublishedPreparedModelCatalogOwnerSnapshot")
-      .mockImplementation(() => new Promise(() => {}));
+    const loadOwner = vi.spyOn(
+      preparedModelCatalog,
+      "loadPublishedPreparedModelCatalogOwnerSnapshot",
+    );
     const readOwner = vi
       .spyOn(preparedModelCatalog, "getPublishedPreparedModelCatalogOwnerSnapshot")
       .mockReturnValue(asPublishedOwner(candidate));
@@ -332,8 +333,8 @@ describe("local gateway request context", () => {
     );
 
     expect(result).toMatchObject({ ok: true, payload: { models: [] } });
-    expect(loadOwner).toHaveBeenCalledOnce();
     expect(readOwner).toHaveBeenCalledOnce();
+    expect(loadOwner).not.toHaveBeenCalled();
     loadOwner.mockRestore();
     readOwner.mockRestore();
   });

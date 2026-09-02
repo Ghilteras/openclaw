@@ -2,11 +2,7 @@
 
 import { afterEach, expect, it, vi } from "vitest";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
-import {
-  invalidateChatMetadataStore,
-  peekChatMetadata,
-  beginChatMetadataPublication,
-} from "../lib/chat/chat-metadata-store.ts";
+import { peekChatMetadata, beginChatMetadataPublication } from "../lib/chat/chat-metadata-store.ts";
 import "./app-host.ts";
 import type { ApplicationContext, ApplicationGatewaySnapshot } from "./context.ts";
 

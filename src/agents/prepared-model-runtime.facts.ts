@@ -16,7 +16,6 @@ import {
 import type { ProviderCatalogOutcome } from "../plugins/provider-catalog.types.js";
 import { resolveLoadedProviderRuntimePlugin } from "../plugins/provider-hook-runtime.js";
 import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
-import { withPluginRuntimeRegistryScope } from "../plugins/runtime/gateway-request-scope.js";
 import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import { resolveRuntimeSyntheticAuthProviderRefs } from "../plugins/synthetic-auth.runtime.js";
 import type { AgentCredentialMap } from "./agent-auth-credentials.js";
@@ -574,48 +573,54 @@ export function prepareConfiguredRuntimeFactsBatch(params: {
     registryCount += 1;
     // The captured registry exists only after agent-owned catalog parsing. Complete static misses
     // here so turn facts stay within this lifecycle generation without starting live discovery.
-    withPluginRuntimeRegistryScope(params.pluginGeneration.pluginRegistry, () => {
-      for (const facts of group.agentFacts) {
-        const { input } = facts;
-        const configuredRuntimeModels = params.pluginGeneration.pluginRegistry
-          ? completeConfiguredRuntimeModels({
-              configuredModelRefs: facts.configuredModelRefs,
-              configuredRuntimeModels: facts.configuredRuntimeModels,
-              resolveDynamicModel: ({ provider, modelId }) => {
-                const providerConfig =
-                  input.config.models?.providers?.[provider] ??
-                  findNormalizedProviderValue(input.config.models?.providers, provider);
-                return (
-                  resolveLoadedProviderRuntimePlugin({
-                    provider,
-                    modelId,
-                    config: input.config,
-                    workspaceDir: input.workspaceDir,
-                    env: facts.env,
-                  })?.resolveDynamicModel?.({
-                    config: input.config,
-                    agentDir: input.agentDir,
-                    workspaceDir: input.workspaceDir,
-                    provider,
-                    modelId,
-                    modelRegistry: templateModelRegistry,
-                    providerConfig,
-                  }) ?? undefined
-                );
-              },
-            })
-          : facts.configuredRuntimeModels;
-        catalogs.set(
-          input,
-          prepareConfiguredRuntimeFacts({
-            agentFacts: facts,
-            workspaceFacts: params.pluginGeneration,
-            templateModelRegistry,
-            configuredRuntimeModels,
-          }),
-        );
-      }
-    });
+    withPluginRuntimeGenerationScope(
+      {
+        metadataSnapshot: params.pluginGeneration.pluginMetadataSnapshot,
+        pluginRegistry: params.pluginGeneration.pluginRegistry,
+      },
+      () => {
+        for (const facts of group.agentFacts) {
+          const { input } = facts;
+          const configuredRuntimeModels = params.pluginGeneration.pluginRegistry
+            ? completeConfiguredRuntimeModels({
+                configuredModelRefs: facts.configuredModelRefs,
+                configuredRuntimeModels: facts.configuredRuntimeModels,
+                resolveDynamicModel: ({ provider, modelId }) => {
+                  const providerConfig =
+                    input.config.models?.providers?.[provider] ??
+                    findNormalizedProviderValue(input.config.models?.providers, provider);
+                  return (
+                    resolveLoadedProviderRuntimePlugin({
+                      provider,
+                      modelId,
+                      config: input.config,
+                      workspaceDir: input.workspaceDir,
+                      env: facts.env,
+                    })?.resolveDynamicModel?.({
+                      config: input.config,
+                      agentDir: input.agentDir,
+                      workspaceDir: input.workspaceDir,
+                      provider,
+                      modelId,
+                      modelRegistry: templateModelRegistry,
+                      providerConfig,
+                    }) ?? undefined
+                  );
+                },
+              })
+            : facts.configuredRuntimeModels;
+          catalogs.set(
+            input,
+            prepareConfiguredRuntimeFacts({
+              agentFacts: facts,
+              workspaceFacts: params.pluginGeneration,
+              templateModelRegistry,
+              configuredRuntimeModels,
+            }),
+          );
+        }
+      },
+    );
   }
   return { catalogs, registryCount };
 }

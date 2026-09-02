@@ -23,7 +23,7 @@ import { createPageState } from "./chat-state-page.ts";
 import {
   applySelectedChatAgent,
   refreshChatMetadata,
-  refreshChatModelCatalogOnDemand,
+  loadChatModelCatalogOnPickerOpen,
   refreshChatModelAuthStatus,
   retireChatMetadataRequests,
 } from "./chat-state-refresh.ts";
@@ -3704,7 +3704,7 @@ describe("refreshChatMetadata", () => {
     const request = vi.fn().mockReturnValue(stale.promise);
     const state = createMetadataState(request, { chatModelCatalog: [current] });
 
-    const pending = refreshChatModelCatalogOnDemand(state);
+    const pending = loadChatModelCatalogOnPickerOpen(state);
     state.connected = false;
     state.connectionEpoch += 1;
     state.connected = true;
@@ -3723,8 +3723,8 @@ describe("refreshChatMetadata", () => {
     const request = vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
     const state = createMetadataState(request);
 
-    const first = refreshChatModelCatalogOnDemand(state);
-    const second = refreshChatModelCatalogOnDemand(state);
+    const first = loadChatModelCatalogOnPickerOpen(state);
+    const second = loadChatModelCatalogOnPickerOpen(state);
     newer.resolve({ models: [{ id: "new", name: "New", provider: "test" }] });
     older.resolve({ models: [{ id: "old", name: "Old", provider: "test" }] });
     await Promise.all([first, second]);
@@ -3737,7 +3737,7 @@ describe("refreshChatMetadata", () => {
     const request = vi.fn().mockRejectedValue(new Error("catalog unavailable"));
     const state = createMetadataState(request, { chatModelCatalog: previous });
 
-    await refreshChatModelCatalogOnDemand(state);
+    await loadChatModelCatalogOnPickerOpen(state);
 
     expect(state.chatModelCatalog).toBe(previous);
     expect(state.chatModelCatalogError).toBe("catalog unavailable");
@@ -3800,7 +3800,7 @@ describe("refreshChatMetadata", () => {
   ])(
     "replaces the $label picker catalog with the current model list",
     async ({ existingModels }) => {
-      const sessionRefresh = createDeferred<void>();
+      const sessionRefresh = createDeferred();
       const refreshSessions = vi.fn(() => sessionRefresh.promise);
       const discovery = createDeferred<{
         models: Array<{ id: string; name: string; provider: string; reasoning: boolean }>;
@@ -3819,7 +3819,7 @@ describe("refreshChatMetadata", () => {
         sessions: { refresh: refreshSessions } as never,
       });
 
-      const refresh = refreshChatModelCatalogOnDemand(state);
+      const refresh = loadChatModelCatalogOnPickerOpen(state);
       expect(state.chatModelCatalog).toEqual(existingModels);
       expect(state.chatModelsLoading).toBe(existingModels.length === 0);
       discovery.resolve({

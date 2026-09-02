@@ -229,11 +229,15 @@ export async function refreshChatModelAuthStatus(host: ChatPageHost, opts?: { re
   }
 }
 
-export function refreshChatModelCatalogOnDemand(host: ChatPageHost): Promise<void> {
-  return loadChatModelCatalog(host, true);
+export function loadChatModelCatalogOnPickerOpen(host: ChatPageHost): Promise<void> {
+  return loadChatModelCatalog(host, false, true);
 }
 
-async function loadChatModelCatalog(host: ChatPageHost, refresh = false): Promise<void> {
+async function loadChatModelCatalog(
+  host: ChatPageHost,
+  refresh = false,
+  refreshSessionList = refresh,
+): Promise<void> {
   const client = host.client;
   if (!client || !host.connected) {
     return;
@@ -259,7 +263,7 @@ async function loadChatModelCatalog(host: ChatPageHost, refresh = false): Promis
     if (ownsRequest()) {
       host.chatModelCatalog = result.models;
       host.chatModelCatalogError = null;
-      if (refresh) {
+      if (refreshSessionList) {
         // An explicit refresh can change session model metadata; converge through the session owner.
         void refreshCurrentChatSessionList(host).catch(() => undefined);
       }

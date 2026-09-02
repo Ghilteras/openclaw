@@ -924,9 +924,15 @@ describe("gateway server chat", () => {
     const tempDirs: string[] = [];
     let webchatWs: WebSocket | undefined;
     agentDiscoveryMock.enabled = true;
-    agentDiscoveryMock.models = [
-      { id: "claude-opus-4-6", provider: "anthropic", input: ["text", "image"] },
-    ];
+    agentDiscoveryMock.models = [{ id: "opus", provider: "claude-cli", input: ["text", "image"] }];
+    testState.agentConfig = {
+      model: { primary: "claude-cli/opus" },
+      models: { "claude-cli/opus": {} },
+    };
+    const { clearConfigCache, clearRuntimeConfigSnapshot } = await import("../config/io.js");
+    clearRuntimeConfigSnapshot();
+    clearConfigCache();
+    await prepareGatewayReplyRuntimeForTest({ force: true });
 
     try {
       webchatWs = new WebSocket(`ws://127.0.0.1:${port}`, {
@@ -944,6 +950,12 @@ describe("gateway server chat", () => {
           mode: GATEWAY_CLIENT_MODES.WEBCHAT,
         },
       });
+      const catalogRes = await rpcReq(webchatWs, "models.list", {
+        agentId: "main",
+        view: "configured",
+        refresh: true,
+      });
+      expect(catalogRes.ok).toBe(true);
 
       const webchatRes = await rpcReq(webchatWs, "chat.send", {
         sessionKey: "main",
@@ -1048,6 +1060,10 @@ describe("gateway server chat", () => {
 
       testState.sessionStorePath = undefined;
       testState.sessionConfig = undefined;
+      testState.agentConfig = {
+        model: { primary: "claude-cli/opus" },
+        models: { "claude-cli/opus": {} },
+      };
 
       const pngB64 =
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/woAAn8B9FD5fHAAAAAASUVORK5CYII=";

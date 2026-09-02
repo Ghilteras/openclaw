@@ -16,7 +16,7 @@ import {
 } from "./chat-session.ts";
 import { patchChatSessionSettings } from "./chat-settings-patches.ts";
 import type { ChatPageHost } from "./chat-state-host.ts";
-import { refreshChatModelCatalogOnDemand } from "./chat-state-refresh.ts";
+import { loadChatModelCatalogOnPickerOpen } from "./chat-state-refresh.ts";
 import type { ChatProps } from "./chat-view.ts";
 import {
   renderChatModelControls,
@@ -165,7 +165,7 @@ export function renderChatPaneComposerControls(params: {
             effortAccess.allowed
               ? switchChatContextWindow(state, next, targetSessionKey)
               : Promise.resolve(false),
-          onModelPickerOpen: () => refreshChatModelCatalogOnDemand(state),
+          onModelPickerOpen: () => loadChatModelCatalogOnPickerOpen(state),
           onModelPickerOpenChange: (open) => {
             state.chatModelPickerOpenSessionKey = open ? state.sessionKey : null;
           },

@@ -537,7 +537,7 @@ describe("chat pane composer controls", () => {
     },
     { label: "cold", cachedModels: [] },
   ])(
-    "revalidates the $label configured model catalog when the picker opens",
+    "reads the $label configured model catalog when the picker opens",
     async ({ cachedModels }) => {
       const container = document.createElement("div");
       const catalog = createDeferred<{ models: typeof cachedModels }>();
@@ -586,7 +586,6 @@ describe("chat pane composer controls", () => {
       expect(request).toHaveBeenCalledWith("models.list", {
         view: "configured",
         agentId: "main",
-        refresh: true,
       });
       expect(state.chatModelsLoading).toBe(cachedModels.length === 0);
       render(renderChatPaneComposerControls(controlParams).composerControls, container);

@@ -74,7 +74,7 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
     await server?.close();
   });
 
-  it("defers live provider discovery until refresh while preserving model setup", async () => {
+  it("keeps configured provider setup separate from explicit discovery refresh", async () => {
     const context = await browser.newContext({
       colorScheme: "dark",
       locale: "en-US",
@@ -84,7 +84,13 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
     const page = await context.newPage();
     const config = { auth: { profiles: { "openai:chatgpt": { provider: "openai" } } } };
     const gateway = await installMockGateway(page, {
-      featureMethods: ["chat.metadata", "chat.startup", "models.probe", "openclaw.setup.detect"],
+      featureMethods: [
+        "chat.metadata",
+        "chat.startup",
+        "models.list",
+        "models.probe",
+        "openclaw.setup.detect",
+      ],
       methodResponses: {
         "config.get": {
           config,
@@ -148,7 +154,11 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
           (request) => (request.params as { view?: string } | undefined)?.view === "all",
         ),
       ).toHaveLength(0);
+      expect(await gateway.getRequests("models.list")).toHaveLength(2);
       expect(await gateway.getRequests("models.list")).toEqual([
+        expect.objectContaining({
+          params: { agentId: "main", preparedOnly: true, view: "configured" },
+        }),
         expect.objectContaining({
           params: { agentId: "main", preparedOnly: true, view: "configured" },
         }),
@@ -190,7 +200,7 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
           (request) => (request.params as { view?: string } | undefined)?.view === "all",
         ),
       ).toHaveLength(0);
-      expect(await gateway.getRequests("models.list")).toHaveLength(2);
+      expect(await gateway.getRequests("models.list")).toHaveLength(3);
 
       await readiness.getByRole("button", { name: "Connect a verified AI model" }).click();
       await expect.poll(() => new URL(page.url()).pathname).toBe("/settings/model-setup");
@@ -482,7 +492,13 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
       models: { providers: { openai: providerConfig(redactedConfigValue) } },
     };
     const gateway = await installMockGateway(page, {
-      featureMethods: ["chat.metadata", "chat.startup", "config.patch", "models.probe"],
+      featureMethods: [
+        "chat.metadata",
+        "chat.startup",
+        "config.patch",
+        "models.list",
+        "models.probe",
+      ],
       models: [
         { id: "gpt-5.5", name: "GPT-5.5", provider: "openai", available: true },
         {
@@ -609,11 +625,7 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
           (request) => (request.params as { view?: string } | undefined)?.view === "all",
         ),
       ).toHaveLength(0);
-      expect(await gateway.getRequests("models.list")).toEqual([
-        expect.objectContaining({
-          params: { agentId: "main", preparedOnly: true, view: "configured" },
-        }),
-      ]);
+      expect(await gateway.getRequests("models.list")).toHaveLength(2);
       await expect.poll(async () => openaiCard.textContent()).toContain("API key set in config");
       await expect
         .poll(() => modelPickerValue(page.locator(".model-providers__defaults wa-select").first()))

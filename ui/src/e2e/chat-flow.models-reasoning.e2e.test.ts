@@ -12,6 +12,10 @@ import {
 } from "./chat-flow.test-support.ts";
 
 const suite = createChatFlowE2eSuite();
+const catalogModels = [
+  { id: "gpt-5.5", name: "GPT-5.5", provider: "openai", available: true },
+  { id: "claude-opus-4-5", name: "Claude Opus 4.5", provider: "anthropic", available: true },
+];
 
 suite.define(() => {
   it("patches a selectable Claude CLI context window", async () => {
@@ -620,25 +624,14 @@ suite.define(() => {
         "chat.startup": {
           agentsList,
           messages: [],
-          metadata: {
-            models: [
-              { id: "gpt-5.5", name: "GPT-5.5", provider: "openai" },
-              {
-                id: "claude-opus-4-5",
-                name: "Claude Opus 4.5",
-                provider: "anthropic",
-              },
-            ],
-          },
+          metadata: { models: catalogModels },
           sessionId: "session:agent:ops:session-a",
           thinkingLevel: null,
         },
         "sessions.list": sessionsList,
+        "models.list": { models: catalogModels },
       },
-      models: [
-        { id: "gpt-5.5", name: "GPT-5.5", provider: "openai" },
-        { id: "claude-opus-4-5", name: "Claude Opus 4.5", provider: "anthropic" },
-      ],
+      models: catalogModels,
       sessionKey: "agent:ops:session-a",
     });
 
@@ -647,10 +640,10 @@ suite.define(() => {
       const main = page.getByRole("main");
       const modelSelect = main.locator('[data-chat-model-select="true"]').first();
       await modelSelect.waitFor({ state: "visible", timeout: 10_000 });
+      await modelSelect.click();
       expect(await modelSelect.textContent()).toContain("Claude Opus 4.5");
       expect(await modelSelect.getAttribute("data-chat-select-value")).toBe("");
 
-      await modelSelect.click();
       await main.locator('[data-chat-model-option="openai/gpt-5.5"]').click();
       const firstPatch = await gateway.waitForRequest("sessions.patch");
       expect(requireRecord(firstPatch.params)).toMatchObject({
@@ -744,7 +737,13 @@ suite.define(() => {
       ts: Date.now(),
     };
     const models = [
-      { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openai", reasoning: true },
+      {
+        id: "gpt-5.6-sol",
+        name: "GPT-5.6 Sol",
+        provider: "openai",
+        available: true,
+        reasoning: true,
+      },
     ];
     const gateway = await installMockGateway(page, {
       methodResponses: {
@@ -757,6 +756,7 @@ suite.define(() => {
           thinkingLevel: null,
         },
         "sessions.list": sessionsList,
+        "models.list": { models },
       },
       models,
       sessionKey: "agent:main:session-default",
@@ -772,12 +772,9 @@ suite.define(() => {
       const expectedThinkingValues = thinkingLevels.map((level) => level.id).join(",");
 
       await modelSelect.waitFor({ state: "visible", timeout: 10_000 });
+      await modelSelect.click();
       expect(await modelSelect.textContent()).toContain("GPT-5.6 Sol");
       expect(await modelSelect.textContent()).not.toContain("@openai:");
-      await modelSelect.click();
-      await expect
-        .poll(() => activePane.locator('[data-chat-model-option="openai/gpt-5.6-sol"]').count())
-        .toBe(1);
       expect(
         (await main.locator("[data-chat-model-option]").allTextContents()).join(" "),
       ).not.toContain("@openai:");

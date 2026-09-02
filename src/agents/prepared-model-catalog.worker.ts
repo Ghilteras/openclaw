@@ -30,6 +30,7 @@ import {
   type PreparedModelWorkerRequest,
   type PreparedModelWorkerResult,
 } from "./prepared-model-catalog-worker.js";
+import { createPreparedInboundRegistryLoader } from "./prepared-model-runtime.inbound-registry.js";
 import { scopeSyntheticAuthProviderRefs } from "./prepared-model-runtime.synthetic-auth.js";
 import { AuthStorage } from "./sessions/auth-storage.js";
 
@@ -97,11 +98,14 @@ async function prepareWorkerGeneration(value: PreparedModelCatalogWorkerInput) {
   // Rediscovery under agent workspaces or runtime activation overlays loses the owner's
   // metadata generation. Its source/built artifact selection must survive reconstruction too.
   const metadata = restorePluginMetadataSnapshot(value.pluginMetadataSnapshot);
+  const input = value.input.readOnly
+    ? { ...value.input, loadRuntimePlugins: true, readOnly: false }
+    : value.input;
   const prepared = await prepareWorkspaceBuildGroup(
-    [value.input],
+    [input],
     "live",
     { preferBuiltPluginArtifacts: value.preferBuiltPluginArtifacts },
-    undefined,
+    value.input.readOnly ? createPreparedInboundRegistryLoader() : undefined,
     undefined,
     metadata,
   );

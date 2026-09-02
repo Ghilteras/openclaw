@@ -596,9 +596,6 @@ class AgentsPage
     if (!client || !this.connected || !agentId) {
       return;
     }
-    if (!options.refresh && this.chatModelCatalogAgentId === agentId) {
-      return;
-    }
     const generation = this.requestGeneration;
     const previousRequest = this.chatModelCatalogRequest;
     if (
@@ -1143,9 +1140,8 @@ class AgentsPage
             stageAgentPrimaryModel(this.context.runtimeConfig, agentId, modelId);
             void refreshVisibleToolsEffectiveForCurrentSession(this);
           },
-          // Availability facts (provider keys added/removed, new models) go
-          // stale in the per-agent cache; opening the picker re-reads them,
-          // mirroring the chat composer's on-open refresh.
+          // Picker opens read the current configured catalog. Retry keeps the
+          // explicit discovery path for a failed catalog read.
           onModelCatalogRetry: () => this.ensureModelCatalog({ refresh: true }),
           onModelFallbacksChange: (agentId, fallbacks) => {
             if (this.canCall("config.set", "operator.admin")) {

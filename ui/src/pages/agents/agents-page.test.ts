@@ -420,13 +420,17 @@ describe("AgentsPage gateway lifecycle", () => {
     expect(request).toHaveBeenNthCalledWith(2, "models.list", workerModelsList);
   });
 
-  it("re-reads a cached model catalog when the picker asks for a refresh", async () => {
+  it("reads the model catalog when the picker opens and refreshes on retry", async () => {
     const oldModels = [{ id: "old", name: "Old Model", alias: "opus", provider: "anthropic" }];
     const nextModels = [{ id: "new", name: "Opus 4.8", alias: "opus", provider: "anthropic" }];
+    const refreshedModels = [
+      { id: "refreshed", name: "Opus 4.9", alias: "opus", provider: "anthropic" },
+    ];
     const request = vi
       .fn()
       .mockResolvedValueOnce({ models: oldModels })
-      .mockResolvedValueOnce({ models: nextModels });
+      .mockResolvedValueOnce({ models: nextModels })
+      .mockResolvedValueOnce({ models: refreshedModels });
     const page = document.createElement("openclaw-agents-page") as TestAgentsPage;
     page.routeData = { panel: "overview" } as AgentsRouteData;
     setPageGateway(page, { request } as unknown as GatewayBrowserClient);
@@ -435,14 +439,13 @@ describe("AgentsPage gateway lifecycle", () => {
     page.loadActivePanelData();
     await waitForFast(() => expect(page.chatModelCatalog).toEqual(oldModels));
 
-    // Without refresh the per-agent cache answers; provider-key changes would
-    // stay invisible for the connection lifetime.
     page.ensureModelCatalog();
-    expect(request).toHaveBeenCalledTimes(1);
+    await waitForFast(() => expect(page.chatModelCatalog).toEqual(nextModels));
+    expect(request).toHaveBeenNthCalledWith(2, "models.list", mainModelsList);
 
     page.ensureModelCatalog({ refresh: true });
-    await waitForFast(() => expect(page.chatModelCatalog).toEqual(nextModels));
-    expect(request).toHaveBeenCalledTimes(2);
+    await waitForFast(() => expect(page.chatModelCatalog).toEqual(refreshedModels));
+    expect(request.mock.calls[2]?.[1]).toMatchObject({ refresh: true });
   });
 
   it("rejects an old-client model catalog after the Gateway client changes", async () => {

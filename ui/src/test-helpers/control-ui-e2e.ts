@@ -244,6 +244,7 @@ export const defaultControlUiFeatureMethods = [
   "chat.abort",
   "chat.metadata",
   "chat.startup",
+  "models.list",
   "config.apply",
   "config.patch",
   "config.schema",
