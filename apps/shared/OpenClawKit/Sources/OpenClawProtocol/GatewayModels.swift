@@ -26340,18 +26340,22 @@ public struct UpdateReportResultReady: Codable, Sendable {
 
 public struct UpdateReportResultCreated: Codable, Sendable {
     public let status: String
+    public let message: String?
     public let url: String
 
     public init(
+        message: String? = nil,
         url: String
     )
     {
         self.status = "created"
+        self.message = message
         self.url = url
     }
 
     private enum CodingKeys: String, CodingKey {
         case status
+        case message
         case url
     }
 
@@ -26359,7 +26363,7 @@ public struct UpdateReportResultCreated: Codable, Sendable {
         let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
         let unexpectedKeys = rawContainer.allKeys
             .map(\.stringValue)
-            .filter { !Set(["status", "url"]).contains($0) }
+            .filter { !Set(["status", "message", "url"]).contains($0) }
         if !unexpectedKeys.isEmpty {
             throw DecodingError.dataCorrupted(
                 .init(
@@ -26378,12 +26382,14 @@ public struct UpdateReportResultCreated: Codable, Sendable {
             )
         }
         self.status = "created"
+        self.message = try container.decodeIfPresent(String.self, forKey: .message)
         self.url = try container.decode(String.self, forKey: .url)
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode("created", forKey: .status)
+        try container.encodeIfPresent(message, forKey: .message)
         try container.encode(url, forKey: .url)
     }
 }

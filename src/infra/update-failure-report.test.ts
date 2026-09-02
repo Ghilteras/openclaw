@@ -43,7 +43,7 @@ describe("update failure report", () => {
         attemptId: "attempt-redaction",
         error: `opaque raw chat payload token=${secret} ${home}/private/error.log`,
         result: failedUpdate({
-          reason: `build-failed cwd="/Users/Alice Smith/private/project" token=${secret} ${emoji}`,
+          reason: "build-failed at /Users/Alice Smith/private/project after checksum mismatch",
           steps: [
             {
               ...failedUpdate().steps[0]!,
@@ -51,7 +51,13 @@ describe("update failure report", () => {
             },
           ],
         }),
-        target: `origin/main cwd="/Users/Alice Smith/private/project" token=${secret}`,
+        target: [
+          `origin/main token=${secret}`,
+          "windows C:\\Users\\Alice Smith\\private\\project after windows marker",
+          "unc \\\\server\\Alice Smith\\private\\project after unc marker",
+          'quoted "/Users/Alice Smith/private project" after quoted marker',
+          emoji,
+        ].join("\n"),
       },
       { env: { HOME: home, OPENCLAW_STATE_DIR: stateDir }, stateDir },
     );
@@ -75,6 +81,10 @@ describe("update failure report", () => {
     expect(saved).toContain("Failed phase:");
     expect(saved).toContain("Update target:");
     expect(saved).toContain("🦞");
+    expect(saved).toContain("after checksum mismatch");
+    expect(saved).toContain("after quoted marker");
+    expect(saved).toContain("after unc marker");
+    expect(saved).toContain("after windows marker");
     expect(saved).not.toContain("�");
     expect(saved).not.toContain(secret);
     expect(saved).not.toContain(home);

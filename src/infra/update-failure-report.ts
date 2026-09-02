@@ -72,9 +72,18 @@ function stripPrivatePaths(value: string): string {
     .replace(/(["'])\/+[^"'`\r\n]*\1/gu, "$1[redacted-path]$1")
     .replace(/(["'])\\\\[^"'`\r\n]*\1/gu, "$1[redacted-path]$1")
     .replace(/(["'])[A-Za-z]:\\[^"'`\r\n]*\1/gu, "$1[redacted-path]$1")
-    .replace(/(^|[^\p{L}\p{N}._~-])\/+[^\s"'`<>]+/gmu, "$1[redacted-path]")
-    .replace(/\\\\[^\s"'`<>]+/gu, "[redacted-path]")
-    .replace(/\b[A-Za-z]:\\[^\s"'`<>]+/gu, "[redacted-path]");
+    .replace(
+      /(^|[^\p{L}\p{N}._~-])\/+(?:(?:[^\s/"'`<>\\]|\\ )+(?: +(?:[^\s/"'`<>\\]|\\ )+)*\/)*(?:[^\s/"'`<>\\]|\\ )+/gmu,
+      "$1[redacted-path]",
+    )
+    .replace(
+      /\\\\(?:(?:[^\s\\"'`<>]+)(?: +[^\s\\"'`<>]+)*\\)*(?:[^\s\\"'`<>]+)/gu,
+      "[redacted-path]",
+    )
+    .replace(
+      /\b[A-Za-z]:\\(?:(?:[^\s\\"'`<>]+)(?: +[^\s\\"'`<>]+)*\\)*(?:[^\s\\"'`<>]+)/gu,
+      "[redacted-path]",
+    );
 }
 
 function stripExecutableRecoveryCommands(value: string): string {
