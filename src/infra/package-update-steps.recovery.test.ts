@@ -441,4 +441,74 @@ describe("package update recovery safety", () => {
       ).resolves.toBe("old openclaw.cmd\n");
     });
   });
+
+  it("does not verify rollback when candidate Doctor alters the parked old package", async () => {
+    await withTestDir({ prefix: "openclaw-package-recovery-altered-backup-" }, async (base) => {
+      const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+      const packageRoot = path.join(globalRoot, "openclaw");
+      const packageEntry = path.join(packageRoot, "dist", "index.js");
+      await writePackageRoot(packageRoot, "1.0.0");
+      await fs.writeFile(packageEntry, "original old package\n", "utf8");
+
+      const result = await runGlobalPackageUpdateSteps({
+        installTarget: createNpmTarget(globalRoot),
+        installSpec: "openclaw@2.0.0",
+        packageName: "openclaw",
+        packageRoot,
+        runCommand: createRootRunner(globalRoot),
+        runStep: async ({ name, argv }) => {
+          const stagePrefix = argv[argv.indexOf("--prefix") + 1];
+          if (!stagePrefix) {
+            throw new Error("missing stage prefix");
+          }
+          await writePackageRoot(
+            path.join(stagePrefix, "lib", "node_modules", "openclaw"),
+            "2.0.0",
+          );
+          return {
+            name,
+            command: argv.join(" "),
+            cwd: stagePrefix,
+            durationMs: 0,
+            exitCode: 0,
+          };
+        },
+        postVerifyStep: async (candidateRoot) => {
+          expect(candidateRoot).toBe(packageRoot);
+          const backupName = (await fs.readdir(globalRoot)).find((entry) =>
+            entry.startsWith(".openclaw.package-backup-"),
+          );
+          if (!backupName) {
+            throw new Error("missing old-package backup during candidate Doctor");
+          }
+          await fs.writeFile(
+            path.join(globalRoot, backupName, "dist", "index.js"),
+            "altered old package\n",
+            "utf8",
+          );
+          return {
+            name: "openclaw doctor",
+            command: "openclaw doctor --non-interactive --fix",
+            cwd: candidateRoot,
+            durationMs: 0,
+            exitCode: 1,
+            stderrTail: "doctor rejected candidate",
+          };
+        },
+        timeoutMs: 1000,
+      });
+
+      expect(result.afterVersion).toBe("1.0.0");
+      expect(result.recovery).toEqual({
+        serviceRestartSafe: false,
+        reason: "runtime-verification-failed",
+        packageRollbackVerified: false,
+      });
+      expect(result.failedStep).toMatchObject({ name: "global install swap", exitCode: 1 });
+      expect(result.failedStep?.stderrTail).toContain(
+        "rollback verification failed: restored package tree does not match backup",
+      );
+      await expect(fs.readFile(packageEntry, "utf8")).resolves.toBe("altered old package\n");
+    });
+  });
 });

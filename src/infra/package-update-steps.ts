@@ -1,4 +1,5 @@
 // Runs package update move, inventory, and cleanup steps.
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -725,6 +726,53 @@ async function pathEntriesMatch(left: string, right: string): Promise<boolean> {
   return leftContents.equals(rightContents);
 }
 
+async function fingerprintPackageTree(packageRoot: string): Promise<string> {
+  const fingerprint = createHash("sha256");
+  const visit = async (entryPath: string, relativePath: string): Promise<void> => {
+    const stat = await fs.lstat(entryPath);
+    const mode = stat.mode & 0o777;
+    if (stat.isSymbolicLink()) {
+      fingerprint.update(
+        `${JSON.stringify([relativePath, "symlink", mode, await fs.readlink(entryPath)])}\n`,
+      );
+      return;
+    }
+    if (stat.isFile()) {
+      const contents = createHash("sha256");
+      const handle = await fs.open(entryPath, "r");
+      try {
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        let position = 0;
+        while (true) {
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+          if (bytesRead === 0) {
+            break;
+          }
+          contents.update(buffer.subarray(0, bytesRead));
+          position += bytesRead;
+        }
+      } finally {
+        await handle.close();
+      }
+      fingerprint.update(
+        `${JSON.stringify([relativePath, "file", mode, stat.size, contents.digest("hex")])}\n`,
+      );
+      return;
+    }
+    if (!stat.isDirectory()) {
+      throw new Error(`unsupported package entry while verifying rollback: ${entryPath}`);
+    }
+    fingerprint.update(`${JSON.stringify([relativePath, "directory", mode])}\n`);
+    const children = (await fs.readdir(entryPath)).toSorted();
+    for (const child of children) {
+      await visit(path.join(entryPath, child), relativePath ? `${relativePath}/${child}` : child);
+    }
+  };
+
+  await visit(packageRoot, "");
+  return fingerprint.digest("hex");
+}
+
 async function activateStagedNpmPackageRoot(source: string, destination: string): Promise<void> {
   const stat = await fs.lstat(source);
   if (!stat.isSymbolicLink()) {
@@ -804,6 +852,7 @@ async function swapStagedNpmInstall(params: {
   let shimBackupDir: string | undefined;
   let hadPackage = false;
   let previousVersion: string | null = null;
+  let previousPackageFingerprint: string | null = null;
   const shims: Array<{ source: string; destination: string; backup: string | null }> = [];
   const rollback: Array<() => Promise<void>> = [];
   let packageRollbackVerified = false;
@@ -828,6 +877,18 @@ async function swapStagedNpmInstall(params: {
     } catch (verificationError) {
       packageRollbackVerified = false;
       messages.push(`rollback verification failed: ${formatErrorMessage(verificationError)}`);
+    }
+    try {
+      const restoredFingerprint = await fingerprintPackageTree(targetPackageRoot);
+      if (!previousPackageFingerprint || restoredFingerprint !== previousPackageFingerprint) {
+        packageRollbackVerified = false;
+        messages.push("rollback verification failed: restored package tree does not match backup");
+      }
+    } catch (verificationError) {
+      packageRollbackVerified = false;
+      messages.push(
+        `rollback package-tree verification failed: ${formatErrorMessage(verificationError)}`,
+      );
     }
     for (const shim of shims) {
       try {
@@ -905,7 +966,6 @@ async function swapStagedNpmInstall(params: {
         sourceHardlinks: PACKAGE_MANAGER_SWAP_SOURCE_HARDLINKS,
         to: backupRoot,
       });
-      packageRollbackVerified = true;
     }
     rollback.push(async () => {
       await removePath(targetPackageRoot);
@@ -917,6 +977,10 @@ async function swapStagedNpmInstall(params: {
         });
       }
     });
+    if (hadPackage) {
+      previousPackageFingerprint = await fingerprintPackageTree(backupRoot);
+      packageRollbackVerified = true;
+    }
     await activateStagedNpmPackageRoot(params.stage.packageRoot, targetPackageRoot);
     for (const shim of shims) {
       // Register before copying: replacing an entry can fail after removing it.
