@@ -61,6 +61,7 @@ type CliOptions = {
     | "board"
     | "code-fences"
     | "goal"
+    | "plugins-dense"
     | "swarm"
     | "update-available"
     | "update-blocked"
@@ -362,6 +363,7 @@ function parseFixture(value: string | undefined): CliOptions["fixture"] {
     value !== "board" &&
     value !== "code-fences" &&
     value !== "goal" &&
+    value !== "plugins-dense" &&
     value !== "swarm" &&
     value !== "update-available" &&
     value !== "update-blocked" &&
@@ -2559,8 +2561,12 @@ async function createChatPickerScenario(
           },
         ],
       },
-      "plugins.list": buildPluginCatalogMock(),
-      "plugins.inspect": buildPluginInspectMock(),
+      "plugins.list": buildPluginCatalogMock({
+        installedCopies: fixture === "plugins-dense" ? 10 : 1,
+      }),
+      "plugins.inspect": buildPluginInspectMock({
+        installedCopies: fixture === "plugins-dense" ? 10 : 1,
+      }),
       "plugins.setEnabled": buildPluginSetEnabledMock(),
       "skills.status": {
         workspaceDir: "/Users/demo/Projects/openclaw",
