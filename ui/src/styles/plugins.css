@@ -1294,7 +1294,7 @@ h3.plugins-subheader {
 }
 
 .plugins-settings-breadcrumb__parent {
-  color: var(--text-muted);
+  color: var(--muted);
   text-decoration: none;
 }
 
@@ -1304,7 +1304,7 @@ h3.plugins-subheader {
 
 .plugins-settings-breadcrumb__chevron {
   display: inline-flex;
-  color: var(--text-muted);
+  color: var(--muted);
 }
 
 .plugins-settings-breadcrumb__chevron svg {
