@@ -63,7 +63,19 @@ const spawnSync = vi.hoisted(() =>
   ),
 );
 const taskProbeResponses: Array<{ status: number; stdout: string; stderr?: string }> = [];
-const taskProbe = vi.hoisted(() => vi.fn());
+const taskProbe = vi.hoisted(() =>
+  vi.fn<
+    (
+      command: string,
+      args?: readonly string[],
+      options?: SpawnSyncOptions,
+    ) => {
+      status: number;
+      stdout: string;
+      stderr?: string;
+    }
+  >(),
+);
 
 const findVerifiedGatewayListenerPidsOnPortSync = vi.hoisted(() =>
   vi.fn<(port: number) => number[]>(() => []),
@@ -82,7 +94,7 @@ vi.mock("node:child_process", async () => {
   return {
     ...actual,
     spawn,
-    spawnSync: (command: string, args?: readonly string[], options?: unknown) => {
+    spawnSync: (command: string, args?: readonly string[], options?: SpawnSyncOptions) => {
       const encoded = args?.indexOf("-EncodedCommand") ?? -1;
       if (
         encoded >= 0 &&
@@ -90,7 +102,7 @@ vi.mock("node:child_process", async () => {
           .toString("utf16le")
           .includes("Schedule.Service")
       ) {
-        return taskProbe();
+        return taskProbe(command, args, options);
       }
       return spawnSync(command, args, options);
     },
@@ -554,8 +566,8 @@ describe("Windows startup fallback", () => {
         status: "stopped",
         missingUnit: true,
       });
-      expect(spawnSync).toHaveBeenCalledOnce();
-      expect(spawnSync.mock.calls[0]?.[2]).toMatchObject({
+      expect(taskProbe).toHaveBeenCalledOnce();
+      expect(taskProbe.mock.calls[0]?.[2]).toMatchObject({
         env: expect.not.objectContaining({ BOUNDARY_PARENT_ONLY: "synthetic" }),
         timeout: 5_000,
       });
