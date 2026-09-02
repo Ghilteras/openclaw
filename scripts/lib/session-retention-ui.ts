@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
 import type { OpenClawTestInstance } from "../../test/helpers/openclaw-test-instance.js";
+import type { GatewaySessionRow } from "../../ui/src/api/types.js";
 import { createControlUiE2eArtifactDir } from "../../ui/src/test-helpers/control-ui-e2e-artifacts.js";
 import {
   RETENTION_AGENT_ID,
@@ -24,6 +25,8 @@ export async function proveRetentionUi(params: {
   expectedBuildId: string;
 }) {
   const { instance, row, rpc } = params;
+  const lookupLabel = row.entry.label;
+  assert(lookupLabel, "retained lookup fixture needs its original label");
   const output = createControlUiE2eArtifactDir(
     "real-gateway",
     path.join(params.output, "captures"),
@@ -37,12 +40,21 @@ export async function proveRetentionUi(params: {
     capturesInspected: boolean;
     error?: string;
     pagination?: string;
+    lookupSurface: string;
+    initialArchivedWindow?: { limit: unknown; returnedRows: number; targetPresent: boolean };
+    lookup?: {
+      request: Record<string, unknown>;
+      ok: boolean;
+      returnedRows: number;
+      targets: Pick<GatewaySessionRow, "key" | "sessionId" | "label" | "archived">[];
+    };
   } = {
     status: "running",
     screenshots: [],
     videos: [],
     observations: [],
     capturesInspected: false,
+    lookupSurface: "Activity → Sessions (/activity), All time, global metadata search",
   };
   const hash = (value: Buffer) => createHash("sha256").update(value).digest("hex");
   const html = await (await fetch(base, { signal: AbortSignal.timeout(10_000) })).text();
@@ -74,6 +86,7 @@ export async function proveRetentionUi(params: {
   };
   let helloResolve: () => void = () => {};
   let helloReject: (error: Error) => void = () => {};
+  let lookupResolve: () => void = () => {};
   const hello = new Promise<void>((resolve, reject) => {
     helloResolve = resolve;
     helloReject = reject;
@@ -83,7 +96,7 @@ export async function proveRetentionUi(params: {
     30_000,
   );
   page.on("websocket", (socket) => {
-    const pending = new Map<string, { method: string; params?: Record<string, unknown> }>();
+    const pending = new Map<string, { method: string; params: Record<string, unknown> }>();
     assert.equal(new URL(socket.url()).host, new URL(base).host);
     socket.on("framesent", ({ payload }) => {
       const frame = JSON.parse(String(payload));
@@ -94,7 +107,16 @@ export async function proveRetentionUi(params: {
         return;
       }
       const safeParams = Object.fromEntries(
-        ["key", "archived", "offset", "limit", "expectedSessionId"]
+        [
+          "key",
+          "archived",
+          "offset",
+          "limit",
+          "expectedSessionId",
+          "search",
+          "activeMinutes",
+          "involvingProfileId",
+        ]
           .filter((key) => frame.params?.[key] !== undefined)
           .map((key) => [key, frame.params[key]]),
       );
@@ -126,6 +148,41 @@ export async function proveRetentionUi(params: {
         }
       } else {
         report.observations.push({ ...request, ok: frame.ok, errorCode: frame.error?.code });
+        if (request.method === "sessions.list") {
+          const sessions: GatewaySessionRow[] = Array.isArray(frame.payload?.sessions)
+            ? frame.payload.sessions
+            : [];
+          if (
+            !report.initialArchivedWindow &&
+            frame.ok &&
+            request.params.archived === true &&
+            !request.params.search &&
+            (request.params.offset ?? 0) === 0
+          ) {
+            report.initialArchivedWindow = {
+              limit: request.params.limit,
+              returnedRows: sessions.length,
+              targetPresent: sessions.some((candidate) => candidate.key === row.key),
+            };
+          }
+          if (request.params.search === lookupLabel && request.params.archived === "all") {
+            // Retain only the target identity, not the massive roster or auth envelope.
+            report.lookup = {
+              request: request.params,
+              ok: frame.ok === true,
+              returnedRows: sessions.length,
+              targets: sessions
+                .filter((candidate) => candidate.key === row.key)
+                .map(({ key, sessionId, label, archived }) => ({
+                  key,
+                  sessionId,
+                  label,
+                  archived,
+                })),
+            };
+            lookupResolve();
+          }
+        }
       }
     });
   });
@@ -178,13 +235,57 @@ export async function proveRetentionUi(params: {
     report.pagination = params.smoke
       ? "smoke skips pagination; scale/massive verify active and archived page changes"
       : "active and archived page changes observed";
-    await page
-      .locator("openclaw-sessions-page .sessions-toolbar__search input")
-      .fill(row.entry.label!);
-    const selected = page
-      .locator("openclaw-sessions-page tr.session-data-row")
-      .filter({ has: page.locator(".session-label-chip", { hasText: row.entry.label }) });
-    await selected.locator("a.session-link").click();
+    // The lower Sessions filter only searches loaded rows. Activity owns the
+    // existing global metadata lookup; keep the same off-window archived target.
+    await page.goto(`${base}/activity`, { waitUntil: "domcontentloaded" });
+    const activity = page.locator("openclaw-activity-page");
+    await activity.getByRole("tab", { name: "Sessions", exact: true }).click();
+    await activity.getByRole("button", { name: "All time", exact: true }).click();
+    await page.waitForURL((url) => url.searchParams.get("time") === "all");
+    assert.equal(new URL(page.url()).searchParams.has("person"), false);
+    let lookupTimer: NodeJS.Timeout | undefined;
+    const lookupResponse = new Promise<void>((resolve, reject) => {
+      lookupResolve = resolve;
+      lookupTimer = setTimeout(
+        () => reject(new Error("Activity global search response deadline")),
+        30_000,
+      );
+    });
+    try {
+      // Smoke may already render the target: require the new query's response,
+      // not a stale visible row, before accepting the lookup.
+      await Promise.all([
+        lookupResponse,
+        activity.locator(".activity-feed__search input").fill(lookupLabel),
+      ]);
+    } finally {
+      clearTimeout(lookupTimer);
+    }
+    const selected = activity.locator(`a[data-activity-session="${row.key}"]`);
+    await selected.waitFor({ state: "visible" });
+    assert.equal(
+      await selected.locator(".activity-feed__session-title").textContent(),
+      lookupLabel,
+    );
+    assert(report.lookup, "Activity must issue the actual global sessions.list search");
+    assert.equal(report.lookup.ok, true);
+    assert.equal(report.lookup.request.search, lookupLabel);
+    assert.equal(report.lookup.request.archived, "all");
+    assert.equal(report.lookup.request.limit, 100);
+    assert.equal(report.lookup.request.activeMinutes, undefined);
+    assert.equal(report.lookup.request.involvingProfileId, undefined);
+    assert.deepEqual(report.lookup.targets, [
+      { key: row.key, sessionId: row.entry.sessionId, label: lookupLabel, archived: true },
+    ]);
+    if (!params.smoke) {
+      assert.deepEqual(
+        report.initialArchivedWindow,
+        { limit: 50, returnedRows: 50, targetPresent: false },
+        "lookup must reach beyond the original archived roster window",
+      );
+    }
+    await screenshot("05b-activity-global-lookup");
+    await selected.click();
     const pane = page.locator("openclaw-chat-pane");
     await pane
       .getByText(retentionSeedText(row.entry.sessionId, 0), { exact: true })

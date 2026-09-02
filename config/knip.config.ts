@@ -21,6 +21,9 @@ const repositoryScriptEntries = [
   // setup-node-env invokes this helper from composite-action YAML.
   ".github/actions/setup-node-env/dependency-fingerprint.mjs!",
   "apps/android/scripts/build-release-artifacts.ts!",
+  // Documented synthetic proof and its path-spawned worker are development entrypoints.
+  "scripts/bench-session-retention.ts",
+  "scripts/lib/session-retention-worker.ts",
   "scripts/bundle-a2ui.mts!",
   "scripts/build-discord-activity-sdk.mts!",
   // package-mac-app.sh launches the architecture scheduler by path.

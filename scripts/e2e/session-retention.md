@@ -23,8 +23,9 @@ Live mode requires an exact-candidate `pnpm build`, including `dist/control-ui`,
 and installed Playwright Chromium. The runner refuses missing build stamps; it does
 not rebuild. The parent must verify the materialized synced candidate tree and build
 it immediately before running. A clean Git index is neither required nor sufficient.
-Chromium's installed executable is resolved before HOME isolation;
-the browser profile and every Gateway path are invocation-owned. A short system-temp
+The bootstrap resolves Chromium and preserves Playwright's installed browser/encoder
+cache before the operational worker starts with an isolated HOME. Browser profiles
+and every Gateway path remain invocation-owned. A short system-temp
 tree, linked from `runtime/tmp`, keeps Chromium's Unix socket paths within platform
 limits even when the retained artifact directory is deeply nested.
 
@@ -65,6 +66,27 @@ read-only state connections for verification. Startup may kick the budget before
 cleanup RPC arrives, so full authoritative before/after deltas—not a guessed per-RPC
 removal count—prove reclamation. Protected identity/window/event hashes, repeated
 cleanup, all three explicit-delete generations, and integrity checks remain mandatory.
+
+### Find the retained conversation through Activity
+
+The UI proof first checks both active and archived roster pagination on Sessions.
+It then opens the supported `/activity` route, selects **Sessions** and **All time**,
+leaves the person filter unset, and searches for the same original archived label.
+For scale/massive, the proof also requires that this target was absent from the
+initial 50-row archived response. It observes the browser's actual
+`sessions.list({ archived: "all", search, limit: 100 })` response, verifies the
+original key/session ID and archived state, and clicks the normal rendered session
+link. Retained history, Unarchive, normal send, and the later restart/disk assertions
+remain unchanged. The UI report records `lookupSurface`, bounded lookup evidence,
+and an additional global-search screenshot.
+
+This is a harness navigation repair, not a fix to the lower Sessions filter. That
+filter searches the loaded window and matches richer local fields than Gateway
+metadata search; it cannot be used as a global archived-label lookup. Activity's
+search runs across the complete caller-visible store before pagination. The proof
+does not inject app state, use the active-only command palette, change the fixture
+to a first-page row, or navigate directly to a target-session URL. The separate
+loaded-window filtering limitation remains outside this retention patch.
 
 ## Run on the parent's Crabbox lease
 
