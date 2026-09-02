@@ -239,6 +239,13 @@ is bounded and keeps that agent and chat session; **Try Again** after a terminal
 error starts a new call. This does not resume the iPhone's currently selected
 chat, and the companion chat and approval features still use the iPhone relay.
 
+For OpenAI Gateway-controlled WebRTC calls, the Gateway schedules a 30-minute
+active-session lease during setup; audio activity does not renew it. When the
+Watch receives the session-ended event from lease expiry, it shows **Call unavailable**
+and does not retry automatically. Bring OpenClaw to the foreground and tap
+**Try Again** to start a new call. The lease is not a guarantee of 30 minutes of
+usable audio, and calls may end earlier.
+
 An established call uses background audio and is not intentionally ended merely
 because the display dims or the app backgrounds. Startup that backgrounds before
 connecting stops with a message asking you to keep OpenClaw on screen. Navigating
