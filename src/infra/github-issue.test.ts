@@ -77,10 +77,7 @@ describe("createGithubIssue", () => {
       class extends NativeURLSearchParams {
         constructor(init?: ConstructorParameters<typeof NativeURLSearchParams>[0]) {
           if (init && typeof init === "object" && !Array.isArray(init) && "body" in init) {
-            largestEncodedBody = Math.max(
-              largestEncodedBody,
-              Buffer.byteLength(String(init.body), "utf8"),
-            );
+            largestEncodedBody = Math.max(largestEncodedBody, Buffer.byteLength(init.body, "utf8"));
           }
           super(init);
         }
