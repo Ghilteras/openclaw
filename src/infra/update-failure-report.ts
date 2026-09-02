@@ -1,5 +1,6 @@
 /** Privacy-bounded, consent-gated reporting for one terminal update failure. */
 import { createHash, randomUUID } from "node:crypto";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
@@ -19,7 +20,7 @@ import {
   markUpdateFailureReportReceiptPending,
   readUpdateFailureReportReceipt,
   refreshUpdateFailureReportReceiptPreparation,
-  releaseUpdateFailureReportReceipt,
+  releaseUpdateFailureReportReceiptWithCleanup,
   reserveUpdateFailureReportReceipt,
   type UpdateFailureReportReceipt,
 } from "./restart-sentinel.js";
@@ -317,11 +318,23 @@ async function discardSavedUpdateFailureReportBestEffort(
   await discardSavedUpdateFailureReport(prepared, saved, removeExistingReport).catch(() => {});
 }
 
+function discardSavedUpdateFailureReportSync(prepared: PreparedUpdateFailureReport): void {
+  fsSync.rmSync(prepared.savedReportPath, { force: true });
+  try {
+    fsSync.rmdirSync(path.dirname(prepared.savedReportPath));
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT", "ENOTEMPTY")) {
+      throw error;
+    }
+  }
+}
+
 /** Persists one reviewed body while rechecking the caller's live authority around every write. */
 async function savePreparedUpdateFailureReport(
   prepared: PreparedUpdateFailureReport,
+  saved: SavedUpdateFailureReport,
   hasCurrentAuthority?: () => boolean,
-): Promise<SavedUpdateFailureReport> {
+): Promise<void> {
   const ensureCurrentAuthority = () => {
     if (hasCurrentAuthority && !hasCurrentAuthority()) {
       throw new Error("Update report persistence requires a current authenticated client.");
@@ -332,47 +345,38 @@ async function savePreparedUpdateFailureReport(
   const reportDirExisted = await pathExists(reportDir);
   ensureCurrentAuthority();
   await fs.mkdir(reportDir, { mode: 0o700, recursive: true });
-  const saved: SavedUpdateFailureReport = {
-    reportCreated: false,
-    reportDirCreated: !reportDirExisted,
-  };
+  saved.reportDirCreated = !reportDirExisted;
+  ensureCurrentAuthority();
   try {
-    ensureCurrentAuthority();
-    try {
-      await fs.writeFile(prepared.savedReportPath, prepared.body, {
-        encoding: "utf8",
-        flag: "wx",
-        mode: 0o600,
-      });
-      saved.reportCreated = true;
-    } catch (error) {
-      if (!hasErrorCode(error, "EEXIST")) {
-        throw error;
-      }
-      const existing = await fs
-        .readFile(prepared.savedReportPath, "utf8")
-        .catch((readError: unknown) => {
-          if (hasErrorCode(readError, "ENOENT")) {
-            return undefined;
-          }
-          throw readError;
-        });
-      if (existing !== undefined && existing !== prepared.body) {
-        throw new Error("The saved update report does not match the reviewed preview.", {
-          cause: error,
-        });
-      }
-    }
-    ensureCurrentAuthority();
-    if (saved.reportCreated) {
-      await fs.chmod(prepared.savedReportPath, 0o600);
-    }
-    ensureCurrentAuthority();
-    return saved;
+    await fs.writeFile(prepared.savedReportPath, prepared.body, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    saved.reportCreated = true;
   } catch (error) {
-    await discardSavedUpdateFailureReport(prepared, saved);
-    throw error;
+    if (!hasErrorCode(error, "EEXIST")) {
+      throw error;
+    }
+    const existing = await fs
+      .readFile(prepared.savedReportPath, "utf8")
+      .catch((readError: unknown) => {
+        if (hasErrorCode(readError, "ENOENT")) {
+          return undefined;
+        }
+        throw readError;
+      });
+    if (existing !== undefined && existing !== prepared.body) {
+      throw new Error("The saved update report does not match the reviewed preview.", {
+        cause: error,
+      });
+    }
   }
+  ensureCurrentAuthority();
+  if (saved.reportCreated) {
+    await fs.chmod(prepared.savedReportPath, 0o600);
+  }
+  ensureCurrentAuthority();
 }
 
 function resultFromExistingReceipt(
@@ -415,7 +419,6 @@ export async function submitUpdateFailureReport(
     markPending?: typeof markUpdateFailureReportReceiptPending;
     readReceipt?: typeof readUpdateFailureReportReceipt;
     refreshPreparation?: typeof refreshUpdateFailureReportReceiptPreparation;
-    releaseReceipt?: typeof releaseUpdateFailureReportReceipt;
     stateDir?: string;
     validateCurrentAttempt?: () => boolean | Promise<boolean>;
     writeRecovery?: typeof writeUpdateFailureReportRecovery;
@@ -514,14 +517,24 @@ export async function submitUpdateFailureReport(
     return resultFromExistingReceipt(reservation.receipt, prepared.savedReportPath);
   }
 
-  const releaseReceipt = options.releaseReceipt ?? releaseUpdateFailureReportReceipt;
-  let saved: SavedUpdateFailureReport | undefined;
+  const saved: SavedUpdateFailureReport = { reportCreated: false, reportDirCreated: false };
+  const cleanupOwnedPreparation = (): boolean =>
+    retryUpdateReportStateWrite(() =>
+      releaseUpdateFailureReportReceiptWithCleanup(
+        prepared.attemptId,
+        reservationId,
+        () => discardSavedUpdateFailureReportSync(prepared),
+        stateEnv,
+      ),
+    );
   try {
-    saved = await savePreparedUpdateFailureReport(prepared, options.hasCurrentAuthority);
+    await savePreparedUpdateFailureReport(prepared, saved, options.hasCurrentAuthority);
     if (options.validateCurrentAttempt && !(await options.validateCurrentAttempt())) {
-      await discardSavedUpdateFailureReport(prepared, saved);
-      if (!releaseReceipt(prepared.attemptId, reservationId, stateEnv)) {
-        throw new Error("Stale update report reservation could not be released.");
+      if (!cleanupOwnedPreparation()) {
+        return resultFromExistingReceipt(
+          readReceipt(prepared.attemptId, stateEnv),
+          prepared.savedReportPath,
+        );
       }
       return {
         message: "This failed update attempt is stale or unavailable.",
@@ -533,18 +546,12 @@ export async function submitUpdateFailureReport(
       throw new Error("Update report submission requires a current authenticated client.");
     }
   } catch (error) {
-    if (saved) {
-      await discardSavedUpdateFailureReportBestEffort(prepared, saved);
-    }
     try {
-      releaseReceipt(prepared.attemptId, reservationId, stateEnv);
+      cleanupOwnedPreparation();
     } catch {
-      // The original preparation or authority failure remains actionable.
+      // The original preparation or authority failure remains actionable; a successor keeps custody.
     }
     throw error;
-  }
-  if (!saved) {
-    throw new Error("Update report was not saved by its reservation owner.");
   }
 
   const assertCurrentPreCreateState = () => assertUpdateReportPreCreateState(options);
@@ -576,11 +583,11 @@ export async function submitUpdateFailureReport(
         prepared.savedReportPath,
       );
     }
-    await discardSavedUpdateFailureReport(prepared, saved);
-    if (!releaseReceipt(prepared.attemptId, reservationId, stateEnv)) {
-      throw new Error("Cancelled update report reservation could not be released.", {
-        cause: error,
-      });
+    if (!cleanupOwnedPreparation()) {
+      return resultFromExistingReceipt(
+        readReceipt(prepared.attemptId, stateEnv),
+        prepared.savedReportPath,
+      );
     }
     if (error.reason === "stale") {
       return {
@@ -668,6 +675,25 @@ export async function submitUpdateFailureReport(
       savedReportPath: prepared.savedReportPath,
       status: "pending",
     };
+  }
+  if (!fallbackFinalized) {
+    const recoveryStillOwned = retryUpdateReportStateWrite(() =>
+      (options.refreshPreparation ?? refreshUpdateFailureReportReceiptPreparation)(
+        prepared.attemptId,
+        reservationId,
+        stateEnv,
+      ),
+    );
+    if (!recoveryStillOwned) {
+      await discardUpdateFailureReportRecoveryBestEffort(prepared.savedReportPath);
+      let replacement: UpdateFailureReportReceipt | null = null;
+      try {
+        replacement = readReceipt(prepared.attemptId, stateEnv);
+      } catch {
+        // The recovery cannot be exposed without current receipt ownership.
+      }
+      return resultFromExistingReceipt(replacement, prepared.savedReportPath);
+    }
   }
   return {
     fallbackUrl: created.fallbackUrl,

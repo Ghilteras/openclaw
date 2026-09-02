@@ -29,7 +29,7 @@ import {
   markUpdateFailureReportReceiptPendingRowSync,
   readUpdateFailureReportReceiptRowSync,
   refreshUpdateFailureReportReceiptPreparationRowSync,
-  releaseUpdateFailureReportReceiptRowSync,
+  releaseUpdateFailureReportReceiptWithCleanupRowSync,
   reserveUpdateFailureReportReceiptRowSync,
   type UpdateFailureReportReceipt,
 } from "./update-failure-report-receipt-store.js";
@@ -82,6 +82,20 @@ export function reserveUpdateFailureReportReceipt(
   );
 }
 
+export function releaseUpdateFailureReportReceiptWithCleanup(
+  attemptId: string,
+  reservationId: string,
+  cleanup: () => void,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return runOpenClawStateWriteTransaction(
+    ({ db }) =>
+      releaseUpdateFailureReportReceiptWithCleanupRowSync(db, attemptId, reservationId, cleanup),
+    { env },
+    { operationLabel: "update-failure-report.release-with-cleanup" },
+  );
+}
+
 export function readUpdateFailureReportReceipt(
   attemptId: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -127,18 +141,6 @@ export function markUpdateFailureReportReceiptPending(
     ({ db }) => markUpdateFailureReportReceiptPendingRowSync(db, attemptId, reservationId),
     { env },
     { operationLabel: "update-failure-report.mark-pending" },
-  );
-}
-
-export function releaseUpdateFailureReportReceipt(
-  attemptId: string,
-  reservationId: string,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return runOpenClawStateWriteTransaction(
-    ({ db }) => releaseUpdateFailureReportReceiptRowSync(db, attemptId, reservationId),
-    { env },
-    { operationLabel: "update-failure-report.release" },
   );
 }
 

@@ -358,6 +358,109 @@ describe("update failure report", () => {
     expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
   });
 
+  it("does not let expired validation cleanup delete a replacement fallback report", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-expired-validation-cleanup", result: failedUpdate() },
+      { stateDir },
+    );
+    let nowMs = 1_800_000_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    let finishValidation!: () => void;
+    const validationGate = new Promise<boolean>((resolve) => {
+      finishValidation = () => resolve(false);
+    });
+    const validateCurrentAttempt = vi
+      .fn<() => boolean | Promise<boolean>>()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(validationGate);
+    const oldCreateIssue = vi.fn();
+    const oldSubmission = submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue: oldCreateIssue,
+      stateDir,
+      validateCurrentAttempt,
+    });
+    await vi.waitFor(() => expect(validateCurrentAttempt).toHaveBeenCalledTimes(2));
+    expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
+
+    nowMs += 10 * 60_000;
+    const replacement = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue: mockFallbackIssue(prepared.url),
+      stateDir,
+    });
+    finishValidation();
+    const oldResult = await oldSubmission;
+    now.mockRestore();
+
+    expect(replacement).toMatchObject({ fallbackUrl: prepared.url, status: "fallback" });
+    expect(oldResult).toMatchObject({ fallbackUrl: prepared.url, status: "duplicate" });
+    expect(oldCreateIssue).not.toHaveBeenCalled();
+    expect(await fs.readFile(prepared.savedReportPath, "utf8")).toBe(prepared.body);
+  });
+
+  it("clears an expired owner's mismatched report before the replacement retries", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const attemptId = "attempt-expired-mismatched-report";
+    const oldPrepared = await prepareUpdateFailureReport(
+      { attemptId, result: failedUpdate() },
+      { stateDir },
+    );
+    const replacementPrepared = await prepareUpdateFailureReport(
+      { attemptId, result: failedUpdate({ reason: "install-failed" }) },
+      { stateDir },
+    );
+    expect(replacementPrepared.body).not.toBe(oldPrepared.body);
+    let nowMs = 1_800_000_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    let finishValidation!: () => void;
+    const validationGate = new Promise<boolean>((resolve) => {
+      finishValidation = () => resolve(false);
+    });
+    const validateCurrentAttempt = vi
+      .fn<() => boolean | Promise<boolean>>()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(validationGate);
+    const oldCreateIssue = vi.fn();
+    const oldSubmission = submitUpdateFailureReport(oldPrepared, oldPrepared.previewDigest, {
+      createIssue: oldCreateIssue,
+      stateDir,
+      validateCurrentAttempt,
+    });
+    await vi.waitFor(() => expect(validateCurrentAttempt).toHaveBeenCalledTimes(2));
+    expect(await fs.readFile(oldPrepared.savedReportPath, "utf8")).toBe(oldPrepared.body);
+
+    nowMs += 10 * 60_000;
+    await expect(
+      submitUpdateFailureReport(replacementPrepared, replacementPrepared.previewDigest, {
+        createIssue: mockFallbackIssue(replacementPrepared.url),
+        stateDir,
+      }),
+    ).rejects.toThrow("does not match the reviewed preview");
+    await expect(fs.stat(oldPrepared.savedReportPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const replacement = await submitUpdateFailureReport(
+      replacementPrepared,
+      replacementPrepared.previewDigest,
+      { createIssue: mockFallbackIssue(replacementPrepared.url), stateDir },
+    );
+    finishValidation();
+    const oldResult = await oldSubmission;
+    now.mockRestore();
+
+    expect(replacement).toMatchObject({
+      fallbackUrl: replacementPrepared.url,
+      status: "fallback",
+    });
+    expect(oldResult).toMatchObject({
+      fallbackUrl: replacementPrepared.url,
+      status: "duplicate",
+    });
+    expect(oldCreateIssue).not.toHaveBeenCalled();
+    expect(await fs.readFile(replacementPrepared.savedReportPath, "utf8")).toBe(
+      replacementPrepared.body,
+    );
+  });
+
   it("reclaims an expired pre-create preparation without letting its old owner submit", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(
@@ -662,6 +765,47 @@ describe("update failure report", () => {
     await expect(fs.stat(recoveryPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("suppresses a fallback when recovery publication outlives receipt ownership", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-fallback-recovery-owner-change", result: failedUpdate() },
+      { stateDir },
+    );
+    let nowMs = 1_800_000_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    let finishRecovery!: () => void;
+    const recoveryGate = new Promise<boolean>((resolve) => {
+      finishRecovery = () => resolve(true);
+    });
+    const writeRecovery = vi.fn(async () => await recoveryGate);
+    const oldSubmission = submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue: mockFallbackIssue(prepared.url),
+      finalizeReceipt: () => false,
+      stateDir,
+      writeRecovery,
+    });
+    await vi.waitFor(() => expect(writeRecovery).toHaveBeenCalledOnce());
+
+    nowMs += 10 * 60_000;
+    const replacement = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue: mockCreatedIssue("https://github.com/openclaw/openclaw/issues/123"),
+      stateDir,
+    });
+    finishRecovery();
+    const oldResult = await oldSubmission;
+    now.mockRestore();
+
+    expect(replacement).toMatchObject({
+      status: "created",
+      url: "https://github.com/openclaw/openclaw/issues/123",
+    });
+    expect(oldResult).toMatchObject({
+      status: "duplicate",
+      url: "https://github.com/openclaw/openclaw/issues/123",
+    });
+    expect(oldResult).not.toHaveProperty("fallbackUrl");
+  });
+
   it("rejects a tampered fallback recovery without invoking transport", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(
@@ -838,6 +982,44 @@ describe("update failure report", () => {
     expect(second).toMatchObject({ status: "pending" });
     expect(second).not.toHaveProperty("fallbackUrl");
     expect(createIssue).toHaveBeenCalledOnce();
+  });
+
+  it("restores a pending receipt when issue creation definitely did not start", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-issue-create-prestart-failure", result: failedUpdate() },
+      { stateDir },
+    );
+    const createIssue = vi.fn(
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        await hooks.afterAuthPreflight?.();
+        await hooks.beforeIssueCreate?.();
+        return {
+          fallbackUrl: prepared.url,
+          issueCreateStarted: false as const,
+          message: "spawn gh ENOENT",
+          ok: false as const,
+        };
+      },
+    );
+
+    const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      stateDir,
+    });
+    const second = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      stateDir,
+    });
+
+    expect(first).toMatchObject({ fallbackUrl: prepared.url, status: "fallback" });
+    expect(second).toMatchObject({ fallbackUrl: prepared.url, status: "duplicate" });
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(
+      readUpdateFailureReportReceipt(prepared.attemptId, {
+        OPENCLAW_STATE_DIR: stateDir,
+      }),
+    ).toMatchObject({ fallbackUrl: prepared.url, status: "fallback" });
   });
 
   it("requires the submitted body to match the reviewed preview", async () => {

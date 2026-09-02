@@ -140,7 +140,7 @@ export function reserveUpdateFailureReportReceiptRowSync(
     : { receipt: readReceipt(db, attemptId), reserved: false };
 }
 
-/** Renews one owned preparation before publishing a known-no-submission fallback. */
+/** Renews or restores one owned definitely-unstarted preparation before fallback publication. */
 export function refreshUpdateFailureReportReceiptPreparationRowSync(
   db: DatabaseSync,
   attemptId: string,
@@ -152,7 +152,7 @@ export function refreshUpdateFailureReportReceiptPreparationRowSync(
   if (
     current.kind !== "valid" ||
     !currentReceipt ||
-    currentReceipt.status !== "preparing" ||
+    (currentReceipt.status !== "pending" && currentReceipt.status !== "preparing") ||
     currentReceipt.reservationId !== reservationId
   ) {
     return false;
@@ -249,11 +249,12 @@ export function finalizeUpdateFailureReportReceiptRowSync(
   return result.numAffectedRows === 1n;
 }
 
-/** Releases only the process-owned preparation before any external side effect. */
-export function releaseUpdateFailureReportReceiptRowSync(
+/** Removes private artifacts and releases their receipt under one state-owner transaction. */
+export function releaseUpdateFailureReportReceiptWithCleanupRowSync(
   db: DatabaseSync,
   attemptId: string,
   reservationId: string,
+  cleanup: () => void,
 ): boolean {
   const sentinelKey = receiptKey(attemptId);
   const current = readRestartSentinelRowForKeySync(db, sentinelKey);
@@ -266,6 +267,7 @@ export function releaseUpdateFailureReportReceiptRowSync(
   ) {
     return false;
   }
+  cleanup();
   const stateDb = getNodeSqliteKysely<GatewayRestartSentinelDatabase>(db);
   const result = executeSqliteQuerySync(
     db,
