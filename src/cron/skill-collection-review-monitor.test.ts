@@ -41,6 +41,7 @@ describe("resolveSkillCollectionReviewMonitorSpecs", () => {
         anchorMs: expect.any(Number),
       },
       sessionTarget: "isolated",
+      delivery: { mode: "none" },
       wakeMode: "next-heartbeat",
     });
     expect(specs[0]?.input.payload).not.toHaveProperty("toolsAllowIsDefault");

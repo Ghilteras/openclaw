@@ -10,6 +10,7 @@ import { AgentDeletionCommitUncertainError } from "../agents/agent-lifecycle-reg
 import type { CliDeps } from "../cli/deps.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
+import { resolveSkillCollectionReviewMonitorSpecs } from "../cron/skill-collection-review-monitor.js";
 import { resolveHeartbeatSession } from "../infra/heartbeat-runner-session.js";
 import type { HeartbeatRunResult } from "../infra/heartbeat-wake.js";
 import {
@@ -509,6 +510,42 @@ describe("buildGatewayCronService", () => {
       hasHooks: (hookName: string) => hookName === "cron_changed",
       runCronChanged: runCronChangedMock,
     });
+  });
+
+  it("converges collection review delivery and runs without a configured channel", async () => {
+    const cfg = {
+      ...createCronConfig("server-cron-skill-review-delivery"),
+      skills: { workshop: { autonomous: { mode: "auto" } } },
+    } satisfies OpenClawConfig;
+    const state = loadCronService(cfg);
+    const [spec] = resolveSkillCollectionReviewMonitorSpecs(cfg, { schedulerSeed: "test-seed" });
+
+    if (!spec) {
+      throw new Error("expected the skill collection review monitor spec");
+    }
+
+    try {
+      const existing = await state.cron.add(
+        { ...spec.input, delivery: { mode: "announce" } },
+        { enabledExplicit: true, systemOwned: true },
+      );
+      runSkillCollectionReviewForAgentMock.mockResolvedValueOnce({
+        status: "ok",
+        summary: "review complete",
+      });
+
+      await expect(state.reconcileHeartbeatJobs(cfg)).resolves.toBe("converged");
+      expect(state.cron.getJob(existing.id)).toMatchObject({ delivery: { mode: "none" } });
+
+      await expect(state.cron.run(existing.id, "force")).resolves.toEqual({ ok: true, ran: true });
+      expect(state.cron.getJob(existing.id)?.state).toMatchObject({
+        lastRunStatus: "ok",
+        lastDeliveryStatus: "not-requested",
+      });
+      expect(state.cron.getJob(existing.id)?.state.lastDeliveryError).toBeUndefined();
+    } finally {
+      state.cron.stop();
+    }
   });
 
   it("forwards cancellation, execution callbacks, and identity to collection review turns", async () => {

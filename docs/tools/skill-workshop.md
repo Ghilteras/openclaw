@@ -112,6 +112,8 @@ cadence; the job is enabled only when
 tools and its agent's full Workshop directory as its working directory,
 file-tool root, and session root. It keeps distinct useful skills, rewrites
 weak ones, consolidates overlap, and drops junk or stale fragments.
+The review announces nothing; results are in the review history and the cron
+run record.
 When the operator runs agents in a sandbox, the sandbox workspace for this turn
 is the agent's Workshop directory.
 The file tools are rooted at that directory. The review keeps the normal `exec`
