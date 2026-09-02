@@ -260,7 +260,9 @@ async function probeCorners(browser: Browser, fixtureFile: string): Promise<Corn
             const style = getComputedStyle(element);
             const radius =
               corner === "bottomLeft" ? style.borderBottomLeftRadius : style.borderTopLeftRadius;
-            return [selector, { radius, shape: style.getPropertyValue("corner-shape") }];
+            const shape = style.getPropertyValue("corner-shape");
+            // CSS Borders 4 defines round as superellipse(1); engines serialize either form.
+            return [selector, { radius, shape: shape === "superellipse(1)" ? "round" : shape }];
           }),
         );
       },
@@ -332,11 +334,7 @@ describeCornerShape("Control UI corner curvature", () => {
           corner.selector,
           { radius: corner.superelliptical, shape: "superellipse(1.5)" },
         ]),
-        ...ROUND_CASES.map((corner) => [
-          corner.selector,
-          { radius: corner.superelliptical, shape: "round" },
-        ]),
-        ...EXCLUDED_CASES.map((corner) => [
+        ...[...ROUND_CASES, ...EXCLUDED_CASES].map((corner) => [
           corner.selector,
           { radius: corner.superelliptical, shape: "round" },
         ]),
