@@ -430,6 +430,9 @@ describe("worker turn launcher failure recovery", () => {
       createFromProfileSnapshot: vi.fn(async () => {
         throw new Error("unexpected inherited worker environment creation");
       }),
+      retireAbandonedNodeEnvironment: vi.fn(async () => {
+        throw new Error("unexpected offline node abandonment");
+      }),
       reconcileOnce,
       reconcileEnvironment: vi.fn(),
     };
