@@ -13,10 +13,10 @@ import { bumpSkillsSnapshotVersion } from "../runtime/refresh-state.js";
 import { latestCommittedBackupId, readCollectionBackupManifest } from "./collection-backup.js";
 import type { SkillCollectionRestoreResult } from "./collection-contracts.js";
 import { resolveSkillCollectionBackupRoot } from "./collection-paths.js";
-import { withSkillCollectionReviewClaim } from "./collection-review-state.js";
 import { restoreSkillCollectionBackupTransaction } from "./collection-rollback.js";
 import { readSkillProposalTargetTreeSha256 } from "./proposal-bundle.js";
 import { resolveWorkshopSkillsDir } from "./skills-root.js";
+import { withSkillCollectionLock } from "./target-lock.js";
 import { listWritableWorkshopSkillSummaries } from "./workspace-skill-read.js";
 
 export async function restoreLatestSkillCollectionBackup(params: {
@@ -29,7 +29,7 @@ export async function restoreLatestSkillCollectionBackup(params: {
     throw new Error("Skill Workshop collection restore requires the active agent id.");
   }
   const agentId = params.agentId;
-  const commit = await withSkillCollectionReviewClaim(
+  const commit = await withSkillCollectionLock(
     async (lease) => {
       const skillsRoot = resolveWorkshopSkillsDir(params.config, agentId, params.env);
       const backupRoot = resolveSkillCollectionBackupRoot(params.config, agentId, params.env);

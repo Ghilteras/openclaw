@@ -24,13 +24,13 @@ import { buildCollectionReviewPrompt } from "./collection-review-prompt.js";
 import {
   recordSkillCollectionReviewHistory,
   recordSkillCollectionReviewStatus,
-  withSkillCollectionReviewClaim,
   type SkillCollectionReviewResult,
 } from "./collection-review-state.js";
 import { restoreSkillCollectionDirectoryFromBackup } from "./collection-rollback.js";
 import { clearSkillUsageForRemovedSkills } from "./curator.js";
 import { readSkillProposalTargetTreeSha256 } from "./proposal-bundle.js";
 import { resolveWorkshopSkillsDir } from "./skills-root.js";
+import { withSkillCollectionLock } from "./target-lock.js";
 import { listWritableWorkshopSkillSummaries } from "./workspace-skill-read.js";
 
 type ReviewTurn = (params: {
@@ -74,7 +74,7 @@ export async function runSkillCollectionReviewForAgent(params: {
     params.abortSignal?.throwIfAborted();
   };
   try {
-    const commit: ReviewCommit = await withSkillCollectionReviewClaim(async (lease) => {
+    const commit: ReviewCommit = await withSkillCollectionLock(async (lease) => {
       const attemptedAtMs = Date.now();
       assertCurrent(lease);
       recordSkillCollectionReviewStatus({ attemptedAtMs }, stateOptions);

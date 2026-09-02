@@ -22,6 +22,7 @@ import {
 } from "./store-sqlite-schema.js";
 
 const REVIEW_CLAIM_MS = 11 * 60_000;
+const REVIEW_CLAIM_WAIT_MS = 5_000;
 // The Workshop owns one global skill collection, so its review lease, status entry, and
 // history all live under this single key. Experience reviews stay per workspace.
 const COLLECTION_REVIEW_KEY = "workshop";
@@ -81,7 +82,7 @@ export async function withSkillCollectionReviewClaim<T>(
       key: COLLECTION_REVIEW_KEY,
       database: { scope: "shared", options },
       leaseMs: REVIEW_CLAIM_MS,
-      waitMs: 0,
+      waitMs: REVIEW_CLAIM_WAIT_MS,
       leaseLabel: "skill collection review claim",
       operationLabel: "skill-collection.review",
     },
