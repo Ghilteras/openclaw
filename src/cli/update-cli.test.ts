@@ -4055,11 +4055,15 @@ describe("update-cli", () => {
       expect(runUpdateFailureTriage).toHaveBeenCalledWith(
         expect.objectContaining({
           failure: expect.objectContaining({
-            result: expect.objectContaining({
-              status: "error",
-              reason: "post-update-plugins",
-              postUpdate: { plugins: jsonOutput?.postUpdate?.plugins },
-            }),
+            result:
+              mode === "update"
+                ? jsonOutput
+                : expect.objectContaining({
+                    status: "error",
+                    mode: "unknown",
+                    reason: "post-update-plugins",
+                    postUpdate: { plugins: jsonOutput?.postUpdate?.plugins },
+                  }),
           }),
           mode: "json",
         }),
