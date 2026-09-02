@@ -656,44 +656,58 @@ describe("package update recovery safety", () => {
       await fs.mkdir(globalRoot, { recursive: true });
       await fs.symlink(linkedRoot, packageRoot, process.platform === "win32" ? "junction" : "dir");
 
-      const result = await runGlobalPackageUpdateSteps({
-        installTarget: createNpmTarget(globalRoot),
-        installSpec: "openclaw@2.0.0",
-        packageName: "openclaw",
-        packageRoot,
-        runCommand: createRootRunner(globalRoot),
-        runStep: async ({ name, argv }) => {
-          const stagePrefix = argv[argv.indexOf("--prefix") + 1];
-          if (!stagePrefix) {
-            throw new Error("missing stage prefix");
-          }
-          await writePackageRoot(
-            path.join(stagePrefix, "lib", "node_modules", "openclaw"),
-            "2.0.0",
-          );
-          return {
-            name,
-            command: argv.join(" "),
-            cwd: stagePrefix,
-            durationMs: 0,
-            exitCode: 0,
-          };
-        },
-        postVerifyStep: async (candidateRoot) => {
-          expect(candidateRoot).toBe(packageRoot);
-          await fs.writeFile(linkedEntry, "altered linked package\n", "utf8");
-          return {
-            name: "openclaw doctor",
-            command: "openclaw doctor --non-interactive --fix",
-            cwd: candidateRoot,
-            durationMs: 0,
-            exitCode: 1,
-            stderrTail: "doctor rejected candidate",
-          };
-        },
-        timeoutMs: 1000,
+      let externalFingerprintOpens = 0;
+      const open = fs.open.bind(fs);
+      const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+        if (String(args[0]).startsWith(linkedRoot)) {
+          externalFingerprintOpens += 1;
+        }
+        return await open(...args);
       });
+      let result: Awaited<ReturnType<typeof runGlobalPackageUpdateSteps>>;
+      try {
+        result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: async ({ name, argv }) => {
+            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
+            if (!stagePrefix) {
+              throw new Error("missing stage prefix");
+            }
+            await writePackageRoot(
+              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
+              "2.0.0",
+            );
+            return {
+              name,
+              command: argv.join(" "),
+              cwd: stagePrefix,
+              durationMs: 0,
+              exitCode: 0,
+            };
+          },
+          postVerifyStep: async (candidateRoot) => {
+            expect(candidateRoot).toBe(packageRoot);
+            await fs.writeFile(linkedEntry, "altered linked package\n", "utf8");
+            return {
+              name: "openclaw doctor",
+              command: "openclaw doctor --non-interactive --fix",
+              cwd: candidateRoot,
+              durationMs: 0,
+              exitCode: 1,
+              stderrTail: "doctor rejected candidate",
+            };
+          },
+          timeoutMs: 1000,
+        });
+      } finally {
+        openSpy.mockRestore();
+      }
 
+      expect(externalFingerprintOpens).toBe(0);
       expect(result.afterVersion).toBe("1.0.0");
       expect(result.recovery).toMatchObject({
         serviceRestartSafe: false,
@@ -978,7 +992,7 @@ describe("package update recovery safety", () => {
   );
 
   it.runIf(process.platform !== "win32")(
-    "keeps rollback unverified when both package fingerprints exceed the external-tree limit",
+    "keeps rollback unverified for an external package-tree symlink",
     async () => {
       await withTestDir({ prefix: "openclaw-package-recovery-bounded-link-" }, async (base) => {
         const globalRoot = path.join(base, "prefix", "lib", "node_modules");
@@ -986,9 +1000,7 @@ describe("package update recovery safety", () => {
         const externalRoot = path.join(base, "external-tree");
         await writePackageRoot(packageRoot, "1.0.0");
         await fs.mkdir(externalRoot);
-        for (let index = 0; index < 513; index += 1) {
-          await fs.writeFile(path.join(externalRoot, `${index}.txt`), "", "utf8");
-        }
+        await fs.writeFile(path.join(externalRoot, "outside.txt"), "external\n", "utf8");
         await fs.symlink(externalRoot, path.join(packageRoot, "dist", "external-tree"));
 
         const result = await runGlobalPackageUpdateSteps({

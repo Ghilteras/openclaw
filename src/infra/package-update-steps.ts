@@ -42,8 +42,6 @@ import type { UpdateRecovery } from "./update-recovery.js";
 const PACKAGE_MANAGER_SWAP_SOURCE_HARDLINKS = "allow" as const;
 const PACKAGE_FINGERPRINT_MAX_BYTES = 1024 * 1024 * 1024;
 const PACKAGE_FINGERPRINT_MAX_ENTRIES = 50_000;
-const PACKAGE_FINGERPRINT_MAX_EXTERNAL_BYTES = 64 * 1024 * 1024;
-const PACKAGE_FINGERPRINT_MAX_EXTERNAL_ENTRIES = 512;
 
 /**
  * Captures one package-manager or filesystem step from the global update flow.
@@ -731,19 +729,19 @@ async function pathEntriesMatch(left: string, right: string): Promise<boolean> {
 }
 
 type PackageTreeFingerprint = {
-  parked: string;
   restored: string;
 };
 
-type PackageRootIdentity = {
-  dev: bigint;
-  ino: bigint;
-};
+type PackageRootIdentity =
+  | { kind: "available"; dev: bigint; ino: bigint }
+  | { kind: "unavailable" };
 
 async function readPackageRootIdentity(packageRoot: string): Promise<PackageRootIdentity | null> {
   try {
     const stat = await fs.lstat(packageRoot, { bigint: true });
-    return stat.ino === 0n ? null : { dev: stat.dev, ino: stat.ino };
+    return stat.ino === 0n
+      ? { kind: "unavailable" }
+      : { kind: "available", dev: stat.dev, ino: stat.ino };
   } catch {
     return null;
   }
@@ -753,26 +751,24 @@ function packageRootIdentitiesMatch(
   left: PackageRootIdentity | null,
   right: PackageRootIdentity | null,
 ): boolean {
-  return left !== null && right !== null && left.dev === right.dev && left.ino === right.ino;
+  if (!left || !right || left.kind !== right.kind) {
+    return false;
+  }
+  return (
+    left.kind === "unavailable" ||
+    (right.kind === "available" && left.dev === right.dev && left.ino === right.ino)
+  );
 }
 
 async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeFingerprint | null> {
-  const parkedFingerprint = createHash("sha256");
   const restoredFingerprint = createHash("sha256");
   const updateRestoredFingerprint = (value: unknown[]): void => {
     restoredFingerprint.update(`${JSON.stringify(value)}\n`);
   };
-  const parkedHardlinkOwners = new Map<string, string>();
   const restoredHardlinkOwners = new Map<string, string>();
-  const visitedTargetPaths = new Set<string>();
-  const canonicalPackageRoot = await fs.realpath(packageRoot).catch(() => null);
-  if (!canonicalPackageRoot) {
-    return null;
-  }
+  const canonicalPackageRoot = path.resolve(packageRoot);
   let bytes = 0;
   let entries = 0;
-  let externalBytes = 0;
-  let externalEntries = 0;
   const isExternalTarget = (candidatePath: string): boolean => {
     const relative = path.relative(canonicalPackageRoot, candidatePath);
     return (
@@ -780,70 +776,29 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
       (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`))
     );
   };
-  const visit = async (
-    entryPath: string,
-    relativePath: string,
-    external: boolean,
-    symlinkTarget: boolean,
-  ): Promise<boolean> => {
+  const visit = async (entryPath: string, relativePath: string): Promise<boolean> => {
     entries += 1;
     if (entries > PACKAGE_FINGERPRINT_MAX_ENTRIES) {
       return false;
     }
-    if (external) {
-      externalEntries += 1;
-      if (externalEntries > PACKAGE_FINGERPRINT_MAX_EXTERNAL_ENTRIES) {
-        return false;
-      }
-    }
     const stat = await fs.lstat(entryPath);
-    visitedTargetPaths.add(path.resolve(entryPath));
     // ctime changes when ownership, ACLs, capabilities, or extended attributes
     // change. The package root is checked separately before its rollback rename.
     const portableMetadata = [stat.mode & 0o7777, stat.uid, stat.gid];
     const exactMetadata = [...portableMetadata, relativePath === "" ? null : stat.ctimeMs];
-    const updateEntryFingerprints = (restored: unknown[], parked: unknown[]): void => {
+    const updateEntryFingerprint = (restored: unknown[]): void => {
       updateRestoredFingerprint(restored);
-      if (!symlinkTarget) {
-        parkedFingerprint.update(`${JSON.stringify(parked)}\n`);
-      }
     };
     if (stat.isSymbolicLink()) {
+      if (relativePath === "") {
+        return false;
+      }
       const linkTarget = await fs.readlink(entryPath);
-      updateEntryFingerprints(
-        [relativePath, "symlink", ...exactMetadata, linkTarget],
-        [relativePath, "symlink", ...exactMetadata, linkTarget],
-      );
-      const immediateTarget = path.resolve(path.dirname(entryPath), linkTarget);
-      const targetKey = path.resolve(immediateTarget);
-      if (visitedTargetPaths.has(targetKey)) {
-        updateRestoredFingerprint([relativePath, "symlink-target-visited"]);
-        return true;
+      if (isExternalTarget(path.resolve(path.dirname(entryPath), linkTarget))) {
+        return false;
       }
-      visitedTargetPaths.add(targetKey);
-      try {
-        await fs.lstat(immediateTarget);
-      } catch (error) {
-        const unresolvedCode = hasErrnoCode(error, "ENOENT")
-          ? "ENOENT"
-          : hasErrnoCode(error, "ELOOP")
-            ? "ELOOP"
-            : hasErrnoCode(error, "ENOTDIR")
-              ? "ENOTDIR"
-              : null;
-        if (unresolvedCode) {
-          updateRestoredFingerprint([relativePath, "symlink-target-unresolved", unresolvedCode]);
-          return true;
-        }
-        throw error;
-      }
-      const canonicalTarget = await fs.realpath(immediateTarget).catch(() => targetKey);
-      return await visit(
-        immediateTarget,
-        `${relativePath}/<effective-target>`,
-        external || isExternalTarget(canonicalTarget),
-        true,
-      );
+      updateEntryFingerprint([relativePath, "symlink", ...exactMetadata, linkTarget]);
+      return true;
     }
     if (stat.isFile()) {
       const resolveHardlinkOwner = (owners: Map<string, string>): string | null => {
@@ -856,19 +811,13 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
         return owner;
       };
       const restoredHardlinkOwner = resolveHardlinkOwner(restoredHardlinkOwners);
-      const parkedHardlinkOwner = symlinkTarget ? null : resolveHardlinkOwner(parkedHardlinkOwners);
       const contents = createHash("sha256");
       const handle = await fs.open(entryPath, "r");
       try {
         const buffer = Buffer.allocUnsafe(64 * 1024);
         let position = 0;
         while (true) {
-          const remainingBytes = Math.min(
-            PACKAGE_FINGERPRINT_MAX_BYTES - bytes,
-            external
-              ? PACKAGE_FINGERPRINT_MAX_EXTERNAL_BYTES - externalBytes
-              : PACKAGE_FINGERPRINT_MAX_BYTES,
-          );
+          const remainingBytes = PACKAGE_FINGERPRINT_MAX_BYTES - bytes;
           const { bytesRead } = await handle.read(
             buffer,
             0,
@@ -883,50 +832,28 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
           }
           contents.update(buffer.subarray(0, bytesRead));
           bytes += bytesRead;
-          if (external) {
-            externalBytes += bytesRead;
-          }
           position += bytesRead;
         }
       } finally {
         await handle.close();
       }
       const contentsDigest = contents.digest("hex");
-      updateEntryFingerprints(
-        [
-          relativePath,
-          "file",
-          ...exactMetadata,
-          stat.size,
-          stat.nlink,
-          restoredHardlinkOwner,
-          contentsDigest,
-        ],
-        [
-          relativePath,
-          "file",
-          ...exactMetadata,
-          stat.size,
-          stat.nlink,
-          parkedHardlinkOwner,
-          contentsDigest,
-        ],
-      );
+      updateEntryFingerprint([
+        relativePath,
+        "file",
+        ...exactMetadata,
+        stat.size,
+        stat.nlink,
+        restoredHardlinkOwner,
+        contentsDigest,
+      ]);
       return true;
     }
     if (!stat.isDirectory()) {
       return false;
     }
-    updateEntryFingerprints(
-      [relativePath, "directory", ...exactMetadata],
-      [relativePath, "directory", ...exactMetadata],
-    );
-    const remainingEntries = Math.min(
-      PACKAGE_FINGERPRINT_MAX_ENTRIES - entries,
-      external
-        ? PACKAGE_FINGERPRINT_MAX_EXTERNAL_ENTRIES - externalEntries
-        : PACKAGE_FINGERPRINT_MAX_ENTRIES,
-    );
+    updateEntryFingerprint([relativePath, "directory", ...exactMetadata]);
+    const remainingEntries = PACKAGE_FINGERPRINT_MAX_ENTRIES - entries;
     const children: string[] = [];
     const directory = await fs.opendir(entryPath);
     for await (const child of directory) {
@@ -941,8 +868,6 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
         !(await visit(
           path.join(entryPath, child),
           relativePath ? `${relativePath}/${child}` : child,
-          external,
-          symlinkTarget,
         ))
       ) {
         return false;
@@ -952,9 +877,8 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
   };
 
   try {
-    return (await visit(packageRoot, "", false, false))
+    return (await visit(packageRoot, ""))
       ? {
-          parked: parkedFingerprint.digest("hex"),
           restored: restoredFingerprint.digest("hex"),
         }
       : null;
@@ -1045,7 +969,6 @@ async function swapStagedNpmInstall(params: {
   let hadPackage = false;
   let previousVersion: string | null = null;
   let sourcePackageFingerprint: string | null = null;
-  let parkedPackageFingerprint: string | null = null;
   let sourcePackageRootIdentity: PackageRootIdentity | null = null;
   let parkedPackageRootIdentityVerified = false;
   let parkedPackageRootCtimeMs: number | null = null;
@@ -1070,20 +993,6 @@ async function swapStagedNpmInstall(params: {
         packageRollbackVerified = false;
         messages.push(
           `rollback package-metadata verification failed: ${formatErrorMessage(verificationError)}`,
-        );
-      }
-    }
-    if (parkedPackageFingerprint !== null) {
-      try {
-        const currentParkedFingerprint = await fingerprintPackageTree(backupRoot);
-        if (currentParkedFingerprint?.parked !== parkedPackageFingerprint) {
-          packageRollbackVerified = false;
-          messages.push("rollback verification failed: parked package tree changed");
-        }
-      } catch (verificationError) {
-        packageRollbackVerified = false;
-        messages.push(
-          `rollback parked-package verification failed: ${formatErrorMessage(verificationError)}`,
         );
       }
     }
@@ -1228,16 +1137,13 @@ async function swapStagedNpmInstall(params: {
       }
     });
     if (hadPackage) {
-      parkedPackageFingerprint = (await fingerprintPackageTree(backupRoot))?.parked ?? null;
       parkedPackageRootIdentityVerified = packageRootIdentitiesMatch(
         sourcePackageRootIdentity,
         await readPackageRootIdentity(backupRoot),
       );
       parkedPackageRootCtimeMs = (await fs.lstat(backupRoot)).ctimeMs;
       packageRollbackVerified =
-        sourcePackageFingerprint !== null &&
-        parkedPackageFingerprint !== null &&
-        parkedPackageRootIdentityVerified;
+        sourcePackageFingerprint !== null && parkedPackageRootIdentityVerified;
     }
     await activateStagedNpmPackageRoot(params.stage.packageRoot, targetPackageRoot);
     for (const shim of shims) {
