@@ -9,7 +9,7 @@ export type UpdateFailureReportRecovery =
   | { fallbackUrl: string; reservationId: string; status: "fallback" }
   | { reservationId: string; status: "retryable" };
 
-export function updateFailureReportRecoveryMatchesReceipt(
+function updateFailureReportRecoveryMatchesReceipt(
   recovery: UpdateFailureReportRecovery,
   receipt: UpdateFailureReportReceipt | null,
 ): boolean {
