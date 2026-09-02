@@ -735,6 +735,27 @@ type PackageTreeFingerprint = {
   restored: string;
 };
 
+type PackageRootIdentity = {
+  dev: bigint;
+  ino: bigint;
+};
+
+async function readPackageRootIdentity(packageRoot: string): Promise<PackageRootIdentity | null> {
+  try {
+    const stat = await fs.lstat(packageRoot, { bigint: true });
+    return stat.ino === 0n ? null : { dev: stat.dev, ino: stat.ino };
+  } catch {
+    return null;
+  }
+}
+
+function packageRootIdentitiesMatch(
+  left: PackageRootIdentity | null,
+  right: PackageRootIdentity | null,
+): boolean {
+  return left !== null && right !== null && left.dev === right.dev && left.ino === right.ino;
+}
+
 async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeFingerprint | null> {
   const parkedFingerprint = createHash("sha256");
   const restoredFingerprint = createHash("sha256");
@@ -790,7 +811,7 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
     if (stat.isSymbolicLink()) {
       const linkTarget = await fs.readlink(entryPath);
       updateEntryFingerprints(
-        [relativePath, "symlink", ...portableMetadata, linkTarget],
+        [relativePath, "symlink", ...exactMetadata, linkTarget],
         [relativePath, "symlink", ...exactMetadata, linkTarget],
       );
       const immediateTarget = path.resolve(path.dirname(entryPath), linkTarget);
@@ -875,7 +896,7 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
         [
           relativePath,
           "file",
-          ...portableMetadata,
+          ...exactMetadata,
           stat.size,
           stat.nlink,
           restoredHardlinkOwner,
@@ -897,7 +918,7 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
       return false;
     }
     updateEntryFingerprints(
-      [relativePath, "directory", ...portableMetadata],
+      [relativePath, "directory", ...exactMetadata],
       [relativePath, "directory", ...exactMetadata],
     );
     const remainingEntries = Math.min(
@@ -1025,12 +1046,20 @@ async function swapStagedNpmInstall(params: {
   let previousVersion: string | null = null;
   let sourcePackageFingerprint: string | null = null;
   let parkedPackageFingerprint: string | null = null;
+  let sourcePackageRootIdentity: PackageRootIdentity | null = null;
+  let parkedPackageRootIdentityVerified = false;
   let parkedPackageRootCtimeMs: number | null = null;
   const shims: Array<{ source: string; destination: string; backup: string | null }> = [];
   const rollback: Array<() => Promise<void>> = [];
   let packageRollbackVerified = false;
   const restoreSwap = async (): Promise<string[]> => {
     const messages: string[] = [];
+    if (hadPackage && !parkedPackageRootIdentityVerified) {
+      packageRollbackVerified = false;
+      messages.push(
+        "rollback verification failed: package backup did not preserve filesystem identity",
+      );
+    }
     if (parkedPackageRootCtimeMs !== null) {
       try {
         if ((await fs.lstat(backupRoot)).ctimeMs !== parkedPackageRootCtimeMs) {
@@ -1077,6 +1106,18 @@ async function swapStagedNpmInstall(params: {
     } catch (verificationError) {
       packageRollbackVerified = false;
       messages.push(`rollback verification failed: ${formatErrorMessage(verificationError)}`);
+    }
+    try {
+      const restoredPackageRootIdentity = await readPackageRootIdentity(targetPackageRoot);
+      if (!packageRootIdentitiesMatch(sourcePackageRootIdentity, restoredPackageRootIdentity)) {
+        packageRollbackVerified = false;
+        messages.push("rollback verification failed: restored package identity changed");
+      }
+    } catch (verificationError) {
+      packageRollbackVerified = false;
+      messages.push(
+        `rollback package-identity verification failed: ${formatErrorMessage(verificationError)}`,
+      );
     }
     try {
       const restoredFingerprint = await fingerprintPackageTree(targetPackageRoot);
@@ -1166,6 +1207,7 @@ async function swapStagedNpmInstall(params: {
     if (hadPackage) {
       sourcePackageFingerprint =
         (await fingerprintPackageTree(targetPackageRoot))?.restored ?? null;
+      sourcePackageRootIdentity = await readPackageRootIdentity(targetPackageRoot);
     }
     packageRollbackVerified = false;
     if (hadPackage) {
@@ -1187,9 +1229,15 @@ async function swapStagedNpmInstall(params: {
     });
     if (hadPackage) {
       parkedPackageFingerprint = (await fingerprintPackageTree(backupRoot))?.parked ?? null;
+      parkedPackageRootIdentityVerified = packageRootIdentitiesMatch(
+        sourcePackageRootIdentity,
+        await readPackageRootIdentity(backupRoot),
+      );
       parkedPackageRootCtimeMs = (await fs.lstat(backupRoot)).ctimeMs;
       packageRollbackVerified =
-        sourcePackageFingerprint !== null && parkedPackageFingerprint !== null;
+        sourcePackageFingerprint !== null &&
+        parkedPackageFingerprint !== null &&
+        parkedPackageRootIdentityVerified;
     }
     await activateStagedNpmPackageRoot(params.stage.packageRoot, targetPackageRoot);
     for (const shim of shims) {

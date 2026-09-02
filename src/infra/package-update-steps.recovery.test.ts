@@ -351,7 +351,7 @@ describe("package update recovery safety", () => {
     },
   );
 
-  it("verifies rollback after the old package is parked through copy fallback", async () => {
+  it("restores but does not verify the old package after copy-fallback parking", async () => {
     await withTestDir({ prefix: "openclaw-package-recovery-backup-exdev-" }, async (base) => {
       const globalRoot = path.join(base, "prefix", "lib", "node_modules");
       const packageRoot = path.join(globalRoot, "openclaw");
@@ -416,8 +416,11 @@ describe("package update recovery safety", () => {
       expect(result.recovery).toEqual({
         serviceRestartSafe: false,
         reason: "runtime-verification-failed",
-        packageRollbackVerified: true,
+        packageRollbackVerified: false,
       });
+      expect(result.failedStep?.stderrTail).toContain(
+        "package backup did not preserve filesystem identity",
+      );
       await expect(fs.readFile(path.join(packageRoot, "dist", "index.js"), "utf8")).resolves.toBe(
         "export {};\n",
       );
