@@ -183,7 +183,9 @@ export async function triageCommand(
   }
   const isCurrent = () => {
     automatic?.signal.throwIfAborted();
-    if (automatic && !automatic.diagnosticOnly) automatic.assertCurrent();
+    if (automatic && !automatic.diagnosticOnly) {
+      automatic.assertCurrent();
+    }
     return options.recovery?.isCurrent?.() !== false;
   };
   if (!isCurrent()) {
@@ -385,11 +387,13 @@ export async function triageCommand(
         runtime.error(`${options.agent} is not found or unavailable for direct launch on PATH.`);
         exitCliAfterOutput(runtime, 1);
       }
-      if (automatic)
+      if (automatic) {
         runtime.error(
           "No configured embedded agent or directly launchable external agent is available. Use a handoff command above.",
         );
-      else runtime.log("No coding agent can be launched directly; use a handoff command above.");
+      } else {
+        runtime.log("No coding agent can be launched directly; use a handoff command above.");
+      }
       return;
     }
     runtime.log(`Starting ${handoff.agent}; use --agent <name> to select another coding agent.`);
@@ -407,7 +411,9 @@ export async function triageCommand(
           handoff.agent === "claude"
             ? ["--safe-mode", "-p"]
             : ["exec", "--skip-git-repo-check", "-"];
-        if (!isCurrent()) return;
+        if (!isCurrent()) {
+          return;
+        }
         const result = await runUtf8CommandWithTimeout(
           [handoff.program.command, ...handoff.program.leadingArgv, ...automaticArgs],
           {
@@ -422,11 +428,13 @@ export async function triageCommand(
             maxOutputBytes: 32 * 1024,
           },
         );
-        if (result.cleanup === "uncertain" || result.cleanup === "forced")
+        if (result.cleanup === "uncertain" || result.cleanup === "forced") {
           recordAgentCleanupFailure();
+        }
         for (const output of [result.stdout, result.stderr]) {
-          if (output.trim())
+          if (output.trim()) {
             runtime.log(redactSupportString(output, redaction, { maxLength: 32 * 1024 }));
+          }
         }
         exitCode = result.termination === "exit" ? (result.code ?? 1) : 1;
         if (exitCode !== 0) {
@@ -453,8 +461,9 @@ export async function triageCommand(
         automatic &&
         isRecord(error) &&
         (error.cleanup === "uncertain" || error.cleanup === "forced")
-      )
+      ) {
         recordAgentCleanupFailure();
+      }
       runtime.error(
         `Failed to launch ${handoff.agent}: ${triageCollectionError(error, redaction)}`,
       );
@@ -477,12 +486,16 @@ export async function triageCommand(
   // Preflight and repair must validate the same local transport and installation.
   const result = await withInstallationTarget(target, async () => {
     const { verifySetupInference } = await import("../system-agent/setup-inference.js");
-    if (!isCurrent()) return { exitCode: 1 };
+    if (!isCurrent()) {
+      return { exitCode: 1 };
+    }
     const inference = await verifySetupInference({
       runtime,
       timeoutMs: 15_000,
     });
-    if (!isCurrent()) return { exitCode: 1 };
+    if (!isCurrent()) {
+      return { exitCode: 1 };
+    }
     if (!inference.ok) {
       const reason = triageCollectionError(inference.error, redaction);
       throw new Error(
@@ -490,7 +503,9 @@ export async function triageCommand(
       );
     }
     const { agentExecCommand } = await import("./agent-exec.js");
-    if (!isCurrent()) return { exitCode: 1 };
+    if (!isCurrent()) {
+      return { exitCode: 1 };
+    }
     return agentExecCommand(
       prompt,
       agentOptions,

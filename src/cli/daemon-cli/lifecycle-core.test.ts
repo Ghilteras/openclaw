@@ -189,6 +189,68 @@ describe("runServiceRestart token drift", () => {
     expectUnsupportedServiceCheckFailure();
   });
 
+  it.each(["health", "native refusal", "unexpected check", "scheduled", "unmanaged", "repair"])(
+    "serializes one restart outcome for %s",
+    async (scenario) => {
+      const exit = vi.spyOn(lifecycleTestRuntime, "exit");
+      exit.mockClear();
+      if (scenario === "native refusal") {
+        service.restart.mockRejectedValueOnce(new Error("native owner refused"));
+      } else if (scenario === "scheduled") {
+        service.restart.mockResolvedValueOnce({ outcome: "scheduled" });
+      } else if (scenario === "unmanaged") {
+        service.isLoaded.mockResolvedValue(false);
+        service.readCommand.mockResolvedValue(null);
+      } else if (scenario === "repair") {
+        service.readCommand.mockResolvedValue({ programArguments: [MISSING_SERVICE_PROGRAM] });
+      }
+      const postRestartCheck = vi.fn<
+        NonNullable<Parameters<typeof runServiceRestart>[0]["postRestartCheck"]>
+      >(async ({ fail, warnings, activationAccepted }) => {
+        if (scenario === "unexpected check") {
+          throw new Error("health observer crashed");
+        }
+        warnings.push("readiness failed");
+        fail(
+          "Gateway is unhealthy",
+          ["openclaw gateway status --deep"],
+          activationAccepted ? "restart-health-failed" : undefined,
+        );
+      });
+      const pending = runServiceRestart({
+        ...createServiceRunArgs(),
+        postRestartCheck,
+        ...(scenario === "unmanaged" && {
+          onNotLoaded: async () => ({ result: "restarted" as const }),
+        }),
+        ...(scenario === "repair" && {
+          repairLoadedService: async () => ({ result: "restarted" as const }),
+        }),
+      });
+      if (scenario === "scheduled") {
+        await expect(pending).resolves.toBe(true);
+        expect(postRestartCheck).not.toHaveBeenCalled();
+      } else {
+        await expect(pending).rejects.toThrow("__exit__:1");
+      }
+      expect(lifecycleRuntimeLogs).toHaveLength(1);
+      expect(exit).toHaveBeenCalledTimes(scenario === "scheduled" ? 0 : 1);
+      const healthFailed = scenario === "health" || scenario === "unmanaged";
+      const response = JSON.parse(lifecycleRuntimeLogs.join("\n"));
+      expect(response).toMatchObject({ action: "restart", ok: scenario === "scheduled" });
+      if (healthFailed) {
+        expect(response).toMatchObject({
+          error: "Gateway is unhealthy",
+          hints: ["openclaw gateway status --deep"],
+          warnings: expect.arrayContaining(["readiness failed"]),
+        });
+      }
+      expect(response.result).toBe(
+        scenario === "scheduled" ? "scheduled" : healthFailed ? "restart-health-failed" : undefined,
+      );
+    },
+  );
+
   it("rejects unsupported-platform stop before unmanaged fallback", async () => {
     const onNotLoaded = vi.fn(async () => ({
       result: "stopped" as const,

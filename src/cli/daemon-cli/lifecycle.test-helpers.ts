@@ -1,6 +1,7 @@
 import { expect, it, vi, type Mock } from "vitest";
 
 type RestartPostCheckContext = {
+  activationAccepted: boolean;
   json: boolean;
   stdout: NodeJS.WritableStream;
   warnings: string[];

@@ -111,11 +111,21 @@ The agent starts in the operator's original working directory, or their OS home
 if that directory is no longer accessible. The failed installation's resolved
 state, config, and default workspace paths remain pinned for the repair.
 
-Updates using `--yes`, `--json`, or a non-interactive session (including piped
-input or output) collect diagnostics and print handoff commands without starting
-a coding agent. With `--json`, triage output goes to stderr so stdout retains
-the original update result. Diagnostic collection failures never hide the update
-failure.
+Full updates using `--yes`, `--json`, or a non-interactive session can start one
+[owned automatic repair](/cli/triage#automatic-failure-handoff) after eligible
+installation changes or an unhealthy restart. Other failures retain diagnostics
+and manual handoff commands. With `--json`, triage output goes to stderr so stdout
+retains the original update result. Diagnostic collection failures never hide
+the update failure.
+
+If installation and post-update verification pass, an explicitly observed
+post-activation health failure can retain the automatic fixer's goal of repairing
+and verifying the Gateway that was intended to run. The original update still
+fails with `serviceRestartSafe: false`; the recovery helper must not blindly
+restore that runtime. The repair goal grants no service control or recovery
+ownership: deployment-owner refusals, live recovery cancellation, and verification
+still apply. Missing diagnostic evidence, earlier unsafe failures, `--no-restart`,
+and intentional stops do not acquire this activation goal.
 
 For a background or Control UI failure, use the installation-specific command
 printed on the Gateway host. Printed commands use PowerShell on Windows and

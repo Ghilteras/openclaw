@@ -1,5 +1,4 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { PLUGIN_CAPABILITY_CONSENT_REQUIRED } from "../../../packages/gateway-protocol/src/capability-consent-error-details.js";
 import { theme } from "../../../packages/terminal-core/src/theme.js";
 import type { TriageFailureContext } from "../../commands/triage-prompt.js";
 import { readConfigFileSnapshot } from "../../config/config.js";
@@ -45,6 +44,7 @@ import {
 } from "./update-command-post-core.js";
 import {
   markControlPlaneUpdateRestartSentinelFailureBestEffort,
+  resolveAutomaticUpdateTriage,
   UpdateCommandFailure,
   writeControlPlaneUpdateRestartSentinelBestEffort,
 } from "./update-command-result.js";
@@ -104,50 +104,22 @@ export async function finishUpdate(params: {
     durationMs: Math.max(0, Date.now() - params.startedAt),
   });
   let triageAllowed = true;
+  let gateway: TriageFailureContext["gateway"] = "preserve";
   const createFailure = (
     result: UpdateRunResult,
     exitCode = 1,
     detail?: string,
     options?: ErrorOptions,
   ) => {
-    const eligible =
-      triageAllowed &&
-      (params.mutationStarted || result.reason === "restart-unhealthy") &&
-      result.reason !== "service-revalidation-failed" &&
-      !(
-        result.recovery?.serviceRestartSafe === false &&
-        result.recovery.reason === "rollback-checkout-dirty"
-      ) &&
-      !result.postUpdate?.plugins?.capabilityConsentRequired &&
-      !result.postUpdate?.plugins?.npm.outcomes.some(
-        (outcome) => outcome.code === PLUGIN_CAPABILITY_CONSENT_REQUIRED,
-      ) &&
-      params.preManagedServiceStop?.serviceMutationAllowed !== false &&
-      !result.steps.some((step) => step.termination === "signal");
-    const failedStep = result.steps.find((step) => step.exitCode !== 0 && !step.advisory);
-    const phase = result.reason ?? "update";
-    const automaticTriage: TriageFailureContext | undefined = eligible
-      ? {
-          kind: "update",
-          phase,
-          error: detail ?? failedStep?.stderrTail ?? failedStep?.stdoutTail ?? phase,
-          // Global exposure, not the candidate checkout, identifies a package-to-Git target.
-          installationRoot:
-            params.installKindChanged && result.mode === "git"
-              ? params.root
-              : (result.root ?? params.root),
-          expectedVersion: params.expectedVersion ?? result.after?.version ?? undefined,
-          gateway:
-            params.shouldRestart &&
-            result.recovery?.serviceRestartSafe !== false &&
-            (params.preManagedServiceStop?.running ||
-              params.preManagedServiceStop?.stopped ||
-              phase === "restart-unhealthy")
-              ? "verify-running"
-              : "preserve",
-        }
-      : undefined;
-    return new UpdateCommandFailure(result, exitCode, detail, options, automaticTriage);
+    return new UpdateCommandFailure(
+      result,
+      exitCode,
+      detail,
+      options,
+      triageAllowed
+        ? resolveAutomaticUpdateTriage(result, detail, { ...params, gateway })
+        : undefined,
+    );
   };
   const printFinalResult = (result: UpdateRunResult) => {
     printResult(result, { ...params.opts, hideSteps: params.showProgress });
@@ -216,6 +188,9 @@ export async function finishUpdate(params: {
       });
       if (service) {
         finalResult.recovery = { ...finalResult.recovery, service };
+        if (service === "healthy" && params.shouldRestart) {
+          gateway = "verify-running";
+        }
         if (service === "failed") {
           finalResult.status = "error";
         }
@@ -630,7 +605,7 @@ export async function finishUpdate(params: {
     });
 
     await restoreWindowsAutoStart(resultWithPostUpdate);
-    const restartOk = await withOwnedManagedUpdateEnv(params.ownedManagedUpdateEnv, async () =>
+    const restartOutcome = await withOwnedManagedUpdateEnv(params.ownedManagedUpdateEnv, async () =>
       maybeRestartService({
         shouldRestart: params.shouldRestart && serviceMutationAllowed,
         result: resultWithPostUpdate,
@@ -650,8 +625,18 @@ export async function finishUpdate(params: {
         timeoutMs: params.updateStepTimeoutMs,
       }),
     );
-    if (!restartOk) {
+    if (restartOutcome !== "ok") {
       triageAllowed = serviceMutationAllowed;
+      // Failed health retains the intended post-repair goal, never restore safety.
+      if (
+        restartOutcome === "restart-health-failed" &&
+        params.shouldRestart &&
+        serviceMutationAllowed &&
+        (params.preManagedServiceStop?.running !== false || params.preManagedServiceStop.stopped) &&
+        !skipLegacyServiceRestart
+      ) {
+        gateway = "verify-running";
+      }
       // The Gateway may already have consumed the notification. Mark only an
       // existing sentinel; recreating it would deliver the update twice.
       await markControlPlaneUpdateRestartSentinelFailureBestEffort({

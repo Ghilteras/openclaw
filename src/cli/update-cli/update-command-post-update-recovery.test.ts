@@ -9,7 +9,6 @@ import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
 
 const mocks = vi.hoisted(() => ({
-  triage: vi.fn(async () => undefined),
   printResult: vi.fn(),
   restart:
     vi.fn<
@@ -22,7 +21,6 @@ const mocks = vi.hoisted(() => ({
   >(async () => undefined),
 }));
 
-vi.mock("../../commands/triage-failure.js", () => ({ triageAfterFailure: mocks.triage }));
 vi.mock("./progress.js", () => ({ printResult: mocks.printResult }));
 vi.mock("./update-command-service.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./update-command-service.js")>()),
@@ -70,6 +68,7 @@ async function finishFailedUpdate(
     failure?: { cause: unknown; detail: string };
     json?: boolean;
     stopped?: boolean;
+    shouldRestart?: boolean;
     windowsTaskAutoStartRecovery?: NonNullable<
       FinishUpdateParams["preManagedServiceStop"]
     >["windowsTaskAutoStartRecovery"];
@@ -99,7 +98,7 @@ async function finishFailedUpdate(
     storedChannel: "stable",
     channel: "stable",
     downgradeRisk: false,
-    shouldRestart: true,
+    shouldRestart: options.shouldRestart ?? true,
     preUpdatePluginInstallRecords: {},
     updateStepTimeoutMs: 1000,
     opts: { json: options.json },
@@ -198,7 +197,8 @@ describe("failed Git update recovery restart", () => {
           installKindChanged: true,
         });
         const failure = recorded.automaticTriage!;
-        expect(await fs.realpath(failure.installationRoot)).toBe(exposed ? candidate : invocation);
+        expect(failure.installationRoot).toBe(invocation);
+        expect(await fs.realpath(invocation)).toBe(exposed ? candidate : invocation);
         expect(failure.gateway).toBe("preserve");
         expect(mocks.printResult.mock.lastCall?.[0].root).toBe(candidate);
         expect(mocks.writeSentinel.mock.lastCall?.[0].result.root).toBe(candidate);
@@ -230,7 +230,6 @@ describe("failed Git update recovery restart", () => {
       expect(mocks.writeSentinel.mock.lastCall?.[0].result.durationMs).toBe(0);
       expect(mocks.printResult).toHaveBeenCalledOnce();
       expect(mocks.printResult.mock.lastCall?.[0]).toMatchObject({ status, durationMs: 200 });
-      expect(mocks.triage).not.toHaveBeenCalled();
     },
   );
 
@@ -259,6 +258,37 @@ describe("failed Git update recovery restart", () => {
     await finishFailedUpdate(failedResult(undefined));
     expect(mocks.restart).not.toHaveBeenCalled();
   });
+
+  it.each(["unsafe restart text", "no restart", "cancelled"])(
+    "does not infer an activation goal from an earlier failure (%s)",
+    async (scenario) => {
+      const failure = await finishFailedUpdate(
+        {
+          ...failedResult({ serviceRestartSafe: false, reason: "runtime-verification-failed" }),
+          reason: "restart-unhealthy",
+          steps:
+            scenario === "cancelled"
+              ? [
+                  {
+                    name: "update",
+                    command: "update",
+                    cwd: "/repo",
+                    durationMs: 1,
+                    exitCode: 1,
+                    termination: "signal",
+                  },
+                ]
+              : [],
+        },
+        { shouldRestart: scenario !== "no restart", stopped: scenario !== "no restart" },
+      );
+      expect(failure.automaticTriage?.gateway).toBe(
+        scenario === "cancelled" ? undefined : "preserve",
+      );
+      expect(failure.result.recovery?.serviceRestartSafe).toBe(false);
+      expect(mocks.restart).not.toHaveBeenCalled();
+    },
+  );
 
   it("retains structured mutation errors without authorizing service recovery", async () => {
     const restoreError = new Error("task enable denied");
@@ -422,6 +452,8 @@ describe("failed Git update recovery restart", () => {
     { childExitCode: 79, restoreFails: false },
     { childExitCode: 80, restoreFails: false },
     { childExitCode: 80, restoreFails: true },
+    { childExitCode: 130, restoreFails: false },
+    { childExitCode: 143, restoreFails: false },
   ])(
     "derives recovery safety from the owner after child exit $childExitCode (autostart failure: $restoreFails)",
     async ({ childExitCode, restoreFails }) => {
@@ -448,13 +480,14 @@ describe("failed Git update recovery restart", () => {
       });
       expect(mocks.restoreWindowsAutoStart).not.toHaveBeenCalled();
       expect(mocks.restart).not.toHaveBeenCalled();
+      expect(failure.automaticTriage).toBeUndefined();
     },
   );
 
-  it("routes a dirty rollback checkout into triage", async () => {
+  it("retains manual triage guidance for a dirty rollback checkout", async () => {
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => undefined);
 
-    await finishFailedUpdate(
+    const failure = await finishFailedUpdate(
       failedResult({ serviceRestartSafe: false, reason: "rollback-checkout-dirty" }),
     );
 
@@ -463,14 +496,14 @@ describe("failed Git update recovery restart", () => {
     expect(output).toContain("Run `openclaw triage`");
     expect(output).toContain("diagnose and repair the installation");
     expect(output).toContain("Keep the gateway stopped until the update succeeds");
-    expect(mocks.triage).not.toHaveBeenCalled();
+    expect(failure.automaticTriage).toBeUndefined();
   });
 
   it.each(["prompt", "artifact"])(
     "leaves a %s capability refusal operator-owned after failed convergence",
     async (owner) => {
       const failure = await finishFailedUpdate({
-        ...failedResult({ serviceRestartSafe: true }),
+        ...failedResult({ serviceRestartSafe: true, version: "2026.8.31" }),
         reason: "post-update-plugins",
         postUpdate: {
           plugins: {
@@ -494,7 +527,6 @@ describe("failed Git update recovery restart", () => {
           },
         },
       });
-      expect(mocks.triage).not.toHaveBeenCalled();
       expect(failure.exitCode).toBe(1);
       expect(failure.automaticTriage).toBeUndefined();
     },
@@ -506,7 +538,6 @@ describe("failed Git update recovery restart", () => {
     "npm lifecycle policy preflight",
   ])("does not auto-repair the %s refusal", async (reason) => {
     const failure = await finishFailedUpdate({ ...failedResult(undefined), mode: "npm", reason });
-    expect(mocks.triage).not.toHaveBeenCalled();
     expect(failure.exitCode).toBe(1);
     expect(failure.automaticTriage).toBeUndefined();
   });

@@ -170,14 +170,22 @@ describe("update failure triage boundary", () => {
     },
   );
 
-  it("admits exactly one owned repair after cleanup with rich evidence and unchanged JSON failure", async () => {
-    const target = await createInstalledTriage();
-    const entry = path.join(target.root, "dist", "index.js");
-    const receiptPath = path.join(target.root, "attempts.jsonl");
-    const installed = await fs.readFile(entry, "utf8");
-    await fs.writeFile(
-      entry,
-      `
+  it.each(["preserve", "verify-running"] as const)(
+    "admits exactly one owned repair after cleanup with unchanged JSON failure (%s)",
+    async (gateway) => {
+      const result: UpdateRunResult = {
+        ...failedUpdate,
+        reason: gateway === "preserve" ? "global-install-failed" : "restart-unhealthy",
+        recovery: { serviceRestartSafe: false, reason: "runtime-verification-failed" },
+        ...(gateway === "verify-running" && { steps: [] }),
+      };
+      const target = await createInstalledTriage();
+      const entry = path.join(target.root, "dist", "index.js");
+      const receiptPath = path.join(target.root, "attempts.jsonl");
+      const installed = await fs.readFile(entry, "utf8");
+      await fs.writeFile(
+        entry,
+        `
       (async () => {
         const { acceptTriageContinuation } = await import(${JSON.stringify(resolveRuntimeWorkerUrl(triageTestRuntimeEntrypoints.continuation).href)});
         const admission = await acceptTriageContinuation();
@@ -186,39 +194,46 @@ describe("update failure triage boundary", () => {
         if (admission) await admission.finish("closed");
       })().catch(error => { console.error(error); process.exitCode = 1; });
     `,
-    );
-    const automaticTriage = {
-      kind: "update" as const,
-      phase: "global-install-failed",
-      error: "ENOSPC",
-      installationRoot: target.root,
-      gateway: "preserve" as const,
-    };
-    await expect(
-      withUpdateFailureTriage({ json: true }, target, async () => {
-        try {
-          defaultRuntime.writeJson(failedUpdate);
-          throw new UpdateCommandFailure(failedUpdate, 1, undefined, undefined, automaticTriage);
-        } finally {
-          await fs.writeFile(path.join(target.root, "released"), "done");
-        }
-      }),
-    ).rejects.toMatchObject({ code: 1 });
-    const attempts = (await fs.readFile(receiptPath, "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(attempts).toEqual([{ admitted: true, failure: automaticTriage }]);
-    const receipt = await readReceipt(target);
-    expect(receipt).toMatchObject({
-      released: true,
-      failure: { result: { reason: "global-install-failed", steps: [{ stderrTail: "ENOSPC" }] } },
-    });
-    expect(receipt.args).toEqual(["triage", "--update-result", expect.any(String)]);
-    expect(defaultRuntime.writeJson).toHaveBeenCalledExactlyOnceWith(failedUpdate);
-    expect(defaultRuntime.log).not.toHaveBeenCalled();
-    expect(defaultRuntime.error).toHaveBeenCalledWith(expect.stringContaining("triage report"));
-  });
+      );
+      const automaticTriage = {
+        kind: "update" as const,
+        phase: result.reason!,
+        error: "ENOSPC",
+        installationRoot: target.root,
+        gateway,
+      };
+      await expect(
+        withUpdateFailureTriage({ json: true }, target, async () => {
+          try {
+            defaultRuntime.writeJson(result);
+            throw new UpdateCommandFailure(result, 1, undefined, undefined, automaticTriage);
+          } finally {
+            await fs.writeFile(path.join(target.root, "released"), "done");
+          }
+        }),
+      ).rejects.toMatchObject({ code: 1 });
+      const attempts = (await fs.readFile(receiptPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(attempts).toEqual([{ admitted: true, failure: automaticTriage }]);
+      const receipt = await readReceipt(target);
+      expect(receipt).toMatchObject({
+        released: true,
+        failure: {
+          result: {
+            reason: result.reason,
+            recovery: result.recovery,
+            steps: gateway === "preserve" ? [{ stderrTail: "ENOSPC" }] : [],
+          },
+        },
+      });
+      expect(receipt.args).toEqual(["triage", "--update-result", expect.any(String)]);
+      expect(defaultRuntime.writeJson).toHaveBeenCalledExactlyOnceWith(result);
+      expect(defaultRuntime.log).not.toHaveBeenCalled();
+      expect(defaultRuntime.error).toHaveBeenCalledWith(expect.stringContaining("triage report"));
+    },
+  );
 
   it("keeps --yes non-interactive and preserves an unexpected updater exception", async () => {
     const target: UpdateTriageTarget & { root: string } = await createInstalledTriage();

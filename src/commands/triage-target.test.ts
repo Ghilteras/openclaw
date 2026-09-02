@@ -346,8 +346,11 @@ describe.skipIf(process.platform === "win32")("embedded triage installation targ
                       }
                     : undefined,
                 );
-                if (fails) await expect(run).rejects.toMatchObject({ code: 1 });
-                else await run;
+                if (fails) {
+                  await expect(run).rejects.toMatchObject({ code: 1 });
+                } else {
+                  await run;
+                }
 
                 expect(runtime.error.mock.calls).toEqual(fails ? [["synthetic run failure"]] : []);
                 expect(runtime.exit.mock.calls).toEqual(fails ? [[1]] : []);

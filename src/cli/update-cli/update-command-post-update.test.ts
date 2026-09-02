@@ -13,7 +13,6 @@ import {
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const mocks = vi.hoisted(() => ({
-  triage: vi.fn(async () => undefined),
   checkCompletionStatus: vi.fn(),
   completePluginUpdate: vi.fn(),
   ensureCompletionCache: vi.fn(),
@@ -26,7 +25,7 @@ const mocks = vi.hoisted(() => ({
   createServiceConfigIO: vi.fn(),
   readServiceState: vi.fn(),
   restartService: vi.fn<typeof import("./update-command-service.js").maybeRestartService>(
-    async () => true,
+    async () => "ok",
   ),
   revalidateService:
     vi.fn<
@@ -39,7 +38,6 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./progress.js", () => ({ printResult: mocks.printResult }));
-vi.mock("../../commands/triage-failure.js", () => ({ triageAfterFailure: mocks.triage }));
 vi.mock("../../config/config.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../config/config.js")>()),
   readConfigFileSnapshot: mocks.readConfig,
@@ -134,6 +132,7 @@ async function finishSuccessfulPackageSwitch(
     sealed?: boolean;
     updateMode?: UpdateRunResult["mode"];
     stoppedForUpdate?: boolean;
+    intentionallyStopped?: boolean;
     windowsTaskAutoStartRecovery?: NonNullable<
       FinishUpdateParams["preManagedServiceStop"]
     >["windowsTaskAutoStartRecovery"];
@@ -159,9 +158,9 @@ async function finishSuccessfulPackageSwitch(
       steps: [],
       durationMs: 1,
     },
-    root: params.packageRoot,
+    root: params.previousRoot,
     previousInstallRoot: params.previousRoot,
-    installKindChanged: !params.restartEnvironment,
+    installKindChanged: params.previousRoot !== params.packageRoot,
     configSnapshot: validConfigSnapshot,
     requestedChannel: null,
     storedChannel: null,
@@ -177,6 +176,7 @@ async function finishSuccessfulPackageSwitch(
     ...(params.restartEnvironment && {
       preManagedServiceStop: {
         stopped: params.stoppedForUpdate ?? true,
+        ...(params.intentionallyStopped && { running: false }),
         windowsTaskAutoStartRecovery: params.windowsTaskAutoStartRecovery,
         ...(params.sealed && {
           serviceUpdateVerdict: {
@@ -238,6 +238,24 @@ describe("successful update finalization ordering", () => {
     expect(mocks.restartService.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.checkCompletionStatus.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
+  });
+
+  it("preserves the Gateway when complete post-core verification fails despite valid config", async () => {
+    mocks.completePluginUpdate.mockResolvedValueOnce({
+      pluginUpdate: { ...successfulPluginUpdate, status: "error" },
+      configSnapshot: validConfigSnapshot,
+    });
+    await expect(finishSuccessfulPackageSwitch()).rejects.toMatchObject({
+      name: "UpdateCommandFailure",
+      exitCode: 1,
+      result: {
+        status: "error",
+        reason: "post-update-plugins",
+        recovery: { serviceRestartSafe: false },
+      },
+      automaticTriage: { gateway: "preserve" },
+    });
+    expect(mocks.restartService).not.toHaveBeenCalled();
   });
 
   it("restarts when completion cache refresh reports failure", async () => {
@@ -317,7 +335,7 @@ describe("successful update finalization ordering", () => {
 
   it("keeps an unhealthy restart blocking before completion refresh", async () => {
     Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-    mocks.restartService.mockResolvedValueOnce(false);
+    mocks.restartService.mockResolvedValueOnce("failed");
 
     await expect(finishSuccessfulPackageSwitch()).rejects.toMatchObject({
       name: "UpdateCommandFailure",
@@ -339,7 +357,7 @@ describe("successful update finalization ordering", () => {
     Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
     mocks.restartService.mockImplementationOnce(async () => {
       now += 200;
-      return true;
+      return "ok";
     });
     mocks.checkCompletionStatus.mockImplementationOnce(async () => {
       now += 300;
@@ -528,6 +546,7 @@ describe("successful update finalization ordering", () => {
         exitCode: 1,
         detail: expect.stringContaining("unlink denied"),
         result: { status: "error", reason: "wrapper-retirement-failed" },
+        automaticTriage: { gateway: "preserve" },
       });
 
       expect(mocks.writeSentinel).toHaveBeenCalledOnce();
@@ -797,76 +816,148 @@ describe("successful update finalization ordering", () => {
         unloaded: false,
       },
       {
+        name: "retains the failed JSON result and repair goal",
+        activated: false,
+        unloaded: false,
+        json: true,
+      },
+      { name: "preserves activation refusal", activated: false, unloaded: false, refused: true },
+      {
+        name: "preserves cancelled activation",
+        activated: false,
+        unloaded: false,
+        cancelled: true,
+      },
+      {
+        name: "keeps package-to-Git original-root provenance",
+        activated: false,
+        unloaded: false,
+        switched: true,
+      },
+      {
+        name: "preserves an intentional stop",
+        activated: false,
+        unloaded: false,
+        intentional: true,
+      },
+      {
         name: "preserves the native context of an unloaded git service",
         activated: true,
         unloaded: true,
       },
-    ])("canonical sealed post-update $name", async ({ activated, unloaded }) => {
-      const serviceEnv = { MANAGED_VALUE: "revalidated" };
-      const programArguments = ["/usr/bin/node", "/tmp/openclaw-update/dist/index.js", "gateway"];
-      mocks.readServiceState.mockResolvedValueOnce({
-        installed: true,
-        loadState: { status: unloaded ? "not-loaded" : "loaded" },
-        env: serviceEnv,
-        command: { programArguments, environment: serviceEnv },
-      });
-      mocks.restartService.mockResolvedValueOnce(activated);
-      const finishing = finishSuccessfulPackageSwitch({
-        previousRoot: "/tmp/openclaw-update",
-        packageRoot: "/tmp/openclaw-update",
-        restartEnvironment: { ...process.env },
-        sealed: true,
-        updateMode: unloaded ? "git" : "npm",
-        stoppedForUpdate: !unloaded,
-      });
-      if (activated) {
-        await finishing;
-      } else {
-        await expect(finishing).rejects.toMatchObject({
-          name: "UpdateCommandFailure",
-          exitCode: 1,
-          result: { status: "error", reason: "restart-unhealthy" },
+    ])(
+      "canonical sealed post-update $name",
+      async ({ activated, unloaded, refused, cancelled, switched, intentional, json }) => {
+        const root = await fs.realpath(tempDirs.make("openclaw-finalizer-activation-"));
+        const previousRoot = switched ? `${root}-package` : root;
+        const git = unloaded || switched;
+        const serviceEnv = { HOME: identity.home, MANAGED_VALUE: "revalidated" };
+        const programArguments = [process.execPath, path.join(root, "dist", "index.js"), "gateway"];
+        mocks.readServiceState.mockResolvedValueOnce({
+          installed: true,
+          loadState: { status: unloaded ? "not-loaded" : "loaded" },
+          env: serviceEnv,
+          command: { programArguments, environment: serviceEnv },
         });
-      }
+        if (activated) {
+          mocks.restartService.mockResolvedValueOnce("ok");
+        } else {
+          await fs.mkdir(path.join(root, "dist"));
+          await fs.writeFile(
+            path.join(root, "package.json"),
+            '{"name":"openclaw","version":"2026.4.24"}',
+          );
+          const response = JSON.stringify({
+            action: "restart",
+            ok: false,
+            error: "injected restart failure",
+            ...(refused ? {} : { result: "restart-health-failed" }),
+          });
+          await fs.writeFile(
+            path.join(root, "dist", "index.js"),
+            `require("node:fs").writeFileSync(${JSON.stringify(path.join(root, "restart-called"))}, JSON.stringify(process.argv.slice(2))); process.stdout.write(${JSON.stringify(response)}); ${cancelled ? 'process.kill(process.pid, "SIGTERM");' : "process.exitCode = 1;"}`,
+          );
+          const actual = await vi.importActual<typeof import("./update-command-service.js")>(
+            "./update-command-service.js",
+          );
+          mocks.restartService.mockImplementationOnce(actual.maybeRestartService);
+        }
+        const finishing = finishSuccessfulPackageSwitch({
+          previousRoot,
+          packageRoot: root,
+          restartEnvironment: { ...process.env },
+          sealed: true,
+          updateMode: git ? "git" : "npm",
+          stoppedForUpdate: !unloaded && !intentional,
+          intentionallyStopped: intentional,
+          json,
+        });
+        if (activated) {
+          await finishing;
+        } else {
+          const failure = await finishing.catch((error: unknown) => error);
+          expect(
+            failure,
+            vi.mocked(defaultRuntime.error).mock.calls.flat().join("\n"),
+          ).toMatchObject({
+            name: "UpdateCommandFailure",
+            exitCode: 1,
+            result: {
+              status: "error",
+              reason: "restart-unhealthy",
+              recovery: { serviceRestartSafe: false, reason: "runtime-verification-failed" },
+            },
+            automaticTriage: {
+              gateway: refused || cancelled || intentional ? "preserve" : "verify-running",
+              installationRoot: switched ? previousRoot : root,
+            },
+          });
+          expect(JSON.parse(await fs.readFile(path.join(root, "restart-called"), "utf8"))).toEqual([
+            "gateway",
+            "restart",
+            "--preserve-definition",
+            "--json",
+          ]);
+        }
 
-      expect(mocks.revalidateService).toHaveBeenCalledOnce();
-      expect(mocks.prepareRestartScript).not.toHaveBeenCalled();
-      expect(mocks.restartService).toHaveBeenCalledWith(
-        expect.objectContaining({
-          shouldRestart: true,
-          refreshServiceEnv: false,
-          serviceEnv,
-          serviceUpdateVerdict: {
-            kind: "owned",
-            root: "/tmp/openclaw-update",
-            refreshDefinition: false,
-            fingerprint: "sealed",
-          },
-          channel: unloaded ? "dev" : "stable",
-          result: expect.objectContaining({
-            after: { version: "2026.4.24", ...(unloaded ? { buildId: "new-build" } : {}) },
+        expect(mocks.revalidateService).toHaveBeenCalledOnce();
+        expect(mocks.prepareRestartScript).not.toHaveBeenCalled();
+        expect(mocks.restartService).toHaveBeenCalledWith(
+          expect.objectContaining({
+            shouldRestart: true,
+            refreshServiceEnv: false,
+            serviceEnv,
+            serviceUpdateVerdict: {
+              kind: "owned",
+              root,
+              refreshDefinition: false,
+              fingerprint: "sealed",
+            },
+            channel: git ? "dev" : "stable",
+            result: expect.objectContaining({
+              after: { version: "2026.4.24", ...(git ? { buildId: "new-build" } : {}) },
+            }),
+            requireRunningServiceAfterRestart: !unloaded && !intentional,
           }),
-          requireRunningServiceAfterRestart: !unloaded,
-        }),
-      );
-      expect(mocks.revalidateService.mock.invocationCallOrder[0]).toBeLessThan(
-        mocks.restartService.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-      );
-      if (activated) {
-        expect(mocks.triage).not.toHaveBeenCalled();
-        expect(mocks.writeSentinel).toHaveBeenCalledTimes(2);
-        expect(mocks.restartService.mock.invocationCallOrder[0]).toBeLessThan(
-          mocks.writeSentinel.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
         );
-      } else {
-        expect(mocks.writeSentinel).toHaveBeenCalledOnce();
-        expectFailureReport("restart-unhealthy");
-        expect(mocks.markSentinelFailure).toHaveBeenCalledWith(
-          expect.objectContaining({ reason: "restart-unhealthy" }),
+        expect(mocks.revalidateService.mock.invocationCallOrder[0]).toBeLessThan(
+          mocks.restartService.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
         );
-        expect(defaultRuntime.exit).not.toHaveBeenCalled();
-      }
-    });
+        if (activated) {
+          expect(mocks.writeSentinel).toHaveBeenCalledTimes(2);
+          expect(mocks.restartService.mock.invocationCallOrder[0]).toBeLessThan(
+            mocks.writeSentinel.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+          );
+        } else {
+          expect(mocks.writeSentinel).toHaveBeenCalledOnce();
+          expectFailureReport("restart-unhealthy", json);
+          expect(mocks.markSentinelFailure).toHaveBeenCalledWith(
+            expect.objectContaining({ reason: "restart-unhealthy" }),
+          );
+          expect(defaultRuntime.exit).not.toHaveBeenCalled();
+        }
+      },
+    );
 
     it("leaves native service management blocked when HOME is relocated", async () => {
       const home = tempDirs.make("openclaw-post-update-relocated-home-");

@@ -10,7 +10,9 @@ export function registerTriageMaintenancePolicyTests(
 ) {
   it.each([
     "live triage",
+    "live triage handoff",
     "updater",
+    "updater handoff",
     "copied env",
     "stale executor",
     "stale helper",
@@ -28,22 +30,21 @@ export function registerTriageMaintenancePolicyTests(
       version: 2,
       executor: { pid: 42420, startIdentity: "10" },
       helper: { pid: 42421, startIdentity: "20" },
-      action:
-        scenario === "updater"
-          ? { kind: "update" }
-          : {
-              kind: "triage",
-              phase: scenario === "cancelled" ? "closing" : "running",
-              lifetime: {
-                kind: "native",
-                unit: scenario === "foreign unit" ? "other.service" : "openclaw-gateway.service",
-                scope: "fixture.scope",
-                placement:
-                  scenario === "unadmitted"
-                    ? { kind: "pending" }
-                    : { kind: "attached", invocation: "a".repeat(32) },
-              },
+      action: scenario.startsWith("updater")
+        ? { kind: "update" }
+        : {
+            kind: "triage",
+            phase: scenario === "cancelled" ? "closing" : "running",
+            lifetime: {
+              kind: "native",
+              unit: scenario === "foreign unit" ? "other.service" : "openclaw-gateway.service",
+              scope: "fixture.scope",
+              placement:
+                scenario === "unadmitted"
+                  ? { kind: "pending" }
+                  : { kind: "attached", invocation: "a".repeat(32) },
             },
+          },
     };
     const read = vi
       .spyOn(handoffLease, "readManagedServiceUpdateHandoffLease")
@@ -66,29 +67,43 @@ export function registerTriageMaintenancePolicyTests(
           : 20,
     );
     const inheritedHandoff = captureEnv(["OPENCLAW_UPDATE_RUN_HANDOFF"]);
-    process.env.OPENCLAW_UPDATE_RUN_HANDOFF = "1";
+    if (scenario.endsWith("handoff")) {
+      delete process.env.OPENCLAW_UPDATE_RUN_HANDOFF;
+    } else {
+      process.env.OPENCLAW_UPDATE_RUN_HANDOFF = "1";
+    }
     if (scenario === "late triage") {
       read.mockReturnValueOnce(null);
     }
+    const handoff = vi.fn(async () => true);
     try {
       const result = maybeStopManagedServiceBeforeMutableUpdate({
         root,
         updateInstallKind: "package",
         shouldRestart: true,
         jsonMode: true,
+        ...(scenario.endsWith("handoff") ? { handoffFromGateway: handoff } : {}),
       });
-      if (scenario === "late triage") {
+      if (scenario === "updater handoff") {
+        await expect(result).rejects.toMatchObject({ name: "UpdateCommandAbort" });
+        expect(handoff).toHaveBeenCalledOnce();
+      } else if (scenario === "late triage") {
         await expect(result).rejects.toThrow("inside its automatic triage process tree");
-      } else if (scenario === "live triage") {
+      } else if (scenario.startsWith("live triage")) {
         expect(await result).toMatchObject({
           stopped: false,
           blockMessage: expect.stringContaining("outside automatic triage"),
         });
+        expect(handoff).not.toHaveBeenCalled();
       } else {
         expect(await result).toMatchObject({ stopped: true });
       }
       expect(events.filter((event) => event === "native stop")).toHaveLength(
-        scenario === "live triage" || scenario === "late triage" ? 0 : 1,
+        scenario.startsWith("live triage") ||
+          scenario === "late triage" ||
+          scenario.endsWith("handoff")
+          ? 0
+          : 1,
       );
     } finally {
       inheritedHandoff.restore();
