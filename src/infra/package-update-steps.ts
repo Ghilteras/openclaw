@@ -733,7 +733,7 @@ async function pathEntriesMatch(left: string, right: string): Promise<boolean> {
 async function fingerprintPackageTree(packageRoot: string): Promise<string | null> {
   const fingerprint = createHash("sha256");
   const hardlinkOwners = new Map<string, string>();
-  const visitedCanonicalEntries = new Set<string>();
+  const visitedTargetPaths = new Set<string>();
   const canonicalPackageRoot = await fs.realpath(packageRoot).catch(() => null);
   if (!canonicalPackageRoot) {
     return null;
@@ -765,6 +765,7 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
       }
     }
     const stat = await fs.lstat(entryPath);
+    visitedTargetPaths.add(path.resolve(entryPath));
     // ctime changes when ownership, ACLs, capabilities, or extended attributes
     // change. The package root is checked separately before its rollback rename.
     const metadata = [
@@ -776,9 +777,15 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
     if (stat.isSymbolicLink()) {
       const linkTarget = await fs.readlink(entryPath);
       fingerprint.update(`${JSON.stringify([relativePath, "symlink", ...metadata, linkTarget])}\n`);
-      let canonicalTarget: string;
+      const immediateTarget = path.resolve(path.dirname(entryPath), linkTarget);
+      const targetKey = path.resolve(immediateTarget);
+      if (visitedTargetPaths.has(targetKey)) {
+        fingerprint.update(`${JSON.stringify([relativePath, "symlink-target-visited"])}\n`);
+        return true;
+      }
+      visitedTargetPaths.add(targetKey);
       try {
-        canonicalTarget = await fs.realpath(entryPath);
+        await fs.lstat(immediateTarget);
       } catch (error) {
         const unresolvedCode = hasErrnoCode(error, "ENOENT")
           ? "ENOENT"
@@ -795,18 +802,13 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
         }
         throw error;
       }
-      if (visitedCanonicalEntries.has(canonicalTarget)) {
-        fingerprint.update(`${JSON.stringify([relativePath, "symlink-target-visited"])}\n`);
-        return true;
-      }
-      visitedCanonicalEntries.add(canonicalTarget);
+      const canonicalTarget = await fs.realpath(immediateTarget).catch(() => targetKey);
       return await visit(
-        canonicalTarget,
+        immediateTarget,
         `${relativePath}/<effective-target>`,
         external || isExternalTarget(canonicalTarget),
       );
     }
-    visitedCanonicalEntries.add(await fs.realpath(entryPath));
     if (stat.isFile()) {
       let hardlinkOwner: string | null = null;
       if (stat.nlink > 1 && stat.ino !== 0) {

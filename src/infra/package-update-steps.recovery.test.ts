@@ -698,7 +698,7 @@ describe("package update recovery safety", () => {
   );
 
   it.runIf(process.platform !== "win32")(
-    "does not verify rollback when candidate Doctor alters a nested symlink target",
+    "does not verify rollback when candidate Doctor alters an intermediate package symlink",
     async () => {
       await withTestDir(
         { prefix: "openclaw-package-recovery-altered-nested-link-" },
@@ -706,9 +706,14 @@ describe("package update recovery safety", () => {
           const globalRoot = path.join(base, "prefix", "lib", "node_modules");
           const packageRoot = path.join(globalRoot, "openclaw");
           const externalEntry = path.join(base, "external-runtime.js");
+          const replacementEntry = path.join(base, "replacement-runtime.js");
+          const externalAlias = path.join(base, "external-alias.js");
+          const packageLink = path.join(packageRoot, "dist", "external-runtime.js");
           await writePackageRoot(packageRoot, "1.0.0");
           await fs.writeFile(externalEntry, "original external runtime\n", "utf8");
-          await fs.symlink(externalEntry, path.join(packageRoot, "dist", "external-runtime.js"));
+          await fs.writeFile(replacementEntry, "original external runtime\n", "utf8");
+          await fs.symlink(externalEntry, externalAlias);
+          await fs.symlink(externalAlias, packageLink);
 
           const result = await runGlobalPackageUpdateSteps({
             installTarget: createNpmTarget(globalRoot),
@@ -735,7 +740,8 @@ describe("package update recovery safety", () => {
             },
             postVerifyStep: async (candidateRoot) => {
               expect(candidateRoot).toBe(packageRoot);
-              await fs.writeFile(externalEntry, "altered external runtime\n", "utf8");
+              await fs.unlink(externalAlias);
+              await fs.symlink(replacementEntry, externalAlias);
               return {
                 name: "openclaw doctor",
                 command: "openclaw doctor --non-interactive --fix",
@@ -756,9 +762,10 @@ describe("package update recovery safety", () => {
           expect(result.failedStep?.stderrTail).toContain(
             "rollback verification failed: restored package tree does not match backup",
           );
-          await expect(fs.readFile(externalEntry, "utf8")).resolves.toBe(
-            "altered external runtime\n",
+          await expect(fs.readFile(packageLink, "utf8")).resolves.toBe(
+            "original external runtime\n",
           );
+          await expect(fs.readlink(externalAlias)).resolves.toBe(replacementEntry);
         },
       );
     },
