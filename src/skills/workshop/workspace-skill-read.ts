@@ -51,8 +51,11 @@ export function listWritableWorkshopSkillSummaries(
     dir: workshopSkillsDir(options),
     source: "openclaw-workshop",
     config: options.config,
+    ignoreRootSkill: true,
   });
+  const skillsRoot = path.resolve(resolveWorkshopSkillsDir(options.env));
   return records
+    .filter(({ skill }) => path.resolve(skill.baseDir) !== skillsRoot)
     .map(({ skill }) => ({
       name: skill.name,
       description: skill.description,
