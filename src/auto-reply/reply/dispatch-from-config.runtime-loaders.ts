@@ -1,6 +1,6 @@
-import { createLazyImportLoader } from "../../shared/lazy-promise.js";
+import { createLazyImportLoader, createLazyPromise } from "../../shared/lazy-promise.js";
 
-const routeReplyRuntimeLoader = createLazyImportLoader(() => import("./route-reply.runtime.js"));
+export const loadRouteReplyRuntime = createLazyPromise(() => import("./route-reply.runtime.js"));
 const getReplyFromConfigRuntimeLoader = createLazyImportLoader(
   () => import("./get-reply-from-config.runtime.js"),
 );
@@ -15,10 +15,6 @@ const runtimePluginsLoader = createLazyImportLoader(
 const preparedModelRuntimeLoader = createLazyImportLoader(
   () => import("../../agents/prepared-model-runtime.js"),
 );
-
-export function loadRouteReplyRuntime() {
-  return routeReplyRuntimeLoader.load();
-}
 
 export function loadGetReplyFromConfigRuntime() {
   return getReplyFromConfigRuntimeLoader.load();

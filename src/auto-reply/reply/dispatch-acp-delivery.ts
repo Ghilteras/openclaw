@@ -12,7 +12,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { createLazyImportLoader } from "../../shared/lazy-promise.js";
+import { createLazyImportLoader, createLazyPromise } from "../../shared/lazy-promise.js";
 import {
   buildCaptionedFinalTextFallback,
   cleanDeferredFinalText,
@@ -44,7 +44,7 @@ import {
 } from "./reply-threading.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
 
-const routeReplyRuntimeLoader = createLazyImportLoader(() => import("./route-reply.runtime.js"));
+const loadRouteReplyRuntime = createLazyPromise(() => import("./route-reply.runtime.js"));
 const dispatchAcpTtsRuntimeLoader = createLazyImportLoader(
   () => import("../../tts/tts.runtime.js"),
 );
@@ -54,10 +54,6 @@ const channelPluginRuntimeLoader = createLazyImportLoader(
 const messageActionRuntimeLoader = createLazyImportLoader(
   () => import("../../infra/outbound/message-action-runner.js"),
 );
-
-function loadRouteReplyRuntime() {
-  return routeReplyRuntimeLoader.load();
-}
 
 function loadDispatchAcpTtsRuntime() {
   return dispatchAcpTtsRuntimeLoader.load();
