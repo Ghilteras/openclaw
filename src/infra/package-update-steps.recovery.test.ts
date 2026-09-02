@@ -351,6 +351,80 @@ describe("package update recovery safety", () => {
     },
   );
 
+  it("verifies rollback after the old package is parked through copy fallback", async () => {
+    await withTestDir({ prefix: "openclaw-package-recovery-backup-exdev-" }, async (base) => {
+      const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+      const packageRoot = path.join(globalRoot, "openclaw");
+      await writePackageRoot(packageRoot, "1.0.0");
+
+      const rename = fs.rename.bind(fs);
+      let forcedCopyFallback = false;
+      const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (...args) => {
+        const [from, to] = args;
+        if (
+          !forcedCopyFallback &&
+          String(from) === packageRoot &&
+          path.basename(String(to)).startsWith(".openclaw.package-backup-")
+        ) {
+          forcedCopyFallback = true;
+          throw Object.assign(new Error("cross-device package backup"), { code: "EXDEV" });
+        }
+        return await rename(...args);
+      });
+
+      let result: Awaited<ReturnType<typeof runGlobalPackageUpdateSteps>>;
+      try {
+        result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: async ({ name, argv }) => {
+            const stagePrefix = argv[argv.indexOf("--prefix") + 1];
+            if (!stagePrefix) {
+              throw new Error("missing stage prefix");
+            }
+            await writePackageRoot(
+              path.join(stagePrefix, "lib", "node_modules", "openclaw"),
+              "2.0.0",
+            );
+            return {
+              name,
+              command: argv.join(" "),
+              cwd: stagePrefix,
+              durationMs: 0,
+              exitCode: 0,
+            };
+          },
+          postVerifyStep: async (candidateRoot) => ({
+            name: "openclaw doctor",
+            command: "openclaw doctor --non-interactive --fix",
+            cwd: candidateRoot,
+            durationMs: 0,
+            exitCode: 1,
+            stderrTail: "doctor rejected candidate",
+          }),
+          timeoutMs: 1000,
+        });
+      } finally {
+        renameSpy.mockRestore();
+      }
+
+      expect(forcedCopyFallback).toBe(true);
+      expect(result.afterVersion).toBe("1.0.0");
+      expect(result.recovery).toEqual({
+        serviceRestartSafe: false,
+        reason: "runtime-verification-failed",
+        packageRollbackVerified: true,
+      });
+      await expect(fs.readFile(path.join(packageRoot, "dist", "index.js"), "utf8")).resolves.toBe(
+        "export {};\n",
+      );
+      expect((await fs.readdir(globalRoot)).filter((entry) => entry.startsWith("."))).toEqual([]);
+    });
+  });
+
   it("retains launcher backup evidence when post-Doctor rollback fails", async () => {
     await withTestDir({ prefix: "openclaw-package-recovery-failed-rollback-" }, async (base) => {
       const prefix = path.join(base, "prefix");
