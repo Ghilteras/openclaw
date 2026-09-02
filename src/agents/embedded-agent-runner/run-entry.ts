@@ -157,23 +157,26 @@ function preserveFollowupResultForDelivery(
   };
 }
 
-function resolveTerminalStatus(params: {
+function resolveTerminalOutcome(params: {
   result: EmbeddedAgentRunResult;
   fallbackExhausted: boolean;
-}): "ok" | "error" | "timeout" {
+}): EmbeddedAgentRunEntryTerminal["outcome"] {
   const meta = params.result.meta;
-  if (meta.stopReason === "timeout" || meta.timeoutPhase) {
-    return "timeout";
-  }
-  if (
+  const timedOut = meta.stopReason === "timeout" || Boolean(meta.timeoutPhase);
+  const failed =
     params.fallbackExhausted ||
     meta.aborted === true ||
-    meta.error ||
-    meta.stopReason === "error"
-  ) {
-    return "error";
-  }
-  return "ok";
+    Boolean(meta.error) ||
+    meta.stopReason === "error";
+  const status = timedOut ? "timeout" : failed ? "error" : "ok";
+  return buildAgentRunTerminalOutcome({
+    status,
+    error: meta.error?.message,
+    stopReason: meta.stopReason,
+    livenessState: meta.livenessState,
+    timeoutPhase: meta.timeoutPhase,
+    providerStarted: meta.providerStarted,
+  });
 }
 
 function canAdvanceContextEngineTurn(params: {
@@ -196,7 +199,7 @@ function canAdvanceContextEngineTurn(params: {
 
 function mergeRunEntryExecutionTrace<T extends EmbeddedAgentRunResult>(params: {
   result: T;
-  outcome: "completed" | "exhausted";
+  terminalStatus: EmbeddedAgentRunEntryTerminal["outcome"]["status"];
   provider: string;
   model: string;
   requestedProvider: string;
@@ -205,9 +208,9 @@ function mergeRunEntryExecutionTrace<T extends EmbeddedAgentRunResult>(params: {
 }): T {
   const currentTrace = params.result.meta.executionTrace;
   const winnerProvider =
-    params.outcome === "completed" ? (currentTrace?.winnerProvider ?? params.provider) : undefined;
+    params.terminalStatus === "ok" ? (currentTrace?.winnerProvider ?? params.provider) : undefined;
   const winnerModel =
-    params.outcome === "completed" ? (currentTrace?.winnerModel ?? params.model) : undefined;
+    params.terminalStatus === "ok" ? (currentTrace?.winnerModel ?? params.model) : undefined;
   const outerAttempts: TraceAttempt[] = params.fallbackAttempts.map((attempt) => ({
     provider: attempt.provider,
     model: attempt.model,
@@ -270,19 +273,12 @@ function mergeRunEntryExecutionTrace<T extends EmbeddedAgentRunResult>(params: {
 
 function buildTerminal(params: {
   result: EmbeddedAgentRunResult;
-  fallbackExhausted: boolean;
+  outcome: EmbeddedAgentRunEntryTerminal["outcome"];
   behavior: RunEntryBehavior;
   runId: string;
 }): EmbeddedAgentRunEntryTerminal {
   const meta = params.result.meta;
-  const outcome = buildAgentRunTerminalOutcome({
-    status: resolveTerminalStatus(params),
-    error: meta.error?.message,
-    stopReason: meta.stopReason,
-    livenessState: meta.livenessState,
-    timeoutPhase: meta.timeoutPhase,
-    providerStarted: meta.providerStarted,
-  });
+  const outcome = params.outcome;
   let terminalReply =
     normalizeAgentRunTerminalReplySnapshot(meta.terminalReply) ??
     buildAgentRunTerminalReplySnapshot({
@@ -548,9 +544,14 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
         : fallbackResult.result.result;
     const outcome =
       fallbackResult.outcome === "exhausted" ? ("exhausted" as const) : ("completed" as const);
+    // A completed fallback search can still return a failed or interrupted run.
+    const terminalOutcome = resolveTerminalOutcome({
+      result: candidateResult,
+      fallbackExhausted: outcome === "exhausted",
+    });
     const result = mergeRunEntryExecutionTrace({
       result: candidateResult,
-      outcome,
+      terminalStatus: terminalOutcome.status,
       provider: fallbackResult.provider,
       model: fallbackResult.model,
       requestedProvider: params.selection.provider,
@@ -564,7 +565,7 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
     };
     const terminal = buildTerminal({
       result,
-      fallbackExhausted: settledResult.outcome === "exhausted",
+      outcome: terminalOutcome,
       behavior: params.behavior,
       runId: params.identity.runId,
     });
