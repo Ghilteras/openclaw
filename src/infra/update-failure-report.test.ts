@@ -131,6 +131,27 @@ describe("update failure report", () => {
     }
   });
 
+  it("reports a verified package rollback separately from restart safety", async () => {
+    const home = tempDirs.make("openclaw-update-report-package-rollback-");
+    const prepared = await prepareUpdateFailureReport(
+      {
+        attemptId: "attempt-package-rollback",
+        result: failedUpdate({
+          recovery: {
+            packageRollbackVerified: true,
+            reason: "runtime-verification-failed",
+            serviceRestartSafe: false,
+          },
+        }),
+      },
+      { stateDir: path.join(home, ".openclaw") },
+    );
+
+    expect(prepared.body).toContain(
+      "Rollback outcome: package rollback verified; service restart not verified (runtime-verification-failed)",
+    );
+  });
+
   it("submits once and rejects a duplicate click for the same attempt", async () => {
     const stateDir = tempDirs.make("openclaw-update-report-");
     const prepared = await prepareUpdateFailureReport(
@@ -1083,6 +1104,112 @@ describe("update failure report", () => {
       url: "https://github.com/openclaw/openclaw/issues/123",
     });
     expect(createIssue).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers retryability after the definitely-unstarted state transition fails", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-issue-create-retryable-recovery", result: failedUpdate() },
+      { stateDir },
+    );
+    const issueUrl = "https://github.com/openclaw/openclaw/issues/123";
+    const createIssue = vi
+      .fn()
+      .mockImplementationOnce(
+        async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+          await hooks.afterAuthPreflight?.();
+          await hooks.beforeIssueCreate?.();
+          return {
+            issueCreateStarted: false as const,
+            message: "spawn gh EMFILE",
+            ok: false as const,
+            retryable: true as const,
+          };
+        },
+      )
+      .mockImplementationOnce(
+        async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+          await hooks.afterAuthPreflight?.();
+          await hooks.beforeIssueCreate?.();
+          return { ok: true as const, url: issueUrl };
+        },
+      );
+    const finalizeReceipt = vi
+      .fn(finalizeUpdateFailureReportReceipt)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false);
+
+    const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      finalizeReceipt,
+      stateDir,
+    });
+    expect(first).toMatchObject({ status: "retryable" });
+    expect(
+      readUpdateFailureReportReceipt(prepared.attemptId, {
+        OPENCLAW_STATE_DIR: stateDir,
+      }),
+    ).toMatchObject({ status: "pending" });
+    if (process.platform !== "win32") {
+      expect((await fs.stat(`${prepared.savedReportPath}.result.json`)).mode & 0o777).toBe(0o600);
+    }
+
+    const reconciled = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      stateDir,
+    });
+    expect(reconciled).toMatchObject({ status: "retryable" });
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(
+      readUpdateFailureReportReceipt(prepared.attemptId, {
+        OPENCLAW_STATE_DIR: stateDir,
+      }),
+    ).toMatchObject({ status: "retryable" });
+    await expect(fs.stat(`${prepared.savedReportPath}.result.json`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    const retried = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      stateDir,
+    });
+    expect(retried).toMatchObject({ status: "created", url: issueUrl });
+    expect(createIssue).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not replay when definitely-unstarted retry state cannot be persisted", async () => {
+    const stateDir = tempDirs.make("openclaw-update-report-");
+    const prepared = await prepareUpdateFailureReport(
+      { attemptId: "attempt-issue-create-unfenced-retry", result: failedUpdate() },
+      { stateDir },
+    );
+    const createIssue = vi.fn(
+      async (_issue: SanitizedGithubIssue, hooks: GithubIssueCreateAsyncHooks) => {
+        await hooks.afterAuthPreflight?.();
+        await hooks.beforeIssueCreate?.();
+        return {
+          issueCreateStarted: false as const,
+          message: "spawn gh EAGAIN",
+          ok: false as const,
+          retryable: true as const,
+        };
+      },
+    );
+
+    const first = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      finalizeReceipt: () => false,
+      stateDir,
+      writeRecovery: async () => false,
+    });
+    const second = await submitUpdateFailureReport(prepared, prepared.previewDigest, {
+      createIssue,
+      stateDir,
+    });
+
+    expect(first).toMatchObject({ status: "pending" });
+    expect(second).toMatchObject({ status: "pending" });
+    expect(createIssue).toHaveBeenCalledOnce();
   });
 
   it("requires the submitted body to match the reviewed preview", async () => {

@@ -183,6 +183,12 @@ function resolveRollbackOutcome(
     return "verified safe to restart";
   }
   if (result.recovery?.serviceRestartSafe === false) {
+    if (result.recovery.packageRollbackVerified === true) {
+      return sanitizeReportField(
+        `package rollback verified; service restart not verified (${result.recovery.reason})`,
+        context,
+      );
+    }
     return sanitizeReportField(`not verified (${result.recovery.reason})`, context);
   }
   return "not recorded";
@@ -404,6 +410,13 @@ function resultFromExistingReceipt(
       status: "retryable",
     };
   }
+  if (receipt?.status === "retryable") {
+    return {
+      message: "No GitHub issue submission was started. This report can be retried.",
+      savedReportPath,
+      status: "retryable",
+    };
+  }
   return {
     status: "duplicate",
     savedReportPath,
@@ -453,8 +466,10 @@ export async function submitUpdateFailureReport(
       throw new Error("Saved update report fallback does not match the reviewed report.");
     }
     let currentReceipt: UpdateFailureReportReceipt | null = null;
+    let receiptReadSucceeded = false;
     try {
       currentReceipt = readReceipt(prepared.attemptId, stateEnv);
+      receiptReadSucceeded = true;
     } catch {
       // A durable terminal record remains authoritative while the state database is unavailable.
     }
@@ -465,35 +480,50 @@ export async function submitUpdateFailureReport(
     const finalized = retryUpdateReportStateWrite(() =>
       finalizeReceipt(prepared.attemptId, recovered, stateEnv),
     );
-    if (
+    const recoveryMatched =
       finalized ||
       tryMatchUpdateFailureReportRecovery(recovered, () =>
         readReceipt(prepared.attemptId, stateEnv),
-      )
-    ) {
+      );
+    if (recoveryMatched) {
       await discardUpdateFailureReportRecoveryBestEffort(prepared.savedReportPath);
     }
-    if (recovered.status === "fallback") {
+    if (recovered.status === "retryable") {
+      if (!recoveryMatched && receiptReadSucceeded && currentReceipt === null) {
+        await discardUpdateFailureReportRecoveryBestEffort(prepared.savedReportPath);
+      } else {
+        return {
+          message: "No GitHub issue submission was started. This report can be retried.",
+          savedReportPath: prepared.savedReportPath,
+          status: "retryable",
+        };
+      }
+    } else if (recovered.status === "fallback") {
       return {
         fallbackUrl: recovered.fallbackUrl,
         message: "A saved prefilled browser report is ready.",
         savedReportPath: prepared.savedReportPath,
         status: "fallback",
       };
+    } else {
+      await discardSavedUpdateFailureReportBestEffort(
+        prepared,
+        { reportCreated: false, reportDirCreated: false },
+        true,
+      );
+      return {
+        savedReportPath: prepared.savedReportPath,
+        status: "created",
+        url: recovered.url,
+      };
     }
-    await discardSavedUpdateFailureReportBestEffort(
-      prepared,
-      { reportCreated: false, reportDirCreated: false },
-      true,
-    );
-    return {
-      savedReportPath: prepared.savedReportPath,
-      status: "created",
-      url: recovered.url,
-    };
   }
   const existingReceipt = readReceipt(prepared.attemptId, stateEnv);
-  if (existingReceipt && existingReceipt.status !== "preparing") {
+  if (
+    existingReceipt &&
+    existingReceipt.status !== "preparing" &&
+    existingReceipt.status !== "retryable"
+  ) {
     if (existingReceipt.status === "created") {
       await discardSavedUpdateFailureReportBestEffort(
         prepared,
@@ -649,24 +679,26 @@ export async function submitUpdateFailureReport(
     };
   }
   if (!("fallbackUrl" in created)) {
-    const preparationRefreshed = retryUpdateReportStateWrite(() =>
-      (options.refreshPreparation ?? refreshUpdateFailureReportReceiptPreparation)(
-        prepared.attemptId,
-        reservationId,
-        stateEnv,
-      ),
+    const receipt: UpdateFailureReportRecovery = {
+      reservationId,
+      status: "retryable",
+    };
+    const retryableFinalized = retryUpdateReportStateWrite(() =>
+      finalizeReceipt(prepared.attemptId, receipt, stateEnv),
     );
-    if (!preparationRefreshed) {
-      return resultFromExistingReceipt(
-        readReceipt(prepared.attemptId, stateEnv),
+    const retryableRecovered =
+      retryableFinalized ||
+      (await (options.writeRecovery ?? writeUpdateFailureReportRecovery)(
         prepared.savedReportPath,
-      );
-    }
-    if (!cleanupOwnedPreparation()) {
-      return resultFromExistingReceipt(
-        readReceipt(prepared.attemptId, stateEnv),
-        prepared.savedReportPath,
-      );
+        receipt,
+      ).catch(() => false));
+    if (!retryableRecovered) {
+      return {
+        message:
+          "GitHub issue creation did not start, but retry state could not be saved. Do not retry this report yet.",
+        savedReportPath: prepared.savedReportPath,
+        status: "pending",
+      };
     }
     return {
       message: sanitizeReportField(created.message, context),

@@ -6,7 +6,8 @@ import type { UpdateFailureReportReceipt } from "./update-failure-report-receipt
 
 export type UpdateFailureReportRecovery =
   | { reservationId: string; status: "created"; url: string }
-  | { fallbackUrl: string; reservationId: string; status: "fallback" };
+  | { fallbackUrl: string; reservationId: string; status: "fallback" }
+  | { reservationId: string; status: "retryable" };
 
 export function updateFailureReportRecoveryMatchesReceipt(
   recovery: UpdateFailureReportRecovery,
@@ -17,7 +18,9 @@ export function updateFailureReportRecoveryMatchesReceipt(
   }
   return recovery.status === "created"
     ? recovery.url === receipt.url
-    : recovery.fallbackUrl === receipt.fallbackUrl;
+    : recovery.status === "fallback"
+      ? recovery.fallbackUrl === receipt.fallbackUrl
+      : true;
 }
 
 export function tryMatchUpdateFailureReportRecovery(
@@ -119,6 +122,10 @@ export async function readUpdateFailureReportRecovery(
       reservationId: value.reservationId,
       status: "fallback",
     };
+  }
+  if (value.status === "retryable") {
+    await syncRecoveryDirectory(savedReportPath);
+    return { reservationId: value.reservationId, status: "retryable" };
   }
   throw new Error("Saved update report recovery is invalid.");
 }

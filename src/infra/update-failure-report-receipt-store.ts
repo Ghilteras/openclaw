@@ -16,7 +16,7 @@ export type UpdateFailureReportReceipt = {
   fallbackUrl?: string;
   preparingSinceMs?: number;
   reservationId: string;
-  status: "preparing" | "pending" | "created" | "fallback";
+  status: "preparing" | "pending" | "retryable" | "created" | "fallback";
   url?: string;
 };
 
@@ -43,6 +43,7 @@ function parseReceipt(sentinel: RestartSentinel | null): UpdateFailureReportRece
     !isPlainRecord(value) ||
     (value.status !== "preparing" &&
       value.status !== "pending" &&
+      value.status !== "retryable" &&
       value.status !== "created" &&
       value.status !== "fallback") ||
     typeof value.reservationId !== "string" ||
@@ -114,12 +115,13 @@ export function reserveUpdateFailureReportReceiptRowSync(
   }
   const current = readRestartSentinelRowForKeySync(db, sentinelKey);
   const currentReceipt = parseReceipt(current.kind === "valid" ? current.sentinel : null);
-  if (
-    current.kind !== "valid" ||
-    currentReceipt?.status !== "preparing" ||
-    currentReceipt.preparingSinceMs === undefined ||
-    currentReceipt.preparingSinceMs > nowMs - PREPARING_RECEIPT_STALE_AFTER_MS
-  ) {
+  const retryable = current.kind === "valid" && currentReceipt?.status === "retryable";
+  const stalePreparation =
+    current.kind === "valid" &&
+    currentReceipt?.status === "preparing" &&
+    currentReceipt.preparingSinceMs !== undefined &&
+    currentReceipt.preparingSinceMs <= nowMs - PREPARING_RECEIPT_STALE_AFTER_MS;
+  if (!retryable && !stalePreparation) {
     return { receipt: currentReceipt, reserved: false };
   }
   const replacement = buildRestartSentinelRow(

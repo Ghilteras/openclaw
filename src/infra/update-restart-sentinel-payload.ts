@@ -92,7 +92,6 @@ export function buildUpdateRestartSentinelPayload(params: {
       })),
       reason: result.reason ?? null,
       durationMs: result.durationMs,
-      ...(result.recovery ? { recovery: result.recovery } : {}),
     },
   };
 }
