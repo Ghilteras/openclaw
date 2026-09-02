@@ -160,12 +160,13 @@ export async function runSqliteSessionsTranscriptsFlipProof(options: RunOptions 
           throw new Error(`expected built CLI entrypoint, got ${gatewayEntrypoint.join(" ")}`);
         }
         if (options.requireBuiltCli === true) {
+          // Only this provider is exercised; the full inventory can exceed the CLI log-tail bound.
           const inspection = await inst.cli(["plugins", "inspect", "openai", "--json"]);
           const plugin = asRecord(parseJsonObject(inspection.stdout)?.plugin);
           if (
             inspection.code !== 0 ||
-            plugin?.origin !== "bundled" ||
-            plugin.id !== "openai" ||
+            plugin?.id !== "openai" ||
+            plugin.origin !== "bundled" ||
             typeof plugin.source !== "string"
           ) {
             throw new Error(
