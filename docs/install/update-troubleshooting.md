@@ -40,9 +40,10 @@ version, platform, update target, failed phase, sanitized diagnostics, and
 verified rollback outcome. The report excludes secrets, tokens, chat content,
 raw logs, private absolute paths, and recovery commands. Nothing is submitted
 until an administrator confirms that preview. OpenClaw then uses the existing
-GitHub CLI issue flow and saves the sanitized report locally. It first makes a
-silent, read-only request with the active `github.com` account. A missing CLI or
-a failed, unavailable, or timed-out authentication check returns a prefilled
+GitHub CLI issue flow. Fallback and pending outcomes retain the sanitized report
+locally; a confirmed issue keeps only its durable issue URL. OpenClaw first makes
+a silent, read-only request with the active `github.com` account. A missing CLI
+or a failed, unavailable, or timed-out authentication check returns a prefilled
 issue link without starting issue creation. In the Control UI, an interrupted
 preparation for the recorded attempt can be retried after its local reservation
 expires. Once issue creation starts, a
