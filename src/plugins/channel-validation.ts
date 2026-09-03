@@ -50,11 +50,7 @@ function collectMissingChannelMetaFields(meta?: Partial<ChannelMeta> | null): st
   return missing;
 }
 
-function isChannelCapabilityChatType(value: unknown): boolean {
-  // Capability declarations use the canonical public contract literals.
-  // Channel-specific aliases are normalized at message ingress, not registration.
-  return value === "direct" || value === "group" || value === "channel" || value === "thread";
-}
+const CHANNEL_CAPABILITY_CHAT_TYPES = new Set(["direct", "group", "channel", "thread"]);
 
 /** Validates and normalizes a channel plugin registration before runtime catalog insertion. */
 export function normalizeRegisteredChannelPlugin(params: {
@@ -79,7 +75,7 @@ export function normalizeRegisteredChannelPlugin(params: {
   const chatTypes = params.plugin.capabilities?.chatTypes;
   if (
     !Array.isArray(chatTypes) ||
-    chatTypes.some((chatType) => !isChannelCapabilityChatType(chatType))
+    chatTypes.some((chatType) => !CHANNEL_CAPABILITY_CHAT_TYPES.has(chatType))
   ) {
     params.pushDiagnostic({
       level: "error",
