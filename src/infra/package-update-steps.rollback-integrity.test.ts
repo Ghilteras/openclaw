@@ -610,6 +610,7 @@ describe("package rollback tree integrity", () => {
         if (args[0].endsWith(".openclaw-update-stage-ctime-")) {
           throw Object.assign(new Error("metadata probe unavailable"), { code: "EACCES" });
         }
+        // openclaw-temp-dir: allow forwarding production-owned temp creation through this spy
         return await mkdtemp(...args);
       });
 
