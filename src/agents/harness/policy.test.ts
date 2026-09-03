@@ -1,15 +1,16 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { migratePersistedImplicitMainRoster } from "../../config/legacy.roster.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { resolveAgentDir, resolveDefaultAgentId } from "../agent-scope-config.js";
 import { testing as cliBackendsTesting } from "../cli-backends.test-support.js";
+import {
+  publishPreparedProviderAuthFacts,
+  resetPreparedProviderAuthFactsForTest,
+} from "../prepared-provider-auth-facts.js";
 import { resolveAgentHarnessPolicy as resolveAgentHarnessPolicyBase } from "./policy.js";
 
-const resolveProviderSyntheticAuthWithPlugin = vi.hoisted(() => vi.fn());
-
-vi.mock("../../plugins/provider-runtime.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../plugins/provider-runtime.js")>()),
-  resolveProviderSyntheticAuthWithPlugin,
-}));
+const factsAgentDir = (cfg: OpenClawConfig = {}) =>
+  resolveAgentDir(cfg, resolveDefaultAgentId(cfg));
 
 function resolveAgentHarnessPolicy(
   params: Parameters<typeof resolveAgentHarnessPolicyBase>[0],
@@ -38,7 +39,7 @@ function openAIProviderConfig(overrides: Record<string, unknown>): OpenClawConfi
 describe("resolveAgentHarnessPolicy", () => {
   afterEach(() => {
     cliBackendsTesting.resetDepsForTest();
-    resolveProviderSyntheticAuthWithPlugin.mockReset();
+    resetPreparedProviderAuthFactsForTest();
   });
 
   it.each([
@@ -130,11 +131,8 @@ describe("resolveAgentHarnessPolicy", () => {
   });
 
   it("marks an implicit OpenAI native runtime selected by auth as auth", () => {
-    resolveProviderSyntheticAuthWithPlugin.mockReturnValue({
-      apiKey: "codex-app-server",
-      source: "Codex CLI native auth",
-      mode: "oauth",
-      runtime: "codex",
+    publishPreparedProviderAuthFacts(factsAgentDir(), {
+      openai: { mode: "oauth", runtime: "codex" },
     });
 
     expect(

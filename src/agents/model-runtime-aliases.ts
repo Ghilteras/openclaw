@@ -5,8 +5,7 @@ import { parseModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { resolveProviderSyntheticAuthWithPlugin } from "../plugins/provider-runtime.js";
-import { resolveAgentDir } from "./agent-scope-config.js";
+import { resolveAgentDir, resolveDefaultAgentId } from "./agent-scope-config.js";
 import { resolveExplicitAuthOrderSelection } from "./auth-profiles/order.js";
 import { getPreparedRuntimeAuthProfileStoreSnapshotCore } from "./auth-profiles/runtime-snapshots.js";
 import {
@@ -18,6 +17,7 @@ import {
 } from "./cli-backends.js";
 import { resolveLegacyInheritedAuthDir } from "./legacy-inherited-auth-dir.js";
 import { resolveModelRuntimePolicy } from "./model-runtime-policy.js";
+import { readPreparedProviderAuthFacts } from "./prepared-provider-auth-facts.js";
 import {
   resolveProviderIdForAuth,
   type ProviderAuthAliasLookupParams,
@@ -227,8 +227,9 @@ function resolveCliRuntimeFromAuthProfile(
   const configuredProfiles = params.cfg?.auth?.profiles ?? {};
   // Login and auth-order commands own the credential store, not config metadata.
   // Reuse its published snapshot without reopening SQLite on a request path.
+  const agentDir = params.agentId ? resolveAgentDir(params.cfg ?? {}, params.agentId) : undefined;
   const store = getPreparedRuntimeAuthProfileStoreSnapshotCore(
-    params.agentId ? resolveAgentDir(params.cfg ?? {}, params.agentId) : undefined,
+    agentDir,
     resolveLegacyInheritedAuthDir(params.cfg ?? {}),
   );
   if (params.authProfileId?.trim()) {
@@ -290,41 +291,32 @@ function resolveCliRuntimeFromAuthProfile(
       profileProvider: configuredProfiles[profileId]?.provider,
     });
   }
-  return resolveNativeLoginCliRuntime({ provider, cfg: params.cfg });
+  return resolveNativeLoginCliRuntime({ provider, cfg: params.cfg, agentDir });
 }
 
 /**
  * A provider with no stored credential still runs when an owning native runtime holds a login
- * (for example Claude CLI or Codex app-server). The synthetic auth marker is the recorded fact;
- * without this, anthropic/<model> rows are listed as available but every run would demand an
- * API key.
+ * (for example Claude CLI or Codex app-server). The prepared generation records that fact as
+ * secret-free provider auth; request paths read it instead of re-probing provider plugins.
  */
 function resolveNativeLoginCliRuntime(params: {
   provider: string;
   cfg?: OpenClawConfig;
+  agentDir?: string;
 }): string | undefined {
+  const cfg = params.cfg ?? {};
+  const facts = readPreparedProviderAuthFacts(
+    params.agentDir ?? resolveAgentDir(cfg, resolveDefaultAgentId(cfg)),
+  );
+  if (!facts) {
+    return undefined;
+  }
   for (const binding of listCliRuntimeModelBackendBindings()) {
-    if (binding.provider !== params.provider) {
-      continue;
-    }
-    const synthetic = resolveProviderSyntheticAuthWithPlugin({
-      provider: binding.runtime,
-      config: params.cfg,
-      context: { config: params.cfg ?? {}, provider: binding.runtime, providerConfig: undefined },
-    });
-    if (synthetic?.apiKey) {
+    if (binding.provider === params.provider && facts[binding.runtime]) {
       return binding.runtime;
     }
   }
-  const synthetic = resolveProviderSyntheticAuthWithPlugin({
-    provider: params.provider,
-    config: params.cfg,
-    context: { config: params.cfg ?? {}, provider: params.provider, providerConfig: undefined },
-  });
-  if (synthetic?.apiKey && synthetic.runtime) {
-    return synthetic.runtime;
-  }
-  return undefined;
+  return facts[params.provider]?.runtime;
 }
 
 export function resolveCliRuntimeExecutionProvider(

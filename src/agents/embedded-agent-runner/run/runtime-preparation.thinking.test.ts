@@ -127,6 +127,7 @@ describe("selected route thinking metadata at runtime preparation", () => {
       activeProjectKeys: [],
       config,
       providerAuth: {},
+      oauthRefreshProviderIds: [],
       metadataSnapshot,
       pluginRegistry,
       allowGatewaySubagentBinding: false,

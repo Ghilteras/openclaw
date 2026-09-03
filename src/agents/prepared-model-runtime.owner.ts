@@ -38,11 +38,18 @@ import type {
   PreparedModelRuntimeReplacement,
   PreparedModelRuntimeSnapshot,
 } from "./prepared-model-runtime.types.js";
+import {
+  publishPreparedProviderAuthFacts,
+  retirePreparedProviderAuthFacts,
+} from "./prepared-provider-auth-facts.js";
 
 const log = createSubsystemLogger("agents/prepared-model-runtime");
 export function retirePreparedModelRuntimeOwner(owner: PreparedModelRuntimeOwner): void {
   const retire = owner.retire;
   owner.retire = undefined;
+  if (owner.snapshot) {
+    retirePreparedProviderAuthFacts(owner.input.agentDir, owner.snapshot.providerAuth);
+  }
   void retire?.();
 }
 
@@ -52,6 +59,7 @@ function publishPreparedModelRuntimeOwnerSnapshot(
 ): PreparedModelRuntimeSnapshot {
   const published = stampPreparedModelRuntimeSnapshotConfig(snapshot, owner.input.config);
   owner.snapshot = published;
+  publishPreparedProviderAuthFacts(owner.input.agentDir, published.providerAuth);
   return published;
 }
 

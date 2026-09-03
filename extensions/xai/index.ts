@@ -217,7 +217,7 @@ export default defineSingleProviderPluginEntry({
           if (runtimeAuth?.apiKey) {
             return {
               provider: await buildLiveXaiProvider({
-                authMode: runtimeAuth.mode,
+                oauthLogin: runtimeAuth.mode === "oauth",
                 apiKey: runtimeAuth.apiKey,
                 discoveryApiKey: runtimeAuth.apiKey,
               }),
@@ -232,7 +232,7 @@ export default defineSingleProviderPluginEntry({
         if (auth.apiKey) {
           return {
             provider: await buildLiveXaiProvider({
-              authMode: auth.mode,
+              oauthLogin: auth.mode === "oauth",
               apiKey: auth.apiKey,
               discoveryApiKey: auth.discoveryApiKey,
             }),
@@ -252,7 +252,10 @@ export default defineSingleProviderPluginEntry({
       },
       // Static builds use the same auth-mode transport selection as discovery.
       staticRun: async (ctx) => ({
-        provider: buildXaiProvider("openai-responses", ctx.resolveProviderAuth(PROVIDER_ID).mode),
+        provider: buildXaiProvider(
+          "openai-responses",
+          ctx.resolveProviderAuth(PROVIDER_ID).mode === "oauth",
+        ),
       }),
     },
     ...buildProviderReplayFamilyHooks({ family: "openai-compatible" }),

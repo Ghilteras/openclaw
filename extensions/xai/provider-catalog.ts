@@ -32,9 +32,9 @@ const XAI_GROK_OAUTH_REASONING_MODEL_IDS = new Set(["grok-composer-2.5-fast"]);
 
 export function buildXaiProvider(
   api: ModelProviderConfig["api"] = "openai-responses",
-  authMode?: ModelProviderConfig["auth"],
+  oauthLogin = false,
 ): ModelProviderConfig {
-  if (authMode === "oauth") {
+  if (oauthLogin) {
     return buildXaiOAuthProvider();
   }
   return {
@@ -60,11 +60,11 @@ export function buildXaiOAuthProvider(): ModelProviderConfig {
 export async function buildLiveXaiProvider(params: {
   apiKey?: string;
   discoveryApiKey?: string;
-  authMode?: ModelProviderConfig["auth"];
+  oauthLogin?: boolean;
   fetchGuard?: LiveModelCatalogFetchGuard;
   signal?: AbortSignal;
 }): Promise<ModelProviderConfig> {
-  if (params.authMode === "oauth") {
+  if (params.oauthLogin) {
     const discoveryApiKey = params.discoveryApiKey ?? params.apiKey;
     return discoveryApiKey
       ? await buildLiveXaiOAuthProvider({
@@ -72,7 +72,7 @@ export async function buildLiveXaiProvider(params: {
           fetchGuard: params.fetchGuard,
           signal: params.signal,
         })
-      : buildXaiProvider("openai-responses", "oauth");
+      : buildXaiProvider("openai-responses", true);
   }
   return await buildLiveModelProviderConfig({
     providerId: PROVIDER_ID,
