@@ -230,8 +230,6 @@ export const icons = {
   target: strokeIcon(svg` <circle cx="12" cy="12" r="10" />
     <circle cx="12" cy="12" r="6" />
     <circle cx="12" cy="12" r="2" />`),
-  mousePointer2: strokeIcon(svg` <path d="m4 4 7.07 17 2.51-7.39L21 11.07z" />
-    <path d="m13.58 13.61 3.34 3.34" />`),
   switchCamera: strokeIcon(svg` <path d="M11 19H6.5a4.5 4.5 0 0 1 0-9H8" />
     <path d="m8 16 3 3-3 3" />
     <path d="M13 5h4.5a4.5 4.5 0 0 1 0 9H16" />

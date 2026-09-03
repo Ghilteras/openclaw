@@ -3,8 +3,11 @@
 // agent knows what was marked up.
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { t } from "../../i18n/index.ts";
+import { registerCanvasAnnotationEnglish } from "../../i18n/locales/en-canvas-annotation.ts";
 import type { BrowserInspectedNode } from "./browser-client.ts";
 import type { BrowserTabTarget } from "./browser-target.ts";
+
+registerCanvasAnnotationEnglish();
 
 /** Point in normalized [0..1] coordinates of the captured screenshot. */
 type AnnotationPoint = { x: number; y: number };

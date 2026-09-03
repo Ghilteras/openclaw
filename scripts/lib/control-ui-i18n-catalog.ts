@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerActivityEnglish } from "../../ui/src/i18n/locales/en-activity.ts";
+import { registerCanvasAnnotationEnglish } from "../../ui/src/i18n/locales/en-canvas-annotation.ts";
 import { registerMeetingsEnglish } from "../../ui/src/i18n/locales/en-meetings.ts";
 import { registerPluginConsentEnglish } from "../../ui/src/i18n/locales/en-plugin-consent.ts";
 import { registerSessionPlacementEnglish } from "../../ui/src/i18n/locales/en-session-placement.ts";
@@ -23,6 +24,7 @@ const sourceFiles = [
   "en.ts",
   "en-agents.ts",
   "en-activity.ts",
+  "en-canvas-annotation.ts",
   "en-meetings.ts",
   "en-session-placement.ts",
   "en-plugin-consent.ts",
@@ -37,6 +39,7 @@ export function loadControlUiSourceCatalog(): TranslationMap {
   return mergeControlUiTranslationMaps(
     registerSkillLibraryEnglish.catalog,
     en,
+    registerCanvasAnnotationEnglish.catalog,
     registerActivityEnglish.catalog,
     registerMeetingsEnglish.catalog,
     registerSessionPlacementEnglish.catalog,

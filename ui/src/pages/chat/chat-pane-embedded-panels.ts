@@ -1,14 +1,16 @@
 import { buildControlUiFocusPath } from "@openclaw/session-url-contract";
-import { html, nothing, type TemplateResult } from "lit";
+import { html, nothing, svg, type TemplateResult } from "lit";
 import type { SessionObserverDigest } from "../../../../packages/gateway-protocol/src/schema/sessions.js";
 import type { ControlUiSessionPullRequest } from "../../../../src/gateway/control-ui-contract.js";
 import type { BrowserTabSelection } from "../../components/browser/browser-target.ts";
+import { strokeIcon } from "../../components/icons-tools.ts";
 import { icons } from "../../components/icons.ts";
 import {
   renderPanelLoadingSkeleton,
   type PanelLoadingSkeletonVariant,
 } from "../../components/panel-loading-skeleton.ts";
 import { t } from "../../i18n/index.ts";
+import { registerCanvasAnnotationEnglish } from "../../i18n/locales/en-canvas-annotation.ts";
 import {
   formatKeyboardShortcutCombo,
   KEYBOARD_SHORTCUT_COMBOS,
@@ -27,6 +29,8 @@ import type {
 import type { SidebarContent } from "./components/chat-sidebar.ts";
 import type { SessionDiscussionPanelConfig } from "./components/session-discussion-panel.ts";
 import type { SidebarSlotId } from "./sidebar-layout-types.ts";
+
+registerCanvasAnnotationEnglish();
 
 type SidebarPanelDefinitionParams = {
   state: ChatPageHost;
@@ -93,6 +97,11 @@ const SIDEBAR_PANEL_LOADING_VARIANTS = {
   workspace: "files",
 } satisfies Record<SidebarSlotId, PanelLoadingSkeletonVariant>;
 
+const CANVAS_ANNOTATION_GLYPH = strokeIcon(
+  svg`<path d="m4 4 7.07 17 2.51-7.39L21 11.07z" />
+    <path d="m13.58 13.61 3.34 3.34" />`,
+);
+
 function renderCanvasCommentAction(params: {
   available: boolean;
   active: boolean;
@@ -114,7 +123,7 @@ function renderCanvasCommentAction(params: {
         ?disabled=${!params.available}
         @click=${params.onToggle}
       >
-        ${icons.mousePointer2}
+        ${CANVAS_ANNOTATION_GLYPH}
         ${params.count > 0
           ? html`<span class="canvas-annotation-launcher__count">${params.count}</span>`
           : nothing}

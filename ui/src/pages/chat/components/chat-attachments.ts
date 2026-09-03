@@ -7,6 +7,7 @@ import type { ImageLightboxItem } from "../../../components/image-lightbox.ts";
 import "../../../components/tooltip.ts";
 import "../../../components/web-awesome.ts";
 import { t } from "../../../i18n/index.ts";
+import { registerCanvasAnnotationEnglish } from "../../../i18n/locales/en-canvas-annotation.ts";
 import type { ChatAttachment } from "../../../lib/chat/chat-types.ts";
 import { showToast } from "../../../lib/toast.ts";
 import {
@@ -19,6 +20,8 @@ import {
 import { admitAttachmentFiles } from "./chat-attachment-admission.ts";
 import { resolveAttachmentFileIcon } from "./chat-attachment-file-icon.ts";
 import { syncChatAttachmentRailScroll } from "./chat-attachment-viewport.ts";
+
+registerCanvasAnnotationEnglish();
 
 const CHAT_ATTACHMENT_ACCEPT =
   "image/*,audio/*,video/*,application/pdf,text/*,.csv,.json,.md,.txt,.zip," +
