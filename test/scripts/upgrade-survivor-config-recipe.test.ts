@@ -100,6 +100,7 @@ esac
         expect(args).toContain(
           "OPENCLAW_UPGRADE_SURVIVOR_CANDIDATE_SPEC=/tmp/openclaw-current.tgz",
         );
+        expect(args).toContain("OPENCLAW_UPGRADE_SURVIVOR_SESSION_REPAIR_MODE=sqlite");
         expect(args.slice(-5)).toEqual([
           "timeout",
           "--kill-after=30s",
