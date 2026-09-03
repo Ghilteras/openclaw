@@ -583,7 +583,7 @@ final class DashboardManager {
         } catch {
             guard self.switchIsCurrent(generation, for: source) else { return }
             self.finishSwitch(generation, for: source)
-            Self.showGatewayError(error, message: "Could Not Switch Gateway")
+            Self.showGatewayError(error, message: String(localized: "Could Not Switch Gateway"))
         }
     }
 
@@ -633,7 +633,7 @@ final class DashboardManager {
             await self.refreshGatewaySnapshots()
             self.updateFrontmostDashboardTarget()
         } catch {
-            Self.showGatewayError(error, message: "Could Not Open Gateway Window")
+            Self.showGatewayError(error, message: String(localized: "Could Not Open Gateway Window"))
         }
     }
 
@@ -980,7 +980,7 @@ extension DashboardManager {
             Task { await self.refreshGatewaySnapshots() }
         } catch {
             guard isCurrent() else { return }
-            Self.showGatewayError(error, message: "Could Not Open Background Session")
+            Self.showGatewayError(error, message: String(localized: "Could Not Open Background Session"))
         }
     }
 
@@ -1288,7 +1288,7 @@ extension DashboardManager {
                         await self.refreshGatewaySnapshots()
                     }
                 } catch {
-                    Self.showGatewayError(error, message: "Could Not Set Primary Gateway")
+                    Self.showGatewayError(error, message: String(localized: "Could Not Set Primary Gateway"))
                 }
             }
         }
