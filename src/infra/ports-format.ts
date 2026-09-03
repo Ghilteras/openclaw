@@ -2,7 +2,7 @@
 import net from "node:net";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { formatCliCommand } from "../cli/command-format.js";
-import { parseTcpListenerEndpoint } from "./ports-netstat.js";
+import { isWildcardTcpHost, parseTcpListenerEndpoint } from "./ports-netstat.js";
 import type { PortListener, PortListenerKind, PortUsage } from "./ports-types.js";
 
 /** Classifies a listener as OpenClaw Gateway, SSH tunnel, known non-gateway, or unknown. */
@@ -61,12 +61,8 @@ function classifyLoopbackAddressFamily(host: string): "ipv4" | "ipv6" | null {
   return null;
 }
 
-function isWildcardAddress(host: string): boolean {
-  return host === "0.0.0.0" || host === "::" || host === "*";
-}
-
 function isExpectedGatewayBindAddress(host: string): boolean {
-  return classifyLoopbackAddressFamily(host) !== null || isWildcardAddress(host);
+  return classifyLoopbackAddressFamily(host) !== null || isWildcardTcpHost(host);
 }
 
 type ParsedGatewayListener = { pid: number; host: string };
@@ -132,7 +128,7 @@ function parsedListenersOwnSpecificIpv4WithLoopback(parsed: ParsedGatewayListene
   }
   const hosts = new Set(parsed.map(({ host }) => host));
   const specificHosts = [...hosts].filter(
-    (host) => host !== "127.0.0.1" && net.isIP(host) === 4 && !isWildcardAddress(host),
+    (host) => host !== "127.0.0.1" && net.isIP(host) === 4 && !isWildcardTcpHost(host),
   );
   return hosts.has("127.0.0.1") && specificHosts.length > 0;
 }

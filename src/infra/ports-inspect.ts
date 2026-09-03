@@ -14,6 +14,7 @@ import {
 } from "./ports-lsof-listeners.js";
 import { resolveLsofCommand } from "./ports-lsof.js";
 import {
+  isWildcardTcpHost,
   parseTcpEndpoint,
   parseTcpListenerEndpoint,
   parseWindowsNetstatListeners,
@@ -625,10 +626,6 @@ async function buildPortUsage(
     detail: result.detail,
     errors: errors.length > 0 ? errors : undefined,
   };
-}
-
-function isWildcardTcpHost(host: string): boolean {
-  return host === "0.0.0.0" || host === "::" || host === "*";
 }
 
 function isSameTcpAddressFamily(leftHost: string, rightHost: string): boolean {
