@@ -338,7 +338,7 @@ function renderSessionAttribution({
         )
       : "";
   return html`<div class="session-hovercard__attribution" aria-label=${attributionLabel}>
-    <span class="session-hovercard__attribution-copy">
+    <span class="session-hovercard__attribution-copy" style="align-items: center;">
       ${renderPersonName(primaryLabel, primaryActivity, "session-hovercard__attribution-name")}
       ${otherCount > 0
         ? remainingParticipants.length > 0
@@ -349,7 +349,7 @@ function renderSessionAttribution({
             >
               <button
                 type="button"
-                class="session-hovercard__attribution-others"
+                class="btn--ghost session-hovercard__attribution-others"
                 style="padding: 1px 3px; border: 0; border-radius: var(--radius-sm); background: transparent; font: inherit;"
                 aria-label=${t("sessionHovercard.moreParticipantsLabel", {
                   count: String(otherCount),
