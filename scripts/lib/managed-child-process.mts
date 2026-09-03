@@ -67,7 +67,7 @@ type RunManagedCommandOptions = ManagedCommandOptions & {
 };
 
 type ManagedCommandOutcome =
-  | { type: "completed"; status: number }
+  | { type: "completed"; exit: number | NodeJS.Signals }
   | { type: "failed"; error: unknown }
   | { type: "timeout" }
   | { type: "aborted" }
@@ -75,6 +75,35 @@ type ManagedCommandOutcome =
 
 const managedChildren = new Set<(signal: NodeJS.Signals) => void>();
 const signalHandlers = new Map<NodeJS.Signals, () => void>();
+
+/** Nested command failures retain their owner's inputs until process cleanup is verified. */
+export function hasUnjoinedWork(value: unknown): boolean {
+  const pending: unknown[] = [value];
+  const seen = new Set<object>();
+  for (const current of pending) {
+    if (!current || typeof current !== "object" || seen.has(current)) {
+      continue;
+    }
+    // Native execFileSync errors can point .error back to themselves. Skip only
+    // that identity; other aggregate members and wrapper edges still need checking.
+    seen.add(current);
+    if ("processTreeState" in current && current.processTreeState !== "terminated") {
+      return true;
+    }
+    if (current instanceof AggregateError) {
+      for (const error of current.errors) {
+        pending.push(error);
+      }
+    }
+    if ("cause" in current) {
+      pending.push(current.cause);
+    }
+    if ("error" in current) {
+      pending.push(current.error);
+    }
+  }
+  return false;
+}
 
 /** Return the conventional shell exit code for a signal. */
 export function signalExitCode(signal: NodeJS.Signals) {
@@ -387,7 +416,7 @@ export async function runManagedCommand({
     child.once(requireProcessTreeExit ? "exit" : "close", (status, received) => {
       notifyOutcome({
         type: "completed",
-        status: received ? signalExitCode(received) : (status ?? 1),
+        exit: received ?? status ?? 1,
       });
     });
     if (timeoutMs !== undefined) {
@@ -424,7 +453,9 @@ export async function runManagedCommand({
     }
     let outcome = await completion;
     if (outcome.type === "completed" && requireProcessTreeExit) {
-      void finalize();
+      // Preserve actual signal cleanup; numeric 143 must still reject lingering descendants.
+      const exitSignal = typeof outcome.exit === "string" ? outcome.exit : undefined;
+      void finalize(exitSignal);
     }
     // Cleanup failure overrides the first cancellation, including during strict drainage.
     const cleanup = finalization ? await finalization : undefined;
@@ -448,7 +479,7 @@ export async function runManagedCommand({
     if (outcome.type === "signal") {
       return signalExitCode(outcome.signal);
     }
-    return outcome.status;
+    return typeof outcome.exit === "string" ? signalExitCode(outcome.exit) : outcome.exit;
   } finally {
     clearTimeout(timeoutTimer);
     signal?.removeEventListener("abort", abort);

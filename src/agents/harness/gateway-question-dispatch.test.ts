@@ -8,7 +8,10 @@ import {
   settleAskUserPromptDelivery,
   waitForAskUserPromptReady,
 } from "../tools/ask-user-tool.js";
-import type { AgentHarnessQuestionGatewayCall } from "./gateway-question-dispatch.js";
+import {
+  QuestionAnswerUnconfirmedError,
+  type AgentHarnessQuestionGatewayCall,
+} from "./gateway-question-dispatch.js";
 import {
   cancelPendingAgentQuestionForSession,
   claimPendingAgentQuestionAnswer,
@@ -362,25 +365,69 @@ describe("question dispatch ownership", () => {
     },
   );
 
-  it.each(["harness", "ask_user"] as const)(
-    "recovers the %s receipt after commit, source closure, and a lost response",
-    async (owner) => {
+  it.each(
+    (["harness", "ask_user"] as const).flatMap((owner) =>
+      (["immediate", "delayed", "lost"] as const).map((receiptMode) => ({ owner, receiptMode })),
+    ),
+  )(
+    "settles the $owner input after commit, source closure, and a lost response (receipt=$receiptMode)",
+    async ({ owner, receiptMode }) => {
       await withQuestionGateway(async (fixture) => {
+        const receipt = receiptMode === "immediate" ? undefined : fixture.holdWaitAnswerResponse();
         const question = startQuestion(fixture, owner);
+        const observedQuestion = question.run.catch((error: unknown) => error);
         const { source, authority } = currentSource(fixture);
         const persist = vi.fn(async () => {});
         try {
           await Promise.all([fixture.waitStarted, question.showPrompt()]);
           fixture.dropNextResolveResponse();
           fixture.onResolved(() => source.abort());
-          await expect(
-            claimPendingAgentQuestionAnswer({ sessionKey, text: "committed", authority, persist }),
-          ).resolves.toBe(true);
-          expect(await question.run).toMatchObject({
-            status: "answered",
-            answers: { answers: { answer: ["committed"] } },
-          });
-          const resolves = fixture.requests.filter((frame) => frame.method === "question.resolve");
+          let settled = false;
+          const outcome = claimPendingAgentQuestionAnswer({
+            sessionKey,
+            text: "committed",
+            authority,
+            persist,
+          }).then(
+            (result) => {
+              settled = true;
+              return result;
+            },
+            (error: unknown) => {
+              settled = true;
+              return error;
+            },
+          );
+          if (receipt) {
+            await receipt.entered;
+            if (receiptMode === "delayed") {
+              // A delayed independent response must not expire a committed claim.
+              await new Promise((resolve) => {
+                setTimeout(resolve, 1_500);
+              });
+              expect(settled).toBe(false);
+              receipt.release();
+            } else {
+              receipt.fail();
+            }
+          }
+          if (receiptMode === "lost") {
+            expect(await outcome).toBeInstanceOf(QuestionAnswerUnconfirmedError);
+            expect(await observedQuestion).toBeInstanceOf(Error);
+          } else {
+            expect(await outcome).toBe(true);
+            expect(await question.run).toMatchObject({
+              status: "answered",
+              answers: { answers: { answer: ["committed"] } },
+            });
+          }
+          const resolves = fixture.requests.filter(
+            (frame) =>
+              frame.method === "question.resolve" &&
+              typeof frame.params === "object" &&
+              frame.params !== null &&
+              "answers" in frame.params,
+          );
           expect(resolves).toHaveLength(1);
           expect(resolves[0]?.params).toMatchObject({
             resolutionId: expect.stringMatching(/^[a-f0-9]{32}$/),
@@ -389,12 +436,86 @@ describe("question dispatch ownership", () => {
           expect(source.signal.aborted).toBe(true);
           expect(fixture.backingRun.signal.aborted).toBe(false);
         } finally {
+          receipt?.release();
           fixture.backingRun.abort();
           await question.run.catch(() => undefined);
         }
       });
     },
   );
+
+  it.each(["harness", "ask_user"] as const)(
+    "releases a rejected %s answer without waiting for the human question deadline",
+    async (owner) => {
+      await withQuestionGateway(async (fixture) => {
+        const question = startQuestion(fixture, owner);
+        let outcome: Promise<unknown> | undefined;
+        try {
+          await Promise.all([fixture.waitStarted, question.showPrompt()]);
+          let settled = false;
+          outcome = claimPendingAgentQuestionAnswer({ sessionKey, text: "" }).catch(
+            (error: unknown) => {
+              settled = true;
+              return error;
+            },
+          );
+          await vi.waitFor(() => expect(settled).toBe(true));
+          expect(await outcome).toMatchObject({
+            name: "GatewayClientRequestError",
+            gatewayCode: "INVALID_REQUEST",
+            details: { reason: "QUESTION_INVALID_ANSWER" },
+          });
+          expect(fixture.manager.list()).toHaveLength(1);
+          await expect(
+            claimPendingAgentQuestionAnswer({ sessionKey, text: "valid" }),
+          ).resolves.toBe(true);
+          expect(await question.run).toMatchObject({ status: "answered" });
+        } finally {
+          fixture.backingRun.abort();
+          await Promise.all([outcome, question.run.catch(() => undefined)]);
+        }
+      });
+    },
+  );
+
+  it.each(
+    (["harness", "ask_user"] as const).flatMap((owner) =>
+      (["cancelled", "expired"] as const).map((status) => ({ owner, status })),
+    ),
+  )("releases the failed $owner input after authoritative $status", async ({ owner, status }) => {
+    await withQuestionGateway(async (fixture) => {
+      const question = startQuestion(fixture, owner);
+      await Promise.all([fixture.waitStarted, question.showPrompt()]);
+      const hello = fixture.holdNextHello();
+      const outcome = claimPendingAgentQuestionAnswer({ sessionKey, text: "obsolete" }).catch(
+        (error: unknown) => error,
+      );
+      try {
+        await hello.entered;
+        const pending = fixture.manager.list()[0]!;
+        if (status === "cancelled") {
+          fixture.manager.cancel(pending.id);
+        } else {
+          const clock = vi.spyOn(Date, "now").mockReturnValue(pending.expiresAtMs + 1);
+          try {
+            fixture.manager.get(pending.id);
+          } finally {
+            clock.mockRestore();
+          }
+        }
+        expect(await question.run).toMatchObject({
+          status: owner === "harness" ? status : "no_answer",
+        });
+        hello.fail();
+        expect(await outcome).toBe(false);
+        expect(fixture.requests.filter((frame) => frame.method === "question.resolve")).toEqual([]);
+      } finally {
+        hello.fail();
+        fixture.backingRun.abort();
+        await Promise.all([outcome, question.run.catch(() => undefined)]);
+      }
+    });
+  });
 
   it("fences a replaced reservation even when its session and question IDs are unchanged", async () => {
     await withQuestionGateway(async (fixture) => {

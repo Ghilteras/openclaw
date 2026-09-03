@@ -322,19 +322,35 @@ describe("registerCopilotActiveRun", () => {
     },
   );
 
-  it("reports a claimed pending question as accepted without sending steering", async () => {
-    harnessMocks.claimPendingAgentQuestionAnswer.mockResolvedValueOnce(true);
-    const onQueueAccepted = vi.fn();
-    const { handle, send } = registerTestRun();
+  it.each([false, true])(
+    "preserves confirmed and unconfirmed host questions without SDK steering: failed=%s",
+    async (failed) => {
+      const claimError = new Error("host question confirmation unavailable");
+      if (failed) {
+        harnessMocks.claimPendingAgentQuestionAnswer.mockRejectedValueOnce(claimError);
+      } else {
+        harnessMocks.claimPendingAgentQuestionAnswer.mockResolvedValueOnce(true);
+      }
+      const onQueueAccepted = vi.fn();
+      const { handle, send, waitForSdkUserPersisted } = registerTestRun();
+      const delivery = handle.queueMessage("answer", {
+        isInboundUserMessage: true,
+        onQueueAccepted,
+        waitForTranscriptCommit: true,
+      });
 
-    await expect(
-      handle.queueMessage("answer", { isInboundUserMessage: true, onQueueAccepted }),
-    ).resolves.toBeUndefined();
-
-    expect(onQueueAccepted).toHaveBeenCalledOnce();
-    expect(onQueueAccepted).toHaveBeenCalledWith(true);
-    expect(send).not.toHaveBeenCalled();
-  });
+      if (failed) {
+        await expect(delivery).rejects.toBe(claimError);
+        expect(onQueueAccepted).not.toHaveBeenCalled();
+      } else {
+        await expect(delivery).resolves.toBeUndefined();
+        expect(onQueueAccepted).toHaveBeenCalledExactlyOnceWith(true);
+      }
+      expect(harnessMocks.claimPendingAgentQuestionAnswer).toHaveBeenCalledOnce();
+      expect(send).not.toHaveBeenCalled();
+      expect(waitForSdkUserPersisted).not.toHaveBeenCalled();
+    },
+  );
 
   it("exposes pending-question cancellation for queued image fallback", async () => {
     const { handle } = registerTestRun();

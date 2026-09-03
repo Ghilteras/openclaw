@@ -64,12 +64,13 @@ export function registerCopilotActiveRun(params: {
       acceptanceReported = true;
       options?.onQueueAccepted?.(accepted);
     };
+    // The host owns question uncertainty; SDK-send rejection must not reopen it.
+    if (await claimPendingUserInputAnswer(text, options)) {
+      reportAcceptance(true);
+      return undefined;
+    }
     let messageId: string;
     try {
-      if (await claimPendingUserInputAnswer(text, options)) {
-        reportAcceptance(true);
-        return undefined;
-      }
       if (params.isSettled() || params.isAborted()) {
         throw new Error("Copilot steering is unavailable after the active run ended");
       }

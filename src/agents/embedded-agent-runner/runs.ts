@@ -48,6 +48,7 @@ import { logMessageQueuedWithBacklogPolicy } from "../../logging/diagnostic-runt
 import { diagnosticLogger as diag, logSessionStateChange } from "../../logging/diagnostic.js";
 import { hasPromptImageInput } from "../../media/prompt-image-input.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
+import { QuestionAnswerUnconfirmedError } from "../harness/gateway-question-dispatch.js";
 import { resolveSessionPlacementForcedTerminalSettlement } from "../session-placement-forced-terminal-settlement.js";
 import { getGatewayToolCallerIdentity } from "../tools/gateway-caller-context.js";
 import {
@@ -93,7 +94,7 @@ export type EmbeddedAgentQueueMessageOutcome =
       sessionId: string;
       target: "embedded_run" | "reply_run";
       gatewayHealth: "live";
-      /** Present only when acceptance was irreversible but transcript confirmation failed. */
+      /** Input is non-replayable, but its delivery or commitment could not be confirmed. */
       transcriptCommit?: "unconfirmed";
       errorMessage?: string;
       deliveredAtMs?: number;
@@ -568,6 +569,31 @@ async function queueEmbeddedAgentMessageAsync(
   canInject?: () => boolean,
 ): Promise<EmbeddedAgentQueueMessageOutcome> {
   const prepared = prepareEmbeddedAgentQueueMessage(sessionId, options, canInject);
+  const enqueuedAtMs = Date.now();
+  const unconfirmed = (errorMessage: string): EmbeddedAgentQueueMessageOutcome => {
+    diag.warn(
+      `queue message accepted without confirmation: sessionId=${sessionId} err=${errorMessage}`,
+    );
+    logActiveRunMessageAccepted(sessionId);
+    return {
+      queued: true,
+      sessionId,
+      target: "embedded_run",
+      gatewayHealth: "live",
+      transcriptCommit: "unconfirmed",
+      errorMessage,
+      enqueuedAtMs,
+    };
+  };
+  const failed = (error: unknown): EmbeddedAgentQueueMessageOutcome => {
+    if (error instanceof QuestionAnswerUnconfirmedError) {
+      options?.onQueueAccepted?.(true);
+      return unconfirmed(error.message);
+    }
+    const errorMessage = formatErrorMessage(error);
+    diag.debug(`queue message rejected: sessionId=${sessionId} err=${errorMessage}`);
+    return createQueueFailureOutcome(sessionId, "runtime_rejected", errorMessage);
+  };
   if (prepared.kind === "complete") {
     if (
       !prepared.outcome.queued &&
@@ -607,29 +633,16 @@ async function queueEmbeddedAgentMessageAsync(
             };
           }
         } catch (err) {
-          return createQueueFailureOutcome(sessionId, "runtime_rejected", formatErrorMessage(err));
+          return failed(err);
         }
       }
     }
     return prepared.outcome;
   }
-  const enqueuedAtMs = Date.now();
   try {
     const queueResult = await prepared.queueMessage(text, prepared.options);
     if (queueResult?.transcriptCommit === "unconfirmed") {
-      diag.warn(
-        `queue message accepted without transcript confirmation: sessionId=${sessionId} err=${queueResult.errorMessage}`,
-      );
-      logActiveRunMessageAccepted(sessionId);
-      return {
-        queued: true,
-        sessionId,
-        target: "embedded_run",
-        gatewayHealth: "live",
-        transcriptCommit: "unconfirmed",
-        errorMessage: queueResult.errorMessage,
-        enqueuedAtMs,
-      };
+      return unconfirmed(queueResult.errorMessage);
     }
     const deliveredAtMs = options?.waitForTranscriptCommit ? Date.now() : undefined;
     logActiveRunMessageAccepted(sessionId);
@@ -642,9 +655,7 @@ async function queueEmbeddedAgentMessageAsync(
       enqueuedAtMs,
     };
   } catch (err) {
-    const errorMessage = formatErrorMessage(err);
-    diag.debug(`queue message rejected: sessionId=${sessionId} err=${errorMessage}`);
-    return createQueueFailureOutcome(sessionId, "runtime_rejected", errorMessage);
+    return failed(err);
   }
 }
 

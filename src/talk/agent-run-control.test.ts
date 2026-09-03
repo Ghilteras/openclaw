@@ -17,6 +17,7 @@ vi.mock("../agents/embedded-agent-runner/runs.js", () => {
 function createDeps(options: {
   activeSessionId?: string;
   queued?: boolean;
+  unconfirmed?: boolean;
   abortResult?: boolean;
   activity?: RealtimeVoiceAgentRunActivity;
   reason?: "no_active_run" | "not_streaming" | "compacting" | "runtime_rejected";
@@ -47,6 +48,9 @@ function createDeps(options: {
               target: "embedded_run" as const,
               gatewayHealth: "live" as const,
               enqueuedAtMs: 123,
+              ...(options.unconfirmed
+                ? { transcriptCommit: "unconfirmed" as const, errorMessage: "receipt unavailable" }
+                : {}),
             },
     ),
     getDiagnosticSessionActivitySnapshot: vi.fn(() => options.activity ?? {}),
@@ -243,6 +247,29 @@ describe("controlRealtimeVoiceAgentRun", () => {
       },
     );
   });
+
+  it.each(["steer", "followup"] as const)(
+    "reports unconfirmed %s without claiming success or sending again",
+    async (mode) => {
+      const deps = createDeps({ activeSessionId: "session-active", unconfirmed: true });
+      const result = await controlRealtimeVoiceAgentRun(
+        { sessionKey: "agent:main:main", text: "continue", mode },
+        deps,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        queued: true,
+        reason: "delivery_unconfirmed",
+        speak: true,
+        show: true,
+        suppress: false,
+      });
+      expect(result.message).toContain("could not confirm");
+      expect(result.message).toContain("not sent again");
+      expect(deps.queueEmbeddedAgentMessageWithOutcomeAsync).toHaveBeenCalledOnce();
+      expect(deps.abortEmbeddedAgentRun).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuses a source-bound control with only the shipped narrow V1 callback", async () => {
     const deps = createDeps({ activeSessionId: "owned-session" });

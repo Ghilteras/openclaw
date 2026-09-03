@@ -256,18 +256,22 @@ export async function controlRealtimeVoiceAgentRun(
     };
   }
 
+  const unconfirmed = outcome.transcriptCommit === "unconfirmed";
+  const message = unconfirmed
+    ? "OpenClaw could not confirm that input. It was not sent again; check the conversation before retrying."
+    : mode === "followup"
+      ? "Queued that follow-up for the active OpenClaw run."
+      : "Got it. I steered the active run.";
   return {
-    ok: true,
+    ok: !unconfirmed,
     mode,
     sessionKey,
     sessionId: outcome.sessionId,
     active: true,
     queued: true,
     target: outcome.target,
-    message:
-      mode === "followup"
-        ? "Queued that follow-up for the active OpenClaw run."
-        : "Got it. I steered the active run.",
+    ...(unconfirmed ? { reason: "delivery_unconfirmed" } : {}),
+    message,
     speak: true,
     show: true,
     suppress: false,

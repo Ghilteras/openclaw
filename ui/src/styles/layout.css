@@ -1152,6 +1152,8 @@ openclaw-settings-save-indicator:empty {
    bottom one puts the divider on the settings takeover's line and lets the
    symmetric block padding center the row in the band it leaves. */
 .sidebar-shell__footer {
+  /* Positioned ledge for resident sidebar surfaces such as the lobster pet. */
+  position: relative;
   flex-shrink: 0;
   min-height: var(--shell-sidebar-footer-height);
   margin-inline: calc(-1 * var(--sidebar-pad-x));
@@ -1796,6 +1798,10 @@ openclaw-settings-save-indicator:empty {
   font-size: calc(10px * var(--control-ui-text-scale));
   font-variant-numeric: tabular-nums;
   text-align: center;
+}
+
+.sidebar-session-catalog-project > .sidebar-session-pagination--catalog {
+  padding-left: calc(var(--sidebar-text-offset) + var(--sidebar-lead));
 }
 
 .sidebar-session-pagination {
@@ -3498,9 +3504,9 @@ openclaw-sidebar-attention {
   flex: 0 0 32px;
   place-items: center;
   padding: 0;
-  border: 0;
+  border: var(--sidebar-issues-border, 0);
   border-radius: var(--radius-md);
-  background: transparent;
+  background: var(--sidebar-issues-background, transparent);
   color: var(--muted);
   cursor: var(--cursor-action);
 }
@@ -3735,7 +3741,11 @@ openclaw-tooltip.sidebar-hover-tooltip {
 }
 
 .sidebar-footer-bar__status--restarting,
-.sidebar-footer-bar__status--restarting:hover {
+.sidebar-footer-bar__status--restarting:hover,
+.sidebar-footer-bar__status--suspending,
+.sidebar-footer-bar__status--suspending:hover,
+.sidebar-footer-bar__status--suspended,
+.sidebar-footer-bar__status--suspended:hover {
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   color: var(--warn);
   cursor: default;
@@ -3759,12 +3769,15 @@ openclaw-tooltip.sidebar-hover-tooltip {
   background: var(--danger);
 }
 
-.sidebar-footer-bar__status--restarting .sidebar-footer-bar__status-dot {
+.sidebar-footer-bar__status--restarting .sidebar-footer-bar__status-dot,
+.sidebar-footer-bar__status--suspending .sidebar-footer-bar__status-dot,
+.sidebar-footer-bar__status--suspended .sidebar-footer-bar__status-dot {
   background: var(--warn);
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .sidebar-footer-bar__status--restarting .sidebar-footer-bar__status-dot {
+  .sidebar-footer-bar__status--restarting .sidebar-footer-bar__status-dot,
+  .sidebar-footer-bar__status--suspending .sidebar-footer-bar__status-dot {
     animation: pulse-subtle 1.2s ease-in-out infinite;
   }
 }

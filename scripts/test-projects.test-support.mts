@@ -109,23 +109,25 @@ import {
   splitTestTargetChunks as splitTargetChunks,
 } from "./lib/gateway-server-test-plan.mts";
 import { readTestSelectorSourceFacts } from "./lib/test-selector-source-facts.mts";
+// CI imports planning before dependency installation; execution owners stay outside this closure.
+import { resolveVitestCliEntry } from "./lib/vitest-build-prerequisites.mts";
+import { resolveBooleanModeFlag, vitestOptionConsumesNextArg } from "./lib/vitest-cli-mode.mts";
 import {
   isCiLikeEnv,
   resolveLocalFullSuiteProfile,
   type VitestHostInfo,
 } from "./lib/vitest-local-scheduling.mts";
 import {
+  DEFAULT_VITEST_NO_OUTPUT_HEARTBEAT_MS,
+  resolveDefaultVitestNoOutputTimeoutMs,
+  resolveVitestNodeArgs,
+} from "./lib/vitest-process-env.mts";
+import {
   estimateVitestTestFileSeconds,
   estimateVitestToolingFileSeconds,
   resolveShardTimingKey,
   type VitestShardTimingSpec,
 } from "./lib/vitest-shard-metadata.mts";
-import {
-  DEFAULT_VITEST_NO_OUTPUT_HEARTBEAT_MS,
-  resolveDefaultVitestNoOutputTimeoutMs,
-  resolveVitestCliEntry,
-  resolveVitestNodeArgs,
-} from "./run-vitest.mts";
 
 type VitestRunPlan = {
   config: string;
@@ -1656,10 +1658,12 @@ function readImportGraphEdges(
 function listImportGraphGrepMatches(
   cwd: string,
   terms: string[],
-  options: ImportGraphOptions = {},
+  options: ImportGraphOptions & { testFilesOnly?: boolean } = {},
 ) {
   const tooling = options.tooling === true;
-  const cacheKey = (term: string) => `${cwd}\0${tooling}\0${term}`;
+  const testFilesOnly = options.testFilesOnly === true;
+  // Narrow reference matches must not satisfy a later full import-frontier query.
+  const cacheKey = (term: string) => `${cwd}\0${tooling}\0${testFilesOnly}\0${term}`;
   const matches = new Map(
     terms.map((term) => [term, cachedImportGraphGrepMatches.get(cacheKey(term)) ?? null]),
   );
@@ -1671,6 +1675,13 @@ function listImportGraphGrepMatches(
   }
   const roots = tooling ? TOOLING_IMPORT_GRAPH_ROOTS : SOURCE_ROOTS_FOR_IMPORT_GRAPH;
   const extensions = tooling ? TOOLING_IMPORTABLE_FILE_EXTENSIONS : IMPORTABLE_FILE_EXTENSIONS;
+  // Literal-reference routing only consumes tests; keep import frontiers on the full scope.
+  const suffixes = testFilesOnly
+    ? extensions.flatMap((ext) => [`.test${ext}`, `.spec${ext}`])
+    : extensions;
+  const grepPaths = roots.flatMap((root) =>
+    suffixes.map((suffix) => `:(glob)${root}/**/*${suffix}`),
+  );
   const spawnOptions: SpawnSyncOptionsWithStringEncoding = {
     cwd,
     encoding: "utf8",
@@ -1686,7 +1697,7 @@ function listImportGraphGrepMatches(
       "--fixed-strings",
       "--hidden",
       "--no-ignore",
-      ...extensions.flatMap((ext) => ["--glob", `*${ext}`]),
+      ...suffixes.flatMap((suffix) => ["--glob", `*${suffix}`]),
       "--glob",
       "!**/node_modules/**",
       "--glob",
@@ -1703,15 +1714,7 @@ function listImportGraphGrepMatches(
   if (result.error || (result.status !== 0 && result.status !== 1)) {
     result = spawnSync(
       "git",
-      [
-        "grep",
-        "-l",
-        "--fixed-strings",
-        "-f",
-        "-",
-        "--",
-        ...(tooling ? TOOLING_IMPORT_GRAPH_GREP_PATHS : IMPORT_GRAPH_GREP_PATHS),
-      ],
+      ["grep", "-l", "--fixed-strings", "-f", "-", "--", ...grepPaths],
       spawnOptions,
     );
   }
@@ -3103,7 +3106,11 @@ function resolveGithubYamlGuardTargets(changedPath: string) {
 
 function resolveDirectToolingReferenceTests(changedPath: string, cwd: string) {
   const normalized = normalizePathPattern(changedPath);
-  return (listImportGraphGrepMatches(cwd, [normalized], { tooling: true }).get(normalized) ?? [])
+  return (
+    listImportGraphGrepMatches(cwd, [normalized], { tooling: true, testFilesOnly: true }).get(
+      normalized,
+    ) ?? []
+  )
     .filter(
       ({ file, references }) =>
         file !== "test/scripts/test-projects.test.ts" &&
@@ -3763,7 +3770,8 @@ function shouldUseWholeConfigTarget(kind: string, targetArg: string, cwd: string
     return false;
   }
   const relative = toRepoRelativeTarget(targetArg, cwd);
-  if (isTestFileTarget(relative)) {
+  // Source files need whole-project coverage; existing directories already define a test scope.
+  if (isTestFileTarget(relative) || isExistingDirectoryTarget(targetArg, cwd)) {
     return false;
   }
   return relative.startsWith("ui/src/");
@@ -3795,36 +3803,42 @@ export function createVitestPreflightPnpmArgs(config: string) {
 }
 
 export function parseTestProjectsArgs(args: string[], cwd = process.cwd()) {
-  const forwardedArgs = [];
-  const targetArgs = [];
+  const forwardedArgs: string[] = [];
+  const nonTargetArgs: string[] = [];
+  const targetArgs: string[] = [];
   let watchMode = false;
   let passthrough = false;
 
-  for (const arg of args) {
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
     if (arg === "--") {
-      if (targetArgs.length > 0) {
-        passthrough = true;
-      }
+      // The project wrapper consumes separators; direct native and batch calls retain theirs.
+      passthrough = targetArgs.length > 0;
       continue;
     }
-    if (passthrough) {
-      if (arg === "--watch") {
-        watchMode = true;
-      }
-      forwardedArgs.push(arg);
-      continue;
+    const watch = resolveBooleanModeFlag(args, index, "watch", "-w");
+    if (watch) {
+      watchMode = watch.value;
     }
-    if (arg === "--watch") {
-      watchMode = true;
+    // Preserve bare wrapper --watch's existing omission of the named run command.
+    const next = args[index + 1];
+    if (!passthrough && arg === "--watch" && next !== "true" && next !== "false") {
       continue;
-    }
-    if (isPathLikeTargetArg(arg, cwd)) {
-      targetArgs.push(arg);
     }
     forwardedArgs.push(arg);
+    if (vitestOptionConsumesNextArg(arg, next)) {
+      forwardedArgs.push(next!);
+      // Preserve operand occurrences even when their value also names a target.
+      nonTargetArgs.push(arg, next!);
+      index++;
+    } else if (!passthrough && isPathLikeTargetArg(arg, cwd)) {
+      targetArgs.push(arg);
+    } else {
+      nonTargetArgs.push(arg);
+    }
   }
 
-  return { forwardedArgs, targetArgs, watchMode };
+  return { forwardedArgs, nonTargetArgs, targetArgs, watchMode };
 }
 
 export function buildVitestRunPlans(
@@ -3833,7 +3847,12 @@ export function buildVitestRunPlans(
   listChangedPaths: (baseRef: string, cwd: string) => string[] = listChangedPathsFromGit,
   options: ChangedTestTargetOptions = {},
 ) {
-  const { forwardedArgs, targetArgs, watchMode } = parseTestProjectsArgs(args, cwd);
+  const {
+    forwardedArgs,
+    nonTargetArgs: remainingArgs,
+    targetArgs,
+    watchMode,
+  } = parseTestProjectsArgs(args, cwd);
   const changedTargetArgs =
     targetArgs.length === 0 ? resolveChangedTargetArgs(args, cwd, listChangedPaths, options) : null;
   const requestedTargetArgs = changedTargetArgs ?? targetArgs;
@@ -3868,7 +3887,7 @@ export function buildVitestRunPlans(
     ];
   }
 
-  const nonTargetArgs = activeForwardedArgs.filter((arg) => !requestedTargetArgs.includes(arg));
+  const nonTargetArgs = changedTargetArgs !== null ? activeForwardedArgs : remainingArgs;
   const explicitConfigTargets = activeTargetArgs.map((targetArg) =>
     toRepoRelativeTarget(targetArg, cwd),
   );

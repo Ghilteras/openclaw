@@ -174,6 +174,9 @@ Closing or reassigning the source before that check rejects the stale input
 without cancelling the independent backing question or run; a later valid
 answer can still use the same question. An answer already consumed by the
 question remains accepted if the source closes while its response returns.
+Delayed confirmation uses the question's existing deadline. If confirmation is
+lost entirely, Talk reports that it could not confirm the input and does not send
+it again as steering; check the conversation before retrying.
 This applies to controls routed through pending-question input, not universal
 interception of spoken answers by every voice provider.
 

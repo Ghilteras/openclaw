@@ -42,6 +42,7 @@ export type {
   SessionsFilesSetResult as SessionWorkspaceSetResult,
   CronJob,
   CronRunLogEntry,
+  CronScratchGetResult,
   UpdateAvailable,
   UpdateHoldResult,
   UpdateScheduleState,
@@ -441,6 +442,7 @@ export type SessionsBranchesSwitchResult =
 export type SessionsPatchResult = SessionsPatchResultBase<{
   sessionId: string;
   updatedAt?: number;
+  permissionMode?: GatewaySessionRow["permissionMode"];
   archivedAt?: number;
   contextWindow?: string;
   thinkingLevel?: string;

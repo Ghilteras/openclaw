@@ -1,4 +1,5 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { QuestionAnswerUnconfirmedError } from "../../agents/harness/gateway-question-dispatch.js";
 import { hasPromptImageInput } from "../../media/prompt-image-input.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { createMessageInjectionAuthority } from "./message-injection-authority.js";
@@ -263,43 +264,38 @@ export function beginReplyMessageInjectionTarget(
       callerOnQueueAccepted?.(accepted);
     },
   };
+  const failed = (error: unknown): ReplyMessageInjectionOutcome => {
+    if (error instanceof QuestionAnswerUnconfirmedError) {
+      runtimeQueueOptions.onQueueAccepted?.(true);
+      return {
+        status: "accepted",
+        result: { transcriptCommit: "unconfirmed", errorMessage: error.message },
+      };
+    }
+    settleAcceptance(false);
+    return { status: "rejected", reason: "runtime_rejected", errorMessage: String(error) };
+  };
   let queued: Promise<void | ReplyBackendQueueMessageResult>;
   try {
     queued = resolved.injection.queueMessage(text, runtimeQueueOptions);
   } catch (error) {
-    settleAcceptance(false);
-    const immediateRejection = {
-      status: "rejected" as const,
-      reason: "runtime_rejected" as const,
-      errorMessage: String(error),
-    };
     return {
       targetRunId,
       acceptance: acceptance.promise,
-      outcome: Promise.resolve(immediateRejection),
+      outcome: Promise.resolve(failed(error)),
     };
   }
-  const outcome = queued.then(
-    async (result): Promise<ReplyMessageInjectionOutcome> => {
-      settleAcceptance(true);
-      if (
-        targetRunId &&
-        queueOptions?.waitForTranscriptCommit === true &&
-        result?.transcriptCommit !== "unconfirmed"
-      ) {
-        await userTurnTranscriptRecorder?.confirmSteerTargetRunIdForPersistence?.(targetRunId);
-      }
-      return result ? { status: "accepted", result } : { status: "accepted" };
-    },
-    (error: unknown): ReplyMessageInjectionOutcome => {
-      settleAcceptance(false);
-      return {
-        status: "rejected",
-        reason: "runtime_rejected",
-        errorMessage: String(error),
-      };
-    },
-  );
+  const outcome = queued.then(async (result): Promise<ReplyMessageInjectionOutcome> => {
+    settleAcceptance(true);
+    if (
+      targetRunId &&
+      queueOptions?.waitForTranscriptCommit === true &&
+      result?.transcriptCommit !== "unconfirmed"
+    ) {
+      await userTurnTranscriptRecorder?.confirmSteerTargetRunIdForPersistence?.(targetRunId);
+    }
+    return result ? { status: "accepted", result } : { status: "accepted" };
+  }, failed);
   return {
     targetRunId,
     acceptance: acceptance.promise,

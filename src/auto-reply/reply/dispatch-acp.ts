@@ -28,6 +28,7 @@ import {
   resolveAgentWorkspaceDir,
   resolveSessionAgentId,
 } from "../../agents/agent-scope.js";
+import { QuestionAnswerUnconfirmedError } from "../../agents/harness/gateway-question-dispatch.js";
 import { claimPendingAgentQuestionAnswer } from "../../agents/harness/gateway-question.js";
 import { toolPolicyRestrictsTools } from "../../agents/tool-policy.js";
 import { recordRuntimeActionDecision } from "../../audit/runtime-action-decision.js";
@@ -509,21 +510,35 @@ export async function tryDispatchAcpReplyCore(params: {
       logVerbose(`dispatch-acp: participant persistence failed: ${formatErrorMessage(error)}`),
   };
   const pendingAnswerText = resolveAcpPromptText(params.ctx);
-  if (
-    pendingAnswerText &&
-    !params.images?.length &&
-    !params.extractedFileImages?.length &&
-    !hasInboundMediaForUnderstanding(params.ctx) &&
-    (await claimPendingAgentQuestionAnswer({
-      sessionKey: acpResolution.sessionKey,
-      text: pendingAnswerText,
-    }))
-  ) {
-    recordAcceptedSessionParticipantInput(params.ctx, participantTarget);
-    const counts = params.dispatcher.getQueuedCounts();
-    params.recordProcessed("completed", { reason: "acp_question_answer" });
-    params.markIdle("message_completed");
-    return { queuedFinal: false, counts };
+  try {
+    if (
+      pendingAnswerText &&
+      !params.images?.length &&
+      !params.extractedFileImages?.length &&
+      !hasInboundMediaForUnderstanding(params.ctx) &&
+      (await claimPendingAgentQuestionAnswer({
+        sessionKey: acpResolution.sessionKey,
+        text: pendingAnswerText,
+      }))
+    ) {
+      recordAcceptedSessionParticipantInput(params.ctx, participantTarget);
+      const counts = params.dispatcher.getQueuedCounts();
+      params.recordProcessed("completed", { reason: "acp_question_answer" });
+      params.markIdle("message_completed");
+      return { queuedFinal: false, counts };
+    }
+  } catch (error) {
+    if (!(error instanceof QuestionAnswerUnconfirmedError)) {
+      throw error;
+    }
+    // Throwing would make the reply hook fall through and execute the input again.
+    // Record uncertainty without starting another turn or bypassing delivery policy.
+    params.recordProcessed("error", {
+      reason: "acp_question_answer_unconfirmed",
+      error: error.message,
+    });
+    params.markIdle("message_error");
+    return { queuedFinal: false, counts: params.dispatcher.getQueuedCounts() };
   }
   const progressSessionKeys = isDiagnosticsEnabled(params.cfg)
     ? Array.from(

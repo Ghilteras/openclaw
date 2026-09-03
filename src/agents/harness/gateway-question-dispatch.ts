@@ -15,6 +15,18 @@ export class QuestionDispatchRefusedError extends Error {
   override name = "QuestionDispatchRefusedError";
 }
 
+/** A failed transport cannot release possibly committed input for another route. */
+export class QuestionAnswerUnconfirmedError extends Error {
+  override name = "QuestionAnswerUnconfirmedError";
+
+  constructor(cause: unknown) {
+    super(
+      "The question answer may have been accepted, but confirmation was lost. It was not sent again; check the conversation before retrying.",
+      { cause },
+    );
+  }
+}
+
 /** Custom transports opt into enforcing authority after preparation, immediately before I/O. */
 export type AgentQuestionDispatcher = {
   version: 2;

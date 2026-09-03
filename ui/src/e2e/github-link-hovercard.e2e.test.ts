@@ -2,6 +2,7 @@
 import path from "node:path";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 import { beforeEach, afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.ts";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 
 let artifactDir: string | undefined;
@@ -23,11 +24,9 @@ const allowMissingChromium = process.env.OPENCLAW_UI_E2E_ALLOW_MISSING_CHROMIUM 
 const describeControlUiE2e = chromiumAvailable || !allowMissingChromium ? describe : describe.skip;
 
 let server: ControlUiE2eServer;
-const openBrowsers = new Set<Browser>();
+let browser: Browser;
 
 async function newBrowserContext(): Promise<BrowserContext> {
-  const browser = await chromium.launch({ executablePath: chromiumExecutablePath });
-  openBrowsers.add(browser);
   return browser.newContext({
     colorScheme: "light",
     locale: "en-US",
@@ -36,9 +35,14 @@ async function newBrowserContext(): Promise<BrowserContext> {
   });
 }
 
-async function closeBrowsers(): Promise<void> {
-  await Promise.all([...openBrowsers].map((browser) => browser.close().catch(() => {})));
-  openBrowsers.clear();
+async function closeContexts(): Promise<void> {
+  const [first, ...remaining] = browser?.contexts() ?? [];
+  await runQaGatewayFixture(
+    async () => {
+      await first?.close();
+    },
+    ...remaining.map((context) => () => context.close()),
+  );
 }
 
 async function expectText(locator: Locator, text: string): Promise<void> {
@@ -90,8 +94,7 @@ const pullPreviewResponse = {
   updatedAt: "2026-07-04T09:53:55Z",
 };
 
-// Shared page setup for the two pointer-lifecycle cases below: both only need
-// a single previewable pull-request link, unlike the full walkthrough above.
+// Shared page setup for lifecycle cases that need only one pull-request link.
 async function openPullPreviewPage(deferPreview = false): Promise<{
   card: Locator;
   gateway: Awaited<ReturnType<typeof installMockGateway>>;
@@ -138,14 +141,18 @@ describeControlUiE2e("GitHub link hover cards", () => {
       throw new Error(`Playwright Chromium is unavailable at ${chromiumExecutablePath}`);
     }
     server = await startControlUiE2eServer();
+    browser = await chromium.launch({ executablePath: chromiumExecutablePath });
   });
 
   afterAll(async () => {
-    await closeBrowsers();
-    await server?.close();
+    await runQaGatewayFixture(
+      closeContexts,
+      () => browser?.close(),
+      () => server?.close(),
+    );
   });
 
-  afterEach(closeBrowsers);
+  afterEach(closeContexts);
 
   it.each([
     { theme: "light", reducedMotion: "no-preference", width: 1180, fails: false },
@@ -185,6 +192,37 @@ describeControlUiE2e("GitHub link hover cards", () => {
     }
     expect(await card.locator(".skeleton").count()).toBe(0);
     expect(await card.getAttribute("aria-label")).not.toBe("Loading GitHub details…");
+  });
+
+  it("reloads a dismissed pending preview on rehover and caches the successful response", async () => {
+    const proofDir =
+      artifactDir ?? createControlUiE2eArtifactDir("github-link-hovercard-cancellation");
+    const { card, gateway, page, pullLink } = await openPullPreviewPage(true);
+
+    await pullLink.hover();
+    await gateway.waitForRequest("controlUi.githubPreview");
+    await expect.poll(() => card.getAttribute("aria-label")).toBe("Loading GitHub details…");
+    await page.mouse.move(1, 1);
+    await expect.poll(() => card.count()).toBe(0);
+
+    await pullLink.hover();
+    await card.waitFor({ state: "visible" });
+    // The abandoned response arrives after rehover; a fresh request must own
+    // the rendered result, and the retired response must not poison its cache.
+    await gateway.resolveDeferred("controlUi.githubPreview");
+    await expect.poll(() => card.getAttribute("data-loading")).toBe("false");
+    // Capture the settled state even when the title assertion below fails.
+    await page.screenshot({
+      path: path.join(proofDir, "github-hovercard-cancellation-rehover.png"),
+    });
+    await expectText(card, pullPreviewResponse.title);
+    expect((await gateway.getRequests("controlUi.githubPreview")).length).toBe(2);
+
+    await page.mouse.move(1, 1);
+    await expect.poll(() => card.count()).toBe(0);
+    await pullLink.hover();
+    await expectText(card, pullPreviewResponse.title);
+    expect((await gateway.getRequests("controlUi.githubPreview")).length).toBe(2);
   });
 
   it("previews issue and pull request links while preserving navigation", async () => {

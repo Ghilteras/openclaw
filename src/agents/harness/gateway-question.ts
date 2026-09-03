@@ -8,6 +8,7 @@ import { resolveGlobalMap } from "../../shared/global-singleton.js";
 import type { EmbeddedRunAttemptParams } from "../embedded-agent-runner/run/types.js";
 import type { GatewayQuestionCall } from "../tools/gateway-question-lifecycle.js";
 import {
+  QuestionAnswerUnconfirmedError,
   QuestionDispatchRefusedError,
   resolveAgentQuestionGatewayCall,
   type AgentHarnessQuestionGatewayCall,
@@ -68,50 +69,28 @@ const pendingAgentQuestions = resolveGlobalMap<string, PendingAgentQuestion>(
   },
 );
 
-function readQuestionErrorReason(error: unknown): string | undefined {
+function readQuestionRejection(error: unknown): { code: unknown; reason?: string } | undefined {
   if (!error || typeof error !== "object") {
     return undefined;
   }
-  const requestError = error as { details?: unknown; name?: unknown };
+  const requestError = error as { details?: unknown; name?: unknown; gatewayCode?: unknown };
   if (requestError.name !== "GatewayClientRequestError") {
     return undefined;
   }
   const details = requestError.details;
-  if (!details || typeof details !== "object" || Array.isArray(details)) {
-    return undefined;
-  }
-  const reason = (details as { reason?: unknown }).reason;
-  return typeof reason === "string" ? reason : undefined;
+  const reason =
+    details && typeof details === "object" && !Array.isArray(details)
+      ? (details as { reason?: unknown }).reason
+      : undefined;
+  return {
+    code: requestError.gatewayCode,
+    reason: typeof reason === "string" ? reason : undefined,
+  };
 }
 
 function isTerminalAgentQuestionError(error: unknown): boolean {
-  const reason = readQuestionErrorReason(error);
+  const reason = readQuestionRejection(error)?.reason;
   return reason !== undefined && TERMINAL_QUESTION_ERROR_REASONS.has(reason);
-}
-
-async function observeQuestionAnswer(
-  answer: Promise<QuestionWaitAnswerResult> | undefined,
-): Promise<Extract<QuestionWaitAnswerResult, { status: "answered" }> | undefined> {
-  if (!answer) {
-    return undefined;
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const result = await Promise.race([
-      answer,
-      new Promise<undefined>((resolve) => {
-        timer = setTimeout(() => resolve(undefined), 1_000);
-        timer.unref?.();
-      }),
-    ]);
-    return result?.status === "answered" ? result : undefined;
-  } catch {
-    return undefined;
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
 }
 
 type QuestionInputAuthority = { kind: "run" | "source-bound"; assertCurrent: () => void };
@@ -264,7 +243,7 @@ export async function claimPendingAgentQuestionAnswer(params: {
   }
   const reservation = reserveQuestionInput(state, params.authority);
   let consumed = false;
-  let terminal = false;
+  let retainReservation = false;
   try {
     if (!state.answer) {
       // Both registration owners attach the answer before this continuation.
@@ -301,21 +280,27 @@ export async function claimPendingAgentQuestionAnswer(params: {
         throw error;
       }
       if (isTerminalAgentQuestionError(error)) {
-        terminal = true;
+        retainReservation = true;
         return false;
       }
-      // The shared waiter can be answered by another actor, even with identical
-      // text. Only this submission's owner-stamped receipt prevents lost-ACK replay.
-      const answer = await observeQuestionAnswer(state.answer);
-      if (!answer) {
+      const rejection = readQuestionRejection(error);
+      // These resolve rejections precede commitment. UNAVAILABLE can follow a
+      // saved secret, and waiter rejection can follow commitment, so neither qualifies.
+      if (rejection?.code === "INVALID_REQUEST" || rejection?.code === "FORBIDDEN") {
         throw error;
       }
-      terminal = true;
-      consumed = answer.resolutionId === resolutionId;
+      // The existing bounded waiter owns the deadline, not a shorter grace timer.
+      // Only this submission's receipt proves consumption; missing proof forbids replay.
+      const answer = await state.answer?.catch(() => undefined);
+      retainReservation = true;
+      if (!answer || answer.status === "pending") {
+        throw new QuestionAnswerUnconfirmedError(error);
+      }
+      consumed = answer.status === "answered" && answer.resolutionId === resolutionId;
     }
     return consumed;
   } finally {
-    reservation.finish(consumed || terminal);
+    reservation.finish(consumed || retainReservation);
   }
 }
 

@@ -99,7 +99,7 @@ export type ReplyToolAuthorityProjector = (
 ) => string;
 
 export type ReplyBackendQueueMessageResult = {
-  /** Acceptance was irreversible, but the harness could not prove transcript commitment. */
+  /** Input is non-replayable, but its delivery or commitment could not be confirmed. */
   transcriptCommit: "unconfirmed";
   errorMessage: string;
 };

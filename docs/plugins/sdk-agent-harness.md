@@ -160,6 +160,20 @@ all of them before dispatch. Implicit selection uses OpenClaw if no plugin can
 own the full set; an explicit or persisted plugin selection fails closed unless
 the plugin declares the lossless OpenClaw fallback.
 
+### Per-turn temporal context
+
+Native harnesses that own their model prompt can use `buildTemporalContextText`
+from `openclaw/plugin-sdk/agent-harness-runtime`. It renders the same current
+local date and time zone as the built-in OpenClaw runtime. It uses
+`agents.defaults.userTimezone` when configured and the host zone otherwise.
+
+Call it for each turn, after the final tool surface is known. Pass
+`sessionStatusAvailable: true` only when that exact surface includes
+`session_status`; this keeps the exact-time hint out of prompts where the tool
+is unavailable. Carry the result through the native runtime's existing
+per-turn application or developer context instead of appending it to stable
+thread instructions.
+
 ## Register a harness
 
 **Import:** `openclaw/plugin-sdk/agent-harness`
@@ -499,9 +513,17 @@ answered transition. Closure after dispatch does not make an accepted answer
 replayable. Plain-text submissions carry a fresh, bounded `resolutionId` on
 `question.resolve`; the question owner records it only when that submission commits.
 Host waiters request `includeResolutionId: true` on `question.waitAnswer` and use
-that receipt to recover a lost response. Another actor's answer, even identical
-text, does not establish consumption of this input. Backing-run abort, timeout,
-and error cleanup retain independent authority.
+that receipt to recover a lost response using the question waiter's existing
+deadline, not a separate shorter timer. Another actor's answer, even identical
+text, does not establish consumption of this input. A definitive resolve rejection
+releases the input immediately; a cancelled or expired waiter proves non-consumption.
+
+If the receipt is missing, rejected, or still pending when the waiter settles,
+the host records the input as unconfirmed and non-replayable rather than sending
+it through ordinary steering again. This is routing ownership, not proof that the
+answer committed. Talk reports the uncertainty, and ACP records an intentional
+non-outcome without starting another turn. Backing-run abort, timeout, and error
+cleanup retain independent authority.
 
 Custom transports must preserve these request and response fields for lost-response
 recovery. `resolutionId` is an opaque 1–128-character correlation value, not permission

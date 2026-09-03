@@ -6,7 +6,6 @@ import {
   type Question,
   type QuestionRecord,
   type QuestionRequestParams,
-  type QuestionResolveParams,
   validateQuestionGetParams,
   validateQuestionListParams,
   validateQuestionRequestParams,
@@ -392,7 +391,7 @@ export function createQuestionHandlers(
         validationError("question.resolve", validateQuestionResolveParams.errors, respond);
         return;
       }
-      const request = params as QuestionResolveParams;
+      const request = params;
       try {
         const question = manager.get(request.id);
         if (question) {

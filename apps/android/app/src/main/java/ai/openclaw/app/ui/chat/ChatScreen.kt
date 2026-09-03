@@ -141,6 +141,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -222,17 +223,6 @@ internal fun resolvePendingAssistantAutoSend(
   return queued
 }
 
-/** Chooses the session key to load for initial chat hydration, if any. */
-internal fun resolveInitialChatLoadSessionKey(
-  sessionKey: String,
-  mainSessionKey: String,
-): String? {
-  val current = sessionKey.trim()
-  val main = mainSessionKey.trim().ifEmpty { "main" }
-  if (current.isNotEmpty() && current != "main" && current != main) return null
-  return main
-}
-
 /** Reserves a viewport strip so the jump-to-latest target never covers chat content. */
 internal fun chatReaderListBottomInset(showJumpToLatest: Boolean): Dp =
   if (showJumpToLatest) {
@@ -308,6 +298,7 @@ fun ChatScreen(
   val messages by viewModel.chatMessages.collectAsState()
   val transcriptAnchor by viewModel.chatTranscriptAnchor.collectAsState()
   val historyLoading by viewModel.chatHistoryLoading.collectAsState()
+  val sessionCreating by viewModel.chatSessionCreating.collectAsState()
   val errorText by viewModel.chatError.collectAsState()
   val pendingRunCount by viewModel.pendingRunCount.collectAsState()
   val selectedActiveRun by viewModel.chatSelectedActiveRunPresentation.collectAsState()
@@ -576,10 +567,7 @@ fun ChatScreen(
   }
 
   LaunchedEffect(Unit) {
-    val loadSessionKey = resolveInitialChatLoadSessionKey(sessionKey, mainSessionKey)
-    if (loadSessionKey != null) {
-      viewModel.loadChat(loadSessionKey, sessionOwnerAgentId)
-    }
+    viewModel.loadCurrentChat()
     viewModel.refreshChatSessions(limit = 100)
     viewModel.refreshChatCommands()
   }
@@ -712,7 +700,7 @@ fun ChatScreen(
   }
 
   val newChatEnabled =
-    !modelSelectionLocked &&
+    !sessionCreating && !modelSelectionLocked &&
       canStartNewChat(
         pendingRunCount = pendingRunCount,
         hasQueuedMessage = pendingAssistantAutoSend != null,
@@ -743,6 +731,7 @@ fun ChatScreen(
       onOpenSidebar = onOpenSidebar,
       healthOk = healthOk,
       pendingRunCount = pendingRunCount,
+      sessionCreating = sessionCreating,
       newChatEnabled = newChatEnabled,
       workspaceGit = workspaceGit,
       branches = sessionBranches,
@@ -871,7 +860,7 @@ fun ChatScreen(
           adminAuthorized = canAdminSessionSettings,
           connected = gatewayConnectionDisplay.isConnected,
           gatewayAvailable = healthOk,
-          loading = historyLoading,
+          loading = historyLoading || sessionCreating,
           sending = sendInFlight,
           activeRun = pendingRunCount > 0,
           streaming = streamingAssistantText != null,
@@ -927,6 +916,7 @@ fun ChatScreen(
       voiceNoteLevel = voiceNoteLevel,
       recordVoiceNoteEnabled =
         !talkActive &&
+          !composerOwner.gatewayStableId.isNullOrBlank() &&
           pendingRunCount == 0 &&
           !micCaptureActive &&
           !dictationActive &&
@@ -940,6 +930,7 @@ fun ChatScreen(
             composerState.cancelMediaAcquisition(mediaAuthorizationId)
             return@launch
           }
+          dictationController.cancel()
           if (voiceNoteRecorder.start(recordingId)) {
             if (
               viewModel.isCurrentChatComposerOwner(ownerSnapshot) &&
@@ -1111,6 +1102,7 @@ private fun ChatHeader(
   onOpenSidebar: () -> Unit,
   healthOk: Boolean,
   pendingRunCount: Int,
+  sessionCreating: Boolean,
   newChatEnabled: Boolean,
   workspaceGit: Boolean,
   branches: List<SessionBranch>,
@@ -1126,6 +1118,7 @@ private fun ChatHeader(
   val newChatInWorktreeLabel = stringResource(R.string.new_chat_in_worktree)
   val statusLabel =
     when {
+      sessionCreating -> nativeString("Loading")
       pendingRunCount > 0 -> nativeString("Working")
       healthOk -> nativeString("Ready")
       else -> nativeString("Offline")
@@ -1221,7 +1214,11 @@ private fun ChatHeader(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false),
           )
-          Box(modifier = Modifier.size(6.dp).background(statusColor, CircleShape))
+          if (sessionCreating) {
+            CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = ClawTheme.colors.textMuted)
+          } else {
+            Box(modifier = Modifier.size(6.dp).background(statusColor, CircleShape))
+          }
         }
       }
     }
@@ -2579,6 +2576,9 @@ private fun ChatComposer(
 
     VoiceNoteRecorderError(voiceNoteState)
     ChatDictationError(dictationState)
+    if (recordVoiceNoteEnabled && (dictationState as? ChatDictationState.Failure)?.reason == ChatDictationFailure.Unavailable) {
+      TextButton(onClick = onStartVoiceNote) { Text(voiceNoteRecordLabel()) }
+    }
 
     if (!healthOk && gatewayOffline) {
       ChatOfflineNotice(
@@ -3153,7 +3153,7 @@ private fun ChatInputPill(
           textStyle = draftStyle.copy(color = ClawTheme.colors.text),
           cursorBrush = SolidColor(ClawTheme.colors.primary),
           minLines = 1,
-          maxLines = 4,
+          maxLines = 6,
           modifier =
             Modifier
               .fillMaxWidth()

@@ -29,6 +29,11 @@ export async function withQuestionGateway(
     onResolved: (callback: () => void) => void;
     dropNextResolveResponse: () => void;
     holdRegistration: () => { entered: Promise<void>; release: () => void };
+    holdWaitAnswerResponse: () => {
+      entered: Promise<void>;
+      release: () => void;
+      fail: () => void;
+    };
   }) => Promise<void>,
 ) {
   await withEnvAsync(
@@ -60,6 +65,7 @@ export async function withQuestionGateway(
       let onResolved = () => {};
       let dropResolveResponse = false;
       let registrationHold: { entered: Deferred; release: Deferred } | undefined;
+      let answerHold: { entered: Deferred; release: Deferred<boolean> } | undefined;
       server.on("connection", (socket) => {
         socket.send(
           JSON.stringify({
@@ -104,7 +110,14 @@ export async function withQuestionGateway(
             const request = frame.params as QuestionWaitAnswerParams;
             void manager
               .waitAnswer(request.id, undefined, request.includeResolutionId)
-              .then(respond);
+              .then(async (result) => {
+                answerHold?.entered.resolve();
+                if ((await answerHold?.release.promise) === false) {
+                  socket.terminate();
+                } else {
+                  respond(result);
+                }
+              });
             waitStarted.resolve();
           } else if (frame.method === "question.resolve") {
             const request = frame.params as QuestionResolveParams;
@@ -165,6 +178,15 @@ export async function withQuestionGateway(
             const hold = { entered: deferred(), release: deferred() };
             registrationHold = hold;
             return { entered: hold.entered.promise, release: () => hold.release.resolve() };
+          },
+          holdWaitAnswerResponse: () => {
+            const hold = { entered: deferred(), release: deferred<boolean>() };
+            answerHold = hold;
+            return {
+              entered: hold.entered.promise,
+              release: () => hold.release.resolve(true),
+              fail: () => hold.release.resolve(false),
+            };
           },
           onResolved: (callback) => {
             onResolved = callback;
