@@ -240,9 +240,11 @@ export function resumeSubagentRun(runId: string) {
     resumedRuns.add(runId);
     return;
   }
-  if (entry.execution.outcome) {
+  if (entry.execution.outcome && entry.suppressAnnounceReason !== "steer-restart") {
     // The child result can reach disk before its task projection. Replay that
     // idempotent projection before terminal cleanup exits during restoration.
+    // A steer restart deliberately leaves the shared task writable for its
+    // successor run, so the retired row must not terminalize it.
     safeFinalizeSubagentTaskRun(subagentLifecycleController.options, {
       entry,
       outcome: entry.execution.outcome,
