@@ -173,9 +173,10 @@ describe("upgrade survivor mobile pairing client", () => {
     expect(operatorParams).toMatchObject({
       minProtocol: 4,
       maxProtocol: 4,
-      caps: MOBILE_PAIRING_OPERATOR_CAPS,
+      caps: ["inline-widgets"],
       auth: { token: "operator-token" },
     });
+    expect(MOBILE_PAIRING_OPERATOR_CAPS).toEqual(["inline-widgets"]);
     expect(operatorParams).not.toHaveProperty("commands");
     expect(operatorParams).not.toHaveProperty("permissions");
     expect(nodeParams.auth).not.toHaveProperty("deviceToken");
@@ -311,7 +312,7 @@ describe("upgrade survivor mobile pairing client", () => {
         devicePairing: { pending: [], paired: [{ deviceId: "device-1" }] },
         nodePairing: { pending: [pendingNode], paired: [pairedNode] },
         deviceId: "device-1",
-        allowKnownNodeSurfaceUpgrade: true,
+        expectKnownNodeSurfaceUpgrade: true,
       }),
     ).toEqual({
       pendingDevicePairingCount: 0,
@@ -339,7 +340,7 @@ describe("upgrade survivor mobile pairing client", () => {
           devicePairing: { pending: [], paired: [{ deviceId: "device-1" }] },
           nodePairing: { pending: [invalidPending], paired: [pairedNode] },
           deviceId: "device-1",
-          allowKnownNodeSurfaceUpgrade: true,
+          expectKnownNodeSurfaceUpgrade: true,
         }),
       ).toThrow();
     }
@@ -353,7 +354,7 @@ describe("upgrade survivor mobile pairing client", () => {
           devicePairing: { pending: [], paired: [{ deviceId: "device-1" }] },
           nodePairing: { pending: [narrowedPending], paired: [pairedNode] },
           deviceId: "device-1",
-          allowKnownNodeSurfaceUpgrade: true,
+          expectKnownNodeSurfaceUpgrade: true,
         }),
       ).not.toThrow();
     }
@@ -362,9 +363,17 @@ describe("upgrade survivor mobile pairing client", () => {
         devicePairing: { pending: [], paired: [{ deviceId: "device-1" }] },
         nodePairing: { pending: [pendingNode, pendingNode], paired: [pairedNode] },
         deviceId: "device-1",
-        allowKnownNodeSurfaceUpgrade: true,
+        expectKnownNodeSurfaceUpgrade: true,
       }),
     ).toThrow(/unexpected pending request/);
+    expect(() =>
+      validatePairingAudit({
+        devicePairing: { pending: [], paired: [{ deviceId: "device-1" }] },
+        nodePairing: { pending: [], paired: [pairedNode] },
+        deviceId: "device-1",
+        expectKnownNodeSurfaceUpgrade: true,
+      }),
+    ).toThrow(/omitted the expected command-surface reapproval/);
   });
 
   it("completes legacy baseline node pairing only for the bootstrapped identity", async () => {
@@ -477,6 +486,7 @@ describe("upgrade survivor mobile pairing client", () => {
           nodeSurfaceReapprovalRequired: false,
           nodeSurfaceCommandAdditions: [],
         },
+        expectKnownNodeSurfaceUpgrade: false,
       }),
     );
 
@@ -495,6 +505,7 @@ describe("upgrade survivor mobile pairing client", () => {
       pairedNodePresent: true,
       nodeSurfaceReapprovalRequired: false,
       nodeSurfaceCommandAdditions: [],
+      nodeSurfaceReapprovalExpected: false,
       missingPasswordReason: true,
       missingPasswordClose1008: true,
       credentials: {
@@ -590,6 +601,20 @@ describe("upgrade survivor mobile pairing client", () => {
     expect(source).toContain('npm_prefix="$(dirname "$(dirname "$(dirname "$live_package")")")"');
     expect(source).not.toContain(".openclaw-mobile-stage");
     expect(source).not.toContain("mobile-backup");
+  });
+
+  it("requires the known watch-command reapproval only for updater candidates", () => {
+    const source = readFileSync(RUNNER_PATH, "utf8");
+    const reconnect = source.slice(
+      source.indexOf("verify_mobile_pairing()"),
+      source.indexOf("verify_mobile_pairing_once()"),
+    );
+    expect(reconnect).toContain('expect_known_node_surface_reapproval="true"');
+    expect(reconnect).toContain('[ "$candidate_install_mode" = "historical-package-replacement" ]');
+    expect(reconnect).toContain('expect_known_node_surface_reapproval="false"');
+    expect(reconnect).toContain(
+      '--expect-known-node-surface-reapproval "$expect_known_node_surface_reapproval"',
+    );
   });
 
   it("passes candidate source provenance into the isolated package runner", () => {

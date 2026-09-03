@@ -1121,11 +1121,16 @@ bootstrap_mobile_pairing() {
 verify_mobile_pairing() {
   local phase_name="$1"
   local evidence_file="$2"
+  local expect_known_node_surface_reapproval="true"
+  if [ "$candidate_install_mode" = "historical-package-replacement" ]; then
+    expect_known_node_surface_reapproval="false"
+  fi
   run_mobile_pairing_client verify \
     --package-root "$(package_root)" \
     --credentials "$MOBILE_PAIRING_CREDENTIALS" \
     --evidence "$evidence_file" \
-    --phase "$phase_name"
+    --phase "$phase_name" \
+    --expect-known-node-surface-reapproval "$expect_known_node_surface_reapproval"
 }
 
 verify_mobile_pairing_once() {

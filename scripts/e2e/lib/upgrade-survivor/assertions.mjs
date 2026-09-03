@@ -1679,7 +1679,11 @@ function assertMobilePairingEvidence(files) {
       JSON.stringify(value?.nodeSurfaceCommandAdditions) ===
         JSON.stringify(expectedNodeSurfaceAdditions);
     assert(
-      cleanPairingState || scopedNodeSurfaceReapproval,
+      typeof value?.nodeSurfaceReapprovalExpected === "boolean",
+      "mobile node pairing reapproval expectation missing",
+    );
+    assert(
+      value.nodeSurfaceReapprovalExpected ? scopedNodeSurfaceReapproval : cleanPairingState,
       "mobile node pairing pending state exceeded the known command-surface reapproval",
     );
     assert(value?.missingPasswordReason === true, "mobile pairing password_missing proof missing");

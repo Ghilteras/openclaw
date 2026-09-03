@@ -619,7 +619,7 @@ async function auditPairingState(params: {
   WebSocket: WebSocketConstructor;
   credentials: MobilePairingCredentials;
   password: string;
-  allowKnownNodeSurfaceUpgrade: boolean;
+  expectKnownNodeSurfaceUpgrade: boolean;
 }): Promise<MobilePairingAudit> {
   // Match the node approval CLI's local backend shared-auth path. Keep this
   // audit device-less so it cannot rotate mobile tokens.
@@ -638,7 +638,7 @@ async function auditPairingState(params: {
       devicePairing: await request(audit.socket, "device.pair.list"),
       nodePairing: await request(audit.socket, "node.pair.list"),
       deviceId: params.credentials.identity.deviceId,
-      allowKnownNodeSurfaceUpgrade: params.allowKnownNodeSurfaceUpgrade,
+      expectKnownNodeSurfaceUpgrade: params.expectKnownNodeSurfaceUpgrade,
     });
   } finally {
     await closeSocket(audit.socket, params.WebSocket);
@@ -649,7 +649,7 @@ export function validatePairingAudit(params: {
   devicePairing: unknown;
   nodePairing: unknown;
   deviceId: string;
-  allowKnownNodeSurfaceUpgrade?: boolean;
+  expectKnownNodeSurfaceUpgrade?: boolean;
 }): MobilePairingAudit {
   if (!isRecord(params.devicePairing) || !Array.isArray(params.devicePairing.pending)) {
     throw new Error("mobile device pairing audit invalid");
@@ -678,6 +678,9 @@ export function validatePairingAudit(params: {
     throw new Error("paired mobile node missing");
   }
   if (params.nodePairing.pending.length === 0) {
+    if (params.expectKnownNodeSurfaceUpgrade) {
+      throw new Error("mobile node pairing omitted the expected command-surface reapproval");
+    }
     return {
       pendingDevicePairingCount: 0,
       pendingNodePairingCount: 0,
@@ -687,7 +690,7 @@ export function validatePairingAudit(params: {
       nodeSurfaceCommandAdditions: [],
     };
   }
-  if (!params.allowKnownNodeSurfaceUpgrade || params.nodePairing.pending.length !== 1) {
+  if (!params.expectKnownNodeSurfaceUpgrade || params.nodePairing.pending.length !== 1) {
     throw new Error("mobile node pairing left an unexpected pending request");
   }
   const pendingNode = params.nodePairing.pending[0];
@@ -815,6 +818,7 @@ export function buildRedactedEvidence(params: {
   node: StoredCredentialTransition;
   operator: StoredCredentialTransition;
   pairing: MobilePairingAudit;
+  expectKnownNodeSurfaceUpgrade: boolean;
 }): JsonRecord {
   return {
     phase: params.phase,
@@ -837,6 +841,7 @@ export function buildRedactedEvidence(params: {
     pendingPairingCount:
       params.pairing.pendingDevicePairingCount + params.pairing.pendingNodePairingCount,
     ...params.pairing,
+    nodeSurfaceReapprovalExpected: params.expectKnownNodeSurfaceUpgrade,
     missingPasswordReason: true,
     missingPasswordClose1008: true,
     credentials: {
@@ -905,6 +910,7 @@ async function verifyReconnect(params: {
   password: string;
   phase: string;
   evidenceFile: string;
+  expectKnownNodeSurfaceUpgrade: boolean;
 }): Promise<void> {
   const WebSocket = loadWebSocket(params.packageRoot);
   await assertMissingPassword({ WebSocket, credentials: params.credentials });
@@ -964,7 +970,7 @@ async function verifyReconnect(params: {
       WebSocket,
       credentials: params.credentials,
       password: params.password,
-      allowKnownNodeSurfaceUpgrade: params.phase !== "baseline",
+      expectKnownNodeSurfaceUpgrade: params.expectKnownNodeSurfaceUpgrade,
     });
     writeRedactedEvidence(
       params.evidenceFile,
@@ -974,6 +980,7 @@ async function verifyReconnect(params: {
         node: nodeTransition,
         operator: operatorTransition,
         pairing,
+        expectKnownNodeSurfaceUpgrade: params.expectKnownNodeSurfaceUpgrade,
       }),
     );
   } finally {
@@ -1000,6 +1007,17 @@ function parseArgs(argv: string[]): { command: string; options: Map<string, stri
 
 function option(options: Map<string, string>, name: string): string {
   return requireString(options.get(name), name);
+}
+
+function booleanOption(options: Map<string, string>, name: string): boolean {
+  const value = option(options, name);
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new Error(`${name} invalid`);
 }
 
 async function main(): Promise<void> {
@@ -1042,6 +1060,7 @@ async function main(): Promise<void> {
       password,
       phase: "baseline",
       evidenceFile,
+      expectKnownNodeSurfaceUpgrade: false,
     });
   } else if (command === "verify") {
     const credentials = validateCredentials(readJson(credentialsFile));
@@ -1052,6 +1071,10 @@ async function main(): Promise<void> {
       password,
       phase: option(options, "--phase"),
       evidenceFile,
+      expectKnownNodeSurfaceUpgrade: booleanOption(
+        options,
+        "--expect-known-node-surface-reapproval",
+      ),
     });
   } else {
     throw new Error("unknown mobile pairing client command");

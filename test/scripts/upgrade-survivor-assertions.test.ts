@@ -1189,6 +1189,7 @@ process.stdout.write(sessionDir + "\\n");
         pairedDevicePresent: true,
         pairedNodePresent: true,
         nodeSurfaceReapprovalRequired: scopedNodeSurfaceReapproval,
+        nodeSurfaceReapprovalExpected: scopedNodeSurfaceReapproval,
         nodeSurfaceCommandAdditions: scopedNodeSurfaceReapproval
           ? ["watch.notify", "watch.status"]
           : [],
@@ -1228,6 +1229,12 @@ process.stdout.write(sessionDir + "\\n");
       expect(verify).toThrow(/newest stored token/);
       stale.credentials.node.usedTokenHash = hashes[2];
       stale.nodeSurfaceCommandAdditions = ["watch.status", "system.run"];
+      writeJson(files[2], stale);
+      expect(verify).toThrow(/known command-surface reapproval/);
+      stale.nodeSurfaceCommandAdditions = [];
+      stale.pendingPairingCount = 0;
+      stale.pendingNodePairingCount = 0;
+      stale.nodeSurfaceReapprovalRequired = false;
       writeJson(files[2], stale);
       expect(verify).toThrow(/known command-surface reapproval/);
     } finally {
