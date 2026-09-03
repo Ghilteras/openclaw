@@ -394,8 +394,10 @@ suite.define(() => {
           tabIndex: 0,
           width: expect.any(Number),
         });
-        expect(recoveryAccess.height).toBeGreaterThanOrEqual(44);
-        expect(recoveryAccess.width).toBeGreaterThanOrEqual(44);
+        // Browser layout can represent a CSS 44px target a few millionths below 44.
+        const touchTargetRoundingTolerancePx = 0.01;
+        expect(recoveryAccess.height).toBeGreaterThanOrEqual(44 - touchTargetRoundingTolerancePx);
+        expect(recoveryAccess.width).toBeGreaterThanOrEqual(44 - touchTargetRoundingTolerancePx);
         await recovery.focus();
         const recoveryFocused = await recovery.evaluate(
           (button) => document.activeElement === button,
