@@ -1,7 +1,6 @@
 import type { AssistantMessage, Context, Model, ProviderReplayState } from "@openclaw/llm-core";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { shortHash } from "../utils/hash.js";
-import { providerReplayContextMatches } from "./provider-replay-context.js";
+import { hashReplayContextValue, providerReplayContextMatches } from "./provider-replay-context.js";
 
 const ANTHROPIC_COMPACTION_REPLAY_TYPE = "anthropic-compaction";
 const ANTHROPIC_COMPACTION_SUPPRESSION_TYPE = "anthropic-compaction-suppression";
@@ -71,19 +70,14 @@ export function createCompactionCapture(output: ReplayOut, model: Model, options
   };
 }
 
-function hashReplayValue(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized ? shortHash(normalized) : undefined;
-}
-
 function buildAnthropicReplayContext(model: Model, options?: ReplayOpts): AnthropicReplayContext {
   return {
     provider: model.provider,
     api: model.api,
     model: model.id,
-    baseUrlHash: hashReplayValue(model.baseUrl),
-    sessionHash: hashReplayValue(options?.sessionId),
-    authProfileHash: hashReplayValue(options?.authProfileId),
+    baseUrlHash: hashReplayContextValue(model.baseUrl),
+    sessionHash: hashReplayContextValue(options?.sessionId),
+    authProfileHash: hashReplayContextValue(options?.authProfileId),
   };
 }
 

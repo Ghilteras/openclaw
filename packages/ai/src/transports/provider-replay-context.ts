@@ -1,4 +1,5 @@
 import type { ProviderReplayState } from "@openclaw/llm-core";
+import { shortHash } from "../utils/hash.js";
 
 type ProviderReplayContext = Readonly<
   Pick<
@@ -6,6 +7,11 @@ type ProviderReplayContext = Readonly<
     "provider" | "api" | "model" | "baseUrlHash" | "sessionHash" | "authProfileHash"
   >
 >;
+
+export function hashReplayContextValue(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? shortHash(normalized) : undefined;
+}
 
 export function providerReplayContextMatches(
   state: ProviderReplayContext,
