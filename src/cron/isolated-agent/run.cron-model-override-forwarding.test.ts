@@ -125,6 +125,41 @@ function hasPhaseWithFields(phases: unknown[], fields: Record<string, unknown>):
   });
 }
 
+type FallbackRequest = TestModelFallbackRunnerParams & {
+  canFallbackAfterError?: (params: {
+    provider: string;
+    model: string;
+    error: unknown;
+    attempt: number;
+    total: number;
+  }) => boolean | Promise<boolean>;
+};
+
+async function runFallbackCandidates(
+  params: FallbackRequest,
+  candidates: readonly { provider: string; model: string }[],
+) {
+  for (const [index, candidate] of candidates.entries()) {
+    try {
+      return await (index === 0
+        ? runInitialModelFallbackAttempt(params)
+        : runFallbackModelAttempt(params, candidate.provider, candidate.model, "unknown"));
+    } catch (error) {
+      const canContinue = await params.canFallbackAfterError?.({
+        provider: candidate.provider,
+        model: candidate.model,
+        error,
+        attempt: index + 1,
+        total: candidates.length,
+      });
+      if (!canContinue) {
+        throw error;
+      }
+    }
+  }
+  throw new Error("Expected a fallback candidate");
+}
+
 // ---------- tests ----------
 
 describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)", () => {
@@ -545,7 +580,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     expect(runCliAgentMock).not.toHaveBeenCalled();
   });
 
-  it("rejects a CLI fallback after a rooted embedded candidate fails", async () => {
+  it("rejects all-CLI fallbacks after a rooted embedded candidate fails", async () => {
     resolveEffectiveAgentRuntimeMock.mockImplementation(({ modelId }: { modelId: string }) =>
       modelId === "gemini-2.0-flash" ? "openclaw" : "claude-cli",
     );
@@ -560,16 +595,11 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       payloads: [{ text: "CLI fallback ran" }],
       meta: { agentMeta: {} },
     });
-    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => {
-      await expect(runInitialModelFallbackAttempt(params)).rejects.toThrow(
-        "embedded primary failed",
-      );
-      const result = await runFallbackModelAttempt(
-        params,
-        "claude-cli",
-        "claude-opus-4-6",
-        "unknown",
-      );
+    runWithModelFallbackMock.mockImplementation(async (params: FallbackRequest) => {
+      const result = await runFallbackCandidates(params, [
+        { provider: "google", model: "gemini-2.0-flash" },
+        { provider: "claude-cli", model: "claude-opus-4-6" },
+      ]);
       return { result, provider: "claude-cli", model: "claude-opus-4-6", attempts: [] };
     });
 
@@ -597,6 +627,48 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       return fallbackEntry.modelProvider === "claude-cli";
     });
     expect(cliCandidatePersisted).toBe(false);
+  });
+
+  it("skips a rooted CLI fallback and reaches a later embedded candidate", async () => {
+    resolveEffectiveAgentRuntimeMock.mockImplementation(({ modelId }: { modelId: string }) =>
+      modelId === "gemini-2.0-flash" || modelId === "gpt-5" ? "openclaw" : "claude-cli",
+    );
+    isCliProviderMock.mockImplementation((provider: string) => provider === "claude-cli");
+    runEmbeddedAgentMock.mockImplementation(
+      async (params: { model?: string; onExecutionStarted?: () => void }) => {
+        params.onExecutionStarted?.();
+        if (params.model === "gemini-2.0-flash") {
+          throw new Error("embedded primary failed");
+        }
+        return { payloads: [{ text: "later embedded succeeded" }], meta: { agentMeta: {} } };
+      },
+    );
+    runWithModelFallbackMock.mockImplementation(async (params: FallbackRequest) => {
+      const result = await runFallbackCandidates(params, [
+        { provider: "google", model: "gemini-2.0-flash" },
+        { provider: "claude-cli", model: "claude-opus-4-6" },
+        { provider: "openai", model: "gpt-5" },
+      ]);
+      return { result, provider: "openai", model: "gpt-5", attempts: [] };
+    });
+
+    const result = await runCronIsolatedAgentTurn(
+      makeParams({
+        executionRoot: {
+          workspaceDir: "/tmp/workshop-skills",
+          cwd: "/tmp/workshop-skills",
+          sessionRoot: "/tmp/workshop-skills",
+          requireWritableSandbox: true,
+        },
+      }),
+    );
+
+    expect(result.status).toBe("ok");
+    expect(runEmbeddedAgentMock).toHaveBeenCalledTimes(2);
+    expect(runCliAgentMock).not.toHaveBeenCalled();
+    expect(runEmbeddedAgentMock.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ provider: "openai", model: "gpt-5" }),
+    );
   });
 
   it("uses a stored cron-session thinking preference before configured defaults", async () => {

@@ -499,8 +499,9 @@ function createCronPromptExecutor(params: {
         });
         return classification && currentAttemptCommittedMedia() ? undefined : classification;
       },
-      canFallbackAfterError: ({ error }) =>
-        !currentAttemptCommittedMedia() && !(error instanceof CronExecutionRootRuntimeError),
+      canFallbackAfterError: ({ error, attempt, total }) =>
+        !currentAttemptCommittedMedia() &&
+        (!(error instanceof CronExecutionRootRuntimeError) || attempt < total),
       mergeExhaustedResult: mergeEmbeddedAgentRunResultForModelFallbackExhaustion,
       run: async (providerOverride, modelOverride, runOptions) => {
         const isFallback = candidateStarted;
