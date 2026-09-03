@@ -895,6 +895,9 @@ enum class GatewayMethod(
   SessionsGithubStatus("sessions.github.status"),
   SessionsGithubConfirm("sessions.github.confirm"),
   SessionsTitlePrepare("sessions.title.prepare"),
+  TranscriptsList("transcripts.list"),
+  TranscriptsGet("transcripts.get"),
+  ModelsAuthOrderSet("models.authOrderSet"),
 }
 
 enum class GatewayEvent(
@@ -921,6 +924,7 @@ enum class GatewayEvent(
   TalkMode("talk.mode"),
   TalkEvent("talk.event"),
   Shutdown("shutdown"),
+  GatewaySuspension("gateway.suspension"),
   Health("health"),
   Heartbeat("heartbeat"),
   Cron("cron"),

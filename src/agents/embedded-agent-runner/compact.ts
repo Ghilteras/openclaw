@@ -2,9 +2,12 @@
  * Public facade and fallback coordinator for embedded-agent compaction.
  */
 import { resolveAgentModelFallbackValues } from "../../config/model-input.js";
+import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
+import { projectPublicSessionEntry } from "../../config/sessions/session-entry-projection.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
 import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
+import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
 import { resolveUserPath } from "../../utils.js";
 import { prepareSystemAgentRunAdmission } from "../admitted-run-context.js";
 import { normalizeOptionalAgentRuntimeId } from "../agent-runtime-id.js";
@@ -65,13 +68,11 @@ type CompactEmbeddedAgentSessionParamsWithSessionFile = CompactEmbeddedAgentSess
   sessionFile: string;
 };
 
-function lockedHarnessCompactionFailure(runtime: string | undefined): EmbeddedAgentCompactResult {
+function lockedHarnessCompactionFailure(runtime: string): EmbeddedAgentCompactResult {
   return {
     ok: false,
     compacted: false,
-    reason: runtime
-      ? `Model selection is locked to native agent harness "${runtime}"; generic compaction is unavailable.`
-      : "Model selection is locked but the persisted agent harness is unavailable.",
+    reason: `Model selection is locked to native agent harness "${runtime}"; generic compaction is unavailable.`,
     failure: { reason: "model_selection_locked" },
   };
 }
@@ -244,25 +245,6 @@ export async function compactEmbeddedAgentSessionDirect(
   paramsInput: CompactEmbeddedAgentSessionRuntimeParams,
 ): Promise<EmbeddedAgentCompactResult> {
   const paramsBase = applyAgentRunSessionTargetIdentity(paramsInput);
-  const lockedHarnessRuntime = normalizeOptionalAgentRuntimeId(paramsBase.agentHarnessId);
-  // Codex owns its token window, but OpenClaw owns the persisted transcript byte cap.
-  // Keep that host compaction on the selected runtime without weakening other model locks.
-  const requiresNativeHarnessCompaction =
-    paramsBase.modelSelectionLocked === true &&
-    lockedHarnessRuntime !== "openclaw" &&
-    !isCodexHostTranscriptBytePreflight(paramsBase, lockedHarnessRuntime);
-  const lockedCliBackend =
-    paramsBase.trigger === "manual" && lockedHarnessRuntime
-      ? resolveCliBackendConfig(lockedHarnessRuntime, paramsBase.config, {
-          agentId: paramsBase.agentId,
-        })
-      : undefined;
-  // An owning CLI backend must report its capability or binding failure before
-  // the generic model-lock guard; otherwise the operator gets the wrong remedy.
-  const deferLockedHarnessFailure = lockedCliBackend?.ownsNativeCompaction === true;
-  if (requiresNativeHarnessCompaction && !deferLockedHarnessFailure) {
-    return lockedHarnessCompactionFailure(lockedHarnessRuntime);
-  }
   const memoryTranscript = readCompactionAccountingRecorder(
     paramsBase.contextEngineRuntimeContext,
   )?.memoryTranscript;
@@ -273,8 +255,13 @@ export async function compactEmbeddedAgentSessionDirect(
       ...paramsBase,
       missingSessionKey: "resolve-existing",
     }));
+  const entry = loadSessionEntryReadOnly({ ...runSessionTarget, readConsistency: "latest" });
+  const lockedHarnessRuntime = resolveSessionPinnedHarnessId(entry);
   const requestedParams: CompactEmbeddedAgentSessionParamsWithSessionFile = {
     ...paramsBase,
+    sessionEntry: entry ? projectPublicSessionEntry(entry) : undefined,
+    agentHarnessId: lockedHarnessRuntime ?? paramsBase.agentHarnessId,
+    modelSelectionLocked: entry?.modelSelectionLocked ?? paramsBase.modelSelectionLocked,
     agentId: runSessionTarget.agentId,
     sessionId: runSessionTarget.sessionId,
     sessionKey: runSessionTarget.sessionKey,
@@ -290,6 +277,11 @@ export async function compactEmbeddedAgentSessionDirect(
     },
     sessionFile: runSessionTarget.sessionKey,
   };
+  // Codex owns native token pressure; OpenClaw owns its persisted transcript byte cap.
+  const hostOwnsTranscriptBytePreflight = isCodexHostTranscriptBytePreflight(
+    requestedParams,
+    lockedHarnessRuntime ?? requestedParams.agentHarnessId,
+  );
   const requestedAgentIds = resolveSessionAgentIds({
     sessionKey: requestedParams.sessionKey,
     config: requestedParams.config,
@@ -322,7 +314,11 @@ export async function compactEmbeddedAgentSessionDirect(
   if (nativeCliResult) {
     return nativeCliResult;
   }
-  if (requiresNativeHarnessCompaction) {
+  if (
+    lockedHarnessRuntime &&
+    lockedHarnessRuntime !== "openclaw" &&
+    !hostOwnsTranscriptBytePreflight
+  ) {
     return lockedHarnessCompactionFailure(lockedHarnessRuntime);
   }
   const pluginPlanCompactionTarget = resolveEmbeddedCompactionTarget({

@@ -133,6 +133,9 @@ describe("listGatewayMethods", () => {
     "sessions.github.status",
     "sessions.github.confirm",
     "sessions.title.prepare",
+    "transcripts.list",
+    "transcripts.get",
+    "models.authOrderSet",
   ];
 
   it("advertises plugin surface refresh for capability rotation", () => {

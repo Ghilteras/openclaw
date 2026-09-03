@@ -1,11 +1,14 @@
 // Gateway connect pairing tests protect session exemptions and durable device grant bounds.
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   GATEWAY_CLIENT_MODES,
   GATEWAY_CLIENT_NAMES,
 } from "../../../../packages/gateway-protocol/src/client-info.js";
+import type { HelloOk } from "../../../../packages/gateway-protocol/src/schema/frames.js";
+import type { UsersSelfResult } from "../../../../packages/gateway-protocol/src/schema/users.js";
 import { replaceConfigFile } from "../../../config/config.js";
 import type { GatewayAuthConfig } from "../../../config/types.gateway.js";
+import { loadDeviceAuthToken } from "../../../infra/device-auth-store.js";
 import { issueDeviceBootstrapToken } from "../../../infra/device-bootstrap.js";
 import { ensureDeviceToken } from "../../../infra/device-pairing-tokens.js";
 import { getPairedDevice } from "../../../infra/device-pairing.js";
@@ -14,11 +17,20 @@ import {
   CONTROL_UI_OWNER_BOOTSTRAP_PROFILE,
 } from "../../../shared/device-bootstrap-profile.js";
 import {
+  GatewayClient,
+  type GatewayClientOptions,
+  type GatewayReconnectPausedInfo,
+} from "../../client.js";
+import {
   loadDeviceIdentity,
   openTrackedWs,
   pairDeviceIdentity,
 } from "../../device-authz.test-helpers.js";
-import { CONTROL_UI_CLIENT, openTailscaleWs } from "../../server.auth.test-helpers.js";
+import {
+  ConnectErrorDetailCodes,
+  CONTROL_UI_CLIENT,
+  openTailscaleWs,
+} from "../../server.auth.test-helpers.js";
 import {
   connectReq,
   installGatewayTestHooks,
@@ -47,7 +59,94 @@ const TUI_CLIENT = {
 } as const;
 
 describe("gateway connect pairing exemptions", () => {
-  test("rejects identity-less owner bootstrap operators when role policies require a user", async () => {
+  test("keeps the owner's renamed profile across shared-token and cached device-token connections", async () => {
+    const origin = "https://localhost";
+    const auth = { mode: "token", token: "local-owner-secret" } as const;
+    testState.gatewayAuth = auth;
+    testState.gatewayControlUi = { allowedOrigins: [origin] };
+    await replaceConfigFile({
+      nextConfig: { gateway: { auth, controlUi: { allowedOrigins: [origin] } } },
+      afterWrite: { mode: "auto" },
+    });
+    const started = await startServer(undefined, { auth, controlUiEnabled: true });
+    const loaded = loadDeviceIdentity("durable-gateway-owner");
+    const clients: GatewayClient[] = [];
+    const scopes = ["operator.read", "operator.write"];
+    const connect = (token?: string) =>
+      new Promise<{ client: GatewayClient; hello: HelloOk }>((resolve, reject) => {
+        const client = new GatewayClient({
+          url: `ws://127.0.0.1:${started.port}`,
+          origin,
+          token,
+          deviceIdentity: loaded.identity,
+          clientName: CONTROL_UI_CLIENT.id,
+          clientVersion: CONTROL_UI_CLIENT.version,
+          platform: CONTROL_UI_CLIENT.platform,
+          mode: CONTROL_UI_CLIENT.mode,
+          role: "operator",
+          scopes,
+          onHelloOk: (hello) => resolve({ client, hello }),
+          onConnectError: reject,
+        });
+        clients.push(client);
+        client.start();
+      });
+    try {
+      const first = await connect(auth.token);
+      expect(first.hello.auth.scopes).toEqual(scopes);
+      const { profile } = await first.client.request<UsersSelfResult>("users.self", {});
+      expect(profile.emails).toEqual([]);
+      expect(profile.role).toBeUndefined();
+      expect(await first.client.request("users.github.status", {})).toMatchObject({
+        personal: { state: "disconnected" },
+      });
+      await first.client.request("users.setDisplayName", {
+        profileId: profile.id,
+        displayName: "Ada Owner",
+      });
+      const cachedToken = loadDeviceAuthToken({
+        deviceId: loaded.identity.deviceId,
+        role: "operator",
+      })?.token;
+      expect(cachedToken).toBe(first.hello.auth.deviceToken);
+      expect(cachedToken).toBeTruthy();
+
+      // No shared secret: the real client must reload the issued device token.
+      const second = await connect();
+      expect(second.hello.auth.scopes).toEqual(scopes);
+      const secondProfile = await second.client.request<UsersSelfResult>("users.self", {});
+      expect(secondProfile.profile).toMatchObject({
+        id: profile.id,
+        displayName: "Ada Owner",
+        emails: [],
+      });
+      const ownerRows = second.hello.snapshot.presence.filter(
+        (entry) => entry.user?.id === profile.id && entry.reason !== "disconnect",
+      );
+      expect(ownerRows).toHaveLength(2);
+      for (const entry of ownerRows) {
+        expect(entry.user).toMatchObject({
+          id: profile.id,
+          identity: { type: "profile", id: profile.id },
+          name: "Ada Owner",
+        });
+        expect(entry.user).not.toHaveProperty("email");
+      }
+      await second.client.request("users.setDisplayName", {
+        profileId: profile.id,
+        displayName: "Augusta Owner",
+      });
+      expect(await first.client.request<UsersSelfResult>("users.self", {})).toMatchObject({
+        profile: { id: profile.id, displayName: "Augusta Owner", emails: [] },
+      });
+    } finally {
+      await Promise.all(clients.map((client) => client.stopAndWait()));
+      await started.server.close();
+      started.envSnapshot.restore();
+    }
+  });
+
+  test("returns terminal identity details and pauses a rejected real device-token client", async () => {
     const origin = "https://localhost";
     const auth = { mode: "token", token: "local-secret" } as const;
     testState.gatewayAuth = auth;
@@ -77,6 +176,10 @@ describe("gateway connect pairing exemptions", () => {
       wsHeaders: { origin },
     });
 
+    let provisionClient: GatewayClient | undefined;
+    let client: GatewayClient | undefined;
+    let provisionTimeout: NodeJS.Timeout | undefined;
+    let pauseTimeout: NodeJS.Timeout | undefined;
     try {
       const issued = await issueDeviceBootstrapToken({
         profile: CONTROL_UI_OWNER_BOOTSTRAP_PROFILE,
@@ -94,10 +197,85 @@ describe("gateway connect pairing exemptions", () => {
         ok: false,
         error: {
           code: "NOT_PAIRED",
-          message: "operator role policies require a verified user identity",
+          message:
+            "operator role policies require a verified user identity for this authentication method; reconnect through the trusted proxy or Tailscale, or use the shared gateway token/password",
+          details: { code: ConnectErrorDetailCodes.AUTH_VERIFIED_USER_REQUIRED },
         },
       });
+
+      const loaded = loadDeviceIdentity("roles-device-token-owner");
+      const baseClientOptions = {
+        url: `ws://127.0.0.1:${started.port}`,
+        origin,
+        deviceIdentity: loaded.identity,
+        clientName: CONTROL_UI_CLIENT.id,
+        clientVersion: CONTROL_UI_CLIENT.version,
+        platform: CONTROL_UI_CLIENT.platform,
+        mode: CONTROL_UI_CLIENT.mode,
+        role: "operator",
+        scopes: ["operator.read"],
+      } satisfies GatewayClientOptions;
+      const provisioned = new Promise<void>((resolve, reject) => {
+        provisionTimeout = setTimeout(
+          () => reject(new Error("timeout waiting for the shared-secret client to connect")),
+          2_500,
+        );
+        provisionClient = new GatewayClient({
+          ...baseClientOptions,
+          token: auth.token,
+          onHelloOk: () => resolve(),
+          onConnectError: reject,
+        });
+        provisionClient.start();
+      });
+      await provisioned;
+      if (provisionTimeout) {
+        clearTimeout(provisionTimeout);
+      }
+      await provisionClient?.stopAndWait();
+      const deviceToken = loadDeviceAuthToken({
+        deviceId: loaded.identity.deviceId,
+        role: "operator",
+      })?.token;
+      expect(deviceToken).toBe(
+        (await getPairedDevice(loaded.identity.deviceId))?.tokens?.operator?.token,
+      );
+      if (!deviceToken) {
+        throw new Error("expected shared-secret connection to issue a device token");
+      }
+
+      const connectAttempts = vi.fn();
+      const paused = new Promise<GatewayReconnectPausedInfo>((resolve, reject) => {
+        pauseTimeout = setTimeout(
+          () => reject(new Error("timeout waiting for the Gateway client to pause reconnect")),
+          2_500,
+        );
+        client = new GatewayClient({
+          ...baseClientOptions,
+          hostDeps: { beforeConnect: connectAttempts },
+          onReconnectPaused: resolve,
+        });
+        client.start();
+      });
+
+      await expect(paused).resolves.toMatchObject({
+        detailCode: ConnectErrorDetailCodes.AUTH_VERIFIED_USER_REQUIRED,
+      });
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 1_100);
+      });
+      expect(connectAttempts).toHaveBeenCalledTimes(1);
+      expect(
+        loadDeviceAuthToken({ deviceId: loaded.identity.deviceId, role: "operator" })?.token,
+      ).toBe(deviceToken);
     } finally {
+      if (provisionTimeout) {
+        clearTimeout(provisionTimeout);
+      }
+      if (pauseTimeout) {
+        clearTimeout(pauseTimeout);
+      }
+      await Promise.all([client?.stopAndWait(), provisionClient?.stopAndWait()]);
       started.ws.close();
       await started.server.close();
       started.envSnapshot.restore();
