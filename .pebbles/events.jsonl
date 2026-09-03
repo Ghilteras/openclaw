@@ -19,3 +19,5 @@
 {"type":"dep_add","timestamp":"2026-09-03T10:11:57.825522419Z","issue_id":"ocf-897.4","payload":{"dep_type":"blocks","depends_on":"ocf-897.3"}}
 {"type":"dep_add","timestamp":"2026-09-03T10:11:58.180185799Z","issue_id":"ocf-897.5","payload":{"dep_type":"blocks","depends_on":"ocf-897.4"}}
 {"type":"status_update","timestamp":"2026-09-03T10:11:58.496586874Z","issue_id":"ocf-897.1","payload":{"status":"in_progress"}}
+{"type":"close","timestamp":"2026-09-03T10:12:03.795261003Z","issue_id":"ocf-897.1","payload":{}}
+{"type":"status_update","timestamp":"2026-09-03T10:12:04.205278737Z","issue_id":"ocf-897.2","payload":{"status":"in_progress"}}
