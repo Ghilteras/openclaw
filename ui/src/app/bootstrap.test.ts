@@ -2,7 +2,6 @@ import type { RouteLocation } from "@openclaw/uirouter";
 import { describe, expect, it, vi } from "vitest";
 import { CONTROL_UI_BASE_PATH_ATTRIBUTE } from "../../../src/gateway/control-ui-contract.js";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
-import { INTERNAL_SESSION_PATH_PARAM } from "../app-route-paths.ts";
 import { routeIdFromPath, type RouteId } from "../app-routes.ts";
 import {
   isDefaultChatLanding,
@@ -342,32 +341,6 @@ describe("bootstrapApplication", () => {
           previousResourceBasePath,
         );
       }
-    }
-  });
-
-  it("bridges dynamic session paths when preloading through the application context", async () => {
-    const previousSettings = loadSettings();
-    const previousUrl = window.location.href;
-    window.history.replaceState({}, "", "/settings/appearance");
-    const runtime = bootstrapApplication();
-    const preloadLocation = vi.spyOn(runtime.router, "preloadLocation");
-
-    try {
-      await runtime.start();
-      preloadLocation.mockClear();
-      // The chat loader waits for a Gateway that never connects here; the bridge
-      // is observable synchronously from the router call.
-      void runtime.context.preload("chat", { pathname: "/chat/main/question-b9d6252e" });
-
-      const [location] = preloadLocation.mock.calls[0] ?? [];
-      expect(location?.pathname).toBe("/chat");
-      expect(new URLSearchParams(location?.search).get(INTERNAL_SESSION_PATH_PARAM)).toBe(
-        "/chat/main/question-b9d6252e",
-      );
-    } finally {
-      runtime.stop();
-      saveSettings(previousSettings);
-      window.history.replaceState({}, "", previousUrl);
     }
   });
 

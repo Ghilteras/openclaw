@@ -8,7 +8,6 @@ import type { GatewayBrowserClient } from "../api/gateway.ts";
 import {
   createApplicationRouter,
   locationForRoute,
-  preloadApplicationLocation,
   routeIdFromPath,
   sameRouteLocation,
   startApplicationRouter,
@@ -476,8 +475,7 @@ export function bootstrapApplication(): ApplicationRuntime {
       void navigateWithMode(routeId, options, "replace");
     },
     revalidate: (routeId) => router.revalidate(context, routeId),
-    preload: (routeId, options) =>
-      preloadApplicationLocation(router, routeLocation(routeId, options), basePath, context),
+    preload: (routeId, options) => router.preloadLocation(routeLocation(routeId, options), context),
   };
   return {
     context,

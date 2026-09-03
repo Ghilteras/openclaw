@@ -166,20 +166,6 @@ function routerHistoryLocation(location: ReturnType<RouterHistory["location"]>, 
   };
 }
 
-/**
- * Preloads the page that owns `location`, bridging dynamic session, agent, workboard,
- * memory, and plugin paths onto their static route the same way navigation does. The
- * router matches exact paths only, so preloading a dynamic path directly is a no-op.
- */
-export function preloadApplicationLocation(
-  router: ApplicationRouter,
-  location: RouteLocation,
-  basePath: string,
-  context: ApplicationContext<RouteId>,
-): Promise<void> {
-  return router.preloadLocation(routerHistoryLocation(location, basePath), context);
-}
-
 export function sameRouteLocation(left: RouteLocation, right: RouteLocation): boolean {
   return (
     left.pathname === right.pathname && left.search === right.search && left.hash === right.hash
