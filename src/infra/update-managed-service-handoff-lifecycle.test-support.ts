@@ -215,7 +215,7 @@ if (${JSON.stringify(kind)} === "systemd") {
       try { process.kill(${parentPid}, 0); sleep(10); } catch { break; }
     }
     sleep(${options?.systemdStopDelayMs ?? 0});
-    ${options?.revokeOwner ? `fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({ commands: { ownerAllowFrom: [] } })); state.ownerRevokedAfterExit = true;` : ""}
+    ${options?.revokeOwner ? `fs.writeFileSync(require("node:path").join(require("node:path").dirname(statePath), "openclaw.json"), JSON.stringify({ commands: { ownerAllowFrom: [] } })); state.ownerRevokedAfterExit = true;` : ""}
     state.stopCompleted = true;
   }
   if (action === "reset-failed") state.reset = true;
@@ -476,6 +476,18 @@ export function registerManagedHandoffOwnerTests(
               ]),
             },
           },
+        });
+        expect(state).toMatchObject({
+          triageCalls: 1,
+          triageObservedRestored: true,
+          triageInput: { error: expect.stringContaining("owner_required") },
+          triageArgs: [
+            "triage",
+            "--json",
+            "--non-interactive",
+            "--update-result",
+            expect.any(String),
+          ],
         });
         expect(log).toContain("owner_required");
         expect(log).not.toContain("starting managed update command");
