@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vite
 import { createDeferred } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { upsertAcpSessionMeta } from "../acp/runtime/session-meta.js";
+import { bindActiveOperatorTurnAuthority } from "../agents/cron-creator-authority-context.js";
 import type { EmbeddedAgentQueueHandle } from "../agents/embedded-agent-runner/run-state.js";
 import {
   clearActiveEmbeddedRun,
@@ -559,6 +560,7 @@ async function sendControlUiChat(params: {
   message: string;
   respond: RespondFn;
   onAdmissionOwned?: () => Promise<boolean>;
+  localClient?: boolean;
 }): Promise<void> {
   const requestParams = makeChatSendParams({
     message: params.message,
@@ -576,6 +578,7 @@ async function sendControlUiChat(params: {
     },
     params: requestParams,
     client: createControlUiClient(undefined, {
+      ...(params.localClient ? { internal: { isLocalClient: true } } : {}),
       ...(params.authenticatedUserId ? { authenticatedUserId: params.authenticatedUserId } : {}),
       ...(params.authenticatedUserProfile
         ? { authenticatedUserProfile: params.authenticatedUserProfile }
@@ -4530,9 +4533,12 @@ describe("gateway server chat", () => {
       const context = createDirectChatContext();
       const responses: Array<{ ok: boolean; payload?: unknown }> = [];
       const agentStarts = vi.fn();
+      let recoveredAuthority: ReturnType<typeof bindActiveOperatorTurnAuthority> = undefined;
       dispatchInboundMessageMock
         .mockRejectedValueOnce(new SessionTranscriptProjectionUnavailableError("sess-main"))
         .mockImplementationOnce(async (params: unknown) => {
+          recoveredAuthority = bindActiveOperatorTurnAuthority(runId);
+          recoveredAuthority?.assertActive();
           const options = (params as { replyOptions?: GetReplyOptions }).replyOptions;
           options?.onAgentRunStart?.(runId);
           agentStarts();
@@ -4542,6 +4548,7 @@ describe("gateway server chat", () => {
       await sendControlUiChat({
         context,
         idempotencyKey: runId,
+        localClient: true,
         message: "retry projection before starting the model",
         respond: captureChatResult(responses),
       });
@@ -4558,6 +4565,7 @@ describe("gateway server chat", () => {
       );
       expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(2);
       expect(agentStarts).toHaveBeenCalledOnce();
+      expect(recoveredAuthority).toMatchObject({ source: "local" });
       expect(context.broadcast).not.toHaveBeenCalledWith(
         "chat",
         expect.objectContaining({ runId, state: "error" }),

@@ -443,23 +443,24 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
               },
             });
           };
-          const dispatchResult = await runAcceptedChatSendDispatch({
-            operation: () =>
-              cronCreatorAuthority && externalAuthorityAdmission
-                ? externalAuthorityAdmission.run(
-                    cronCreatorAuthority,
-                    dispatchInbound,
-                    activeRunAbort.controller.signal,
-                  )
-                : dispatchInbound(),
-            classify: classifyDispatchFailure,
-            waitForRetry: (error) =>
-              waitForAcceptedChatSendRetry(
-                { agentId, sessionKey, storePath },
-                error,
+          const dispatchWithRetry = () =>
+            runAcceptedChatSendDispatch({
+              operation: dispatchInbound,
+              classify: classifyDispatchFailure,
+              waitForRetry: (error) =>
+                waitForAcceptedChatSendRetry(
+                  { agentId, sessionKey, storePath },
+                  error,
+                  activeRunAbort.controller.signal,
+                ),
+            });
+          const dispatchResult = await (cronCreatorAuthority && externalAuthorityAdmission
+            ? externalAuthorityAdmission.run(
+                cronCreatorAuthority,
+                dispatchWithRetry,
                 activeRunAbort.controller.signal,
-              ),
-          });
+              )
+            : dispatchWithRetry());
           if (dispatchResult.beforeAgentRunBlocked === true) {
             userTurnRecorder.markBlocked();
           }
