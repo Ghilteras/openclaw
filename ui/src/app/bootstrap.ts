@@ -12,7 +12,6 @@ import {
   routeIdFromPath,
   sameRouteLocation,
   startApplicationRouter,
-  warmApplicationRouteModule,
   type ApplicationRouter,
   type RouteId,
 } from "../app-routes.ts";
@@ -502,13 +501,6 @@ export function bootstrapApplication(): ApplicationRuntime {
         },
         () => startGatewayPageActivation(gateway, document, window),
       ];
-      if (startsApplicationRouter && !firstRunDefaultLanding) {
-        // An explicit route is final before the shared boot chunks land, so its page
-        // chunks download now, alongside them and the Gateway handshake, instead of one
-        // wave later when the router starts. The default landing keeps waiting: first-run
-        // setup must not fetch the Chat workspace graph and discard it.
-        warmApplicationRouteModule(router, applicationLocation, basePath);
-      }
       // Resolve first-run setup before routing: the default Chat route owns the
       // workspace graph, which setup users would otherwise fetch and discard.
       steps.push(() =>

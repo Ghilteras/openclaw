@@ -180,24 +180,6 @@ export function preloadApplicationLocation(
   return router.preloadLocation(routerHistoryLocation(location, basePath), context);
 }
 
-/**
- * Starts downloading the page module that owns `location` without running its loader.
- * The router's own `component()` call later resolves from the module map, so the page
- * chunks arrive alongside the shared boot chunks instead of one download wave after them.
- */
-export function warmApplicationRouteModule(
-  router: ApplicationRouter,
-  location: RouteLocation,
-  basePath: string,
-): void {
-  const routeId = routeIdFromPath(location.pathname, basePath);
-  const route = routeId ? router.getRoute(routeId) : null;
-  if (route) {
-    // A failed chunk surfaces through the real navigation; the warm-up stays silent.
-    void Promise.resolve(route.component()).catch(() => undefined);
-  }
-}
-
 export function sameRouteLocation(left: RouteLocation, right: RouteLocation): boolean {
   return (
     left.pathname === right.pathname && left.search === right.search && left.hash === right.hash

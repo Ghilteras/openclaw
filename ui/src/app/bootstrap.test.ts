@@ -345,63 +345,6 @@ describe("bootstrapApplication", () => {
     }
   });
 
-  it("starts downloading an explicit route's page module before the router starts", async () => {
-    const previousSettings = loadSettings();
-    const previousUrl = window.location.href;
-    window.history.replaceState({}, "", "/settings/appearance");
-    const runtime = bootstrapApplication();
-    const route = runtime.router.getRoute("appearance");
-    if (!route) {
-      throw new Error("expected the appearance route");
-    }
-    const component = vi.spyOn(route, "component");
-    const routerStart = vi.spyOn(runtime.router, "start");
-
-    try {
-      const start = runtime.start();
-      // The warm-up is synchronous with start(); the router starts only after the
-      // awaited startup steps, so the page chunks are already in flight by then.
-      expect(component).toHaveBeenCalledOnce();
-      expect(routerStart).not.toHaveBeenCalled();
-      await start;
-
-      const match = runtime.router.getState().matches[0];
-      expect(match?.routeId).toBe("appearance");
-      expect(match?.fetchCount).toBe(1);
-    } finally {
-      runtime.stop();
-      saveSettings(previousSettings);
-      window.history.replaceState({}, "", previousUrl);
-    }
-  });
-
-  it("does not warm the default chat landing before first-run setup resolves", async () => {
-    const previousSettings = loadSettings();
-    const previousUrl = window.location.href;
-    saveSettings({ ...previousSettings, sessionKey: "", lastActiveSessionKey: "" });
-    window.history.replaceState({}, "", "/chat");
-    const runtime = bootstrapApplication();
-    const route = runtime.router.getRoute("chat");
-    if (!route) {
-      throw new Error("expected the chat route");
-    }
-    const component = vi.spyOn(route, "component");
-
-    try {
-      const start = runtime.start();
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 20);
-      });
-      expect(component).not.toHaveBeenCalled();
-      runtime.stop();
-      await start.catch(() => undefined);
-    } finally {
-      runtime.stop();
-      saveSettings(previousSettings);
-      window.history.replaceState({}, "", previousUrl);
-    }
-  });
-
   it("bridges dynamic session paths when preloading through the application context", async () => {
     const previousSettings = loadSettings();
     const previousUrl = window.location.href;
