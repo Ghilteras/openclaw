@@ -15,6 +15,13 @@ const release = {
     { name: "OpenClaw-2026.6.8.dSYM.zip", digest: `sha256:${"c".repeat(64)}` },
   ],
 };
+const remainingAppAssets = [
+  "OpenClaw-Android-SHA256SUMS.txt",
+  "OpenClaw-Android.apk",
+  "OpenClawCompanion-SHA256SUMS.txt",
+  "OpenClawCompanion-Setup-arm64.exe",
+  "OpenClawCompanion-Setup-x64.exe",
+];
 const changelog =
   "# Changelog\n\n## 2026.6.8\n\n### Fixes\n\n- Shipped fix.\n\n## 2026.6.7\n\n- Old.\n";
 const validCloseoutParams = {
@@ -210,13 +217,10 @@ describe("stable release closeout", () => {
         ...release,
         assets: [
           ...release.assets,
-          ...[
-            "OpenClaw-Android-SHA256SUMS.txt",
-            "OpenClaw-Android.apk",
-            "OpenClawCompanion-SHA256SUMS.txt",
-            "OpenClawCompanion-Setup-arm64.exe",
-            "OpenClawCompanion-Setup-x64.exe",
-          ].map((name) => ({ name, digest: `sha256:${"d".repeat(64)}` })),
+          ...remainingAppAssets.map((name) => ({
+            name,
+            digest: `sha256:${"d".repeat(64)}`,
+          })),
         ],
       },
       nowMs: Date.parse("2026-06-17T00:00:00Z"),
@@ -224,6 +228,50 @@ describe("stable release closeout", () => {
 
     expect(result.errors).toEqual([]);
     expect(result.manifest).toMatchObject({ apps: "attached", appcast: "verified" });
+  });
+
+  it.each([
+    {
+      label: "missing macOS digest",
+      assetName: "OpenClaw-2026.6.8.zip",
+      digest: null,
+      platform: "macos",
+      appcast: "pending",
+    },
+    {
+      label: "uppercase Android",
+      assetName: "OpenClaw-Android.apk",
+      digest: `sha256:${"D".repeat(64)}`,
+      platform: "android",
+      appcast: "verified",
+    },
+    {
+      label: "short Windows",
+      assetName: "OpenClawCompanion-Setup-x64.exe",
+      digest: `sha256:${"d".repeat(63)}`,
+      platform: "windows",
+      appcast: "verified",
+    },
+  ])("keeps $label artifact evidence pending", ({ assetName, digest, platform, appcast }) => {
+    const assets = [
+      ...release.assets,
+      ...remainingAppAssets.map((name) => ({
+        name,
+        digest: `sha256:${"d".repeat(64)}`,
+      })),
+    ].map((asset) => (asset.name === assetName ? { name: asset.name, digest } : asset));
+    const result = verifyStableMainCloseout({
+      ...validCloseoutParams,
+      release: { ...release, assets },
+      nowMs: Date.parse("2026-06-17T00:00:00Z"),
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.manifest).toMatchObject({
+      apps: "pending",
+      appPlatforms: { [platform]: "pending" },
+      appcast,
+    });
   });
 
   it("rejects calendar-normalized rollback drill dates", () => {

@@ -4,6 +4,7 @@ import { escapeRegExp } from "./regexp.mjs";
 const STABLE_RELEASE_TAG_RE = /^v(?<version>\d{4}\.\d{1,2}\.\d{1,2})(?:-[1-9]\d*)?$/u;
 const STABLE_PACKAGE_VERSION_RE =
   /^(?<year>\d{4})\.(?<month>\d{1,2})\.(?<patch>\d{1,2})(?:-(?<correction>[1-9]\d*))?$/u;
+const SHA256_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;
 const MAX_ROLLBACK_DRILL_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
 function parseStableReleaseTagDetails(tag) {
@@ -78,6 +79,12 @@ function readReleaseAssets(release) {
   return Array.isArray(release?.assets)
     ? release.assets.filter((asset) => asset && typeof asset.name === "string")
     : [];
+}
+
+function readVerifiedAssetNames(assets) {
+  return new Set(
+    assets.filter((asset) => SHA256_DIGEST_RE.test(asset.digest ?? "")).map((asset) => asset.name),
+  );
 }
 
 function isCloseoutEvidenceAsset(assetName, tag) {
@@ -211,11 +218,10 @@ export function verifyStableMainCloseout(params) {
       }
     }
   }
-  const assetNames = new Set(releaseAssets.map((asset) => asset.name));
-  const macAttachedAtCloseout = expectedMacAssets.every((asset) => assetNames.has(asset));
-  const macPublished = expectedMacAssets.every((name) =>
-    observedAssets.some((asset) => asset.name === name),
-  );
+  const verifiedAssetNames = readVerifiedAssetNames(releaseAssets);
+  const verifiedObservedAssetNames = readVerifiedAssetNames(observedAssets);
+  const macAttachedAtCloseout = expectedMacAssets.every((asset) => verifiedAssetNames.has(asset));
+  const macPublished = expectedMacAssets.every((name) => verifiedObservedAssetNames.has(name));
   // A recorded appcast remains bound to its main snapshot. Only late macOS
   // publication needs the current feed, which may have retired older entries.
   const appcast = macAttachedAtCloseout
@@ -230,7 +236,7 @@ export function verifyStableMainCloseout(params) {
   const appPlatforms = Object.fromEntries(
     Object.entries(platformAssets).map(([platform, assets]) => [
       platform,
-      assets.every((asset) => assetNames.has(asset)) ? "attached" : "pending",
+      assets.every((asset) => verifiedAssetNames.has(asset)) ? "attached" : "pending",
     ]),
   );
   const apps = Object.values(appPlatforms).every((state) => state === "attached")
