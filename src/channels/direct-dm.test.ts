@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { dispatchInboundDirectDm } from "./direct-dm.js";
 import { buildChannelInboundEventContext } from "./inbound-event/context.js";
@@ -36,6 +36,8 @@ vi.mock("./turn/lifecycle.js", () => ({
 }));
 
 describe("dispatchInboundDirectDm", () => {
+  beforeEach(() => vi.clearAllMocks());
+
   it("forwards the canonical model-selection reply pipeline", async () => {
     const channelIngress = await resolveStableChannelMessageIngress({
       channelId: "nostr",
@@ -106,8 +108,9 @@ describe("dispatchInboundDirectDm", () => {
         replyOptions: expect.objectContaining({ turnAdoptionLifecycle }),
       }),
     );
-    expect(vi.mocked(buildChannelInboundEventContext).mock.calls[1]?.[0].channelIngress).toBe(
-      "unsupported",
+    expect(buildChannelInboundEventContext).toHaveBeenCalledOnce();
+    expect(buildChannelInboundEventContext).toHaveBeenCalledWith(
+      expect.objectContaining({ channelIngress: "unsupported" }),
     );
   });
 
