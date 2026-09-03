@@ -1390,7 +1390,6 @@ openclaw-settings-save-indicator:empty {
   align-items: center;
   gap: var(--sidebar-row-gap);
   min-width: 0;
-  grid-area: 1 / 1;
   padding: 2px 0;
   border: none;
   background: transparent;
@@ -1422,19 +1421,13 @@ openclaw-settings-save-indicator:empty {
   opacity: 0;
 }
 
-.sidebar-recent-sessions__head:hover
-  .sidebar-session-group-toggle__lead--branded
-  .sidebar-session-catalog-provider-icon,
-.sidebar-recent-sessions__head:has(:focus-visible)
+.sidebar-recent-sessions__head:where(:hover, :has(:focus-visible))
   .sidebar-session-group-toggle__lead--branded
   .sidebar-session-catalog-provider-icon {
   opacity: 0;
 }
 
-.sidebar-recent-sessions__head:hover
-  .sidebar-session-group-toggle__lead--branded
-  .sidebar-session-group-toggle__icon,
-.sidebar-recent-sessions__head:has(:focus-visible)
+.sidebar-recent-sessions__head:where(:hover, :has(:focus-visible))
   .sidebar-session-group-toggle__lead--branded
   .sidebar-session-group-toggle__icon {
   opacity: 0.75;
@@ -1451,7 +1444,6 @@ openclaw-settings-save-indicator:empty {
 .sidebar-session-catalog-provider-icon {
   width: 12px;
   height: 12px;
-  flex: 0 0 12px;
 }
 
 .sidebar-session-group-count {
@@ -1558,12 +1550,10 @@ openclaw-settings-save-indicator:empty {
    reachable on touch pointers where hover does not exist. */
 .sidebar-session-group-actions {
   display: inline-flex;
-  grid-area: 1 / 2;
   align-items: center;
   justify-content: center;
   width: 22px;
   height: 22px;
-  flex: 0 0 auto;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -1574,10 +1564,6 @@ openclaw-settings-save-indicator:empty {
     opacity var(--duration-fast) ease,
     background var(--duration-fast) ease,
     color var(--duration-fast) ease;
-}
-
-a.sidebar-session-group-actions {
-  grid-column: 3;
 }
 
 .sidebar-session-group-actions[aria-disabled="true"] {
@@ -1640,7 +1626,6 @@ a.sidebar-session-group-actions {
 /* Shrink long marquee labels, but keep counts beside the text on short labels. */
 .sidebar-session-group-toggle > .sidebar-recent-sessions__label-text {
   min-width: 0;
-  flex: 0 1 auto;
 }
 
 /* Flex, not grid: WebKit does not re-run a grid flex-item's intrinsic sizing
