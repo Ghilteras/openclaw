@@ -38,10 +38,19 @@ export type BenchmarkWorkerSpawner = (
   },
 ) => BenchmarkWorkerProcessResult;
 
-export function parseBenchmarkInteger(raw: string, flag: string, min: number, max: number) {
+export function parseBenchmarkInteger(
+  raw: string | undefined,
+  flag: string,
+  min: number,
+  max: number,
+  rangeErrorStyle: "directional" | "combined" = "directional",
+) {
   const result = classifyBoundedUnsignedDecimal(raw, min, max);
   if (result.kind === "syntax") {
     throw new Error(`${flag} must be an integer`);
+  }
+  if (result.kind !== "value" && rangeErrorStyle === "combined") {
+    throw new Error(`${flag} must be between ${min} and ${max}`);
   }
   if (result.kind === "below") {
     throw new Error(`${flag} must be at least ${min}`);

@@ -11,7 +11,7 @@ import {
   type WorkerResult,
   type WorkerScenario,
 } from "./bench-agent-concurrency.js";
-import { classifyBoundedUnsignedDecimal } from "./lib/arg-utils.mts";
+import { parseBenchmarkInteger } from "./lib/benchmark-harness.mts";
 
 type WorkerOptions = {
   scenario: WorkerScenario;
@@ -33,17 +33,6 @@ const SCENARIOS = new Set<WorkerScenario>([
   "duplicateSuppression",
 ]);
 
-function parseInteger(raw: string | undefined, flag: string, min: number, max: number): number {
-  const result = classifyBoundedUnsignedDecimal(raw, min, max);
-  if (result.kind === "syntax") {
-    throw new Error(`${flag} must be an integer`);
-  }
-  if (result.kind !== "value") {
-    throw new Error(`${flag} must be between ${min} and ${max}`);
-  }
-  return result.value;
-}
-
 function parseOptions(argv: string[]): WorkerOptions {
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
@@ -63,9 +52,9 @@ function parseOptions(argv: string[]): WorkerOptions {
   }
   return {
     scenario,
-    size: parseInteger(values.get("--size"), "--size", 1, 4096),
-    runs: parseInteger(values.get("--runs"), "--runs", 1, 100),
-    warmup: parseInteger(values.get("--warmup"), "--warmup", 0, 20),
+    size: parseBenchmarkInteger(values.get("--size"), "--size", 1, 4096, "combined"),
+    runs: parseBenchmarkInteger(values.get("--runs"), "--runs", 1, 100, "combined"),
+    warmup: parseBenchmarkInteger(values.get("--warmup"), "--warmup", 0, 20, "combined"),
   };
 }
 

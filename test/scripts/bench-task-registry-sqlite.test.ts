@@ -389,4 +389,27 @@ describe("durable task registry churn benchmark", () => {
       "[bench-task-registry-sqlite] FAILED (exit 1)",
     );
   });
+
+  it("preserves combined range errors at the worker boundary", () => {
+    const failure = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/bench-task-registry-sqlite-worker.ts",
+        "--size",
+        "4097",
+        "--cycles",
+        "1",
+        "--warmup",
+        "0",
+        "--state-dir",
+        process.cwd(),
+      ],
+      { cwd: process.cwd(), encoding: "utf8", env: { ...process.env, NODE_NO_WARNINGS: "1" } },
+    );
+
+    expect(failure.status).toBe(1);
+    expect(failure.stderr).toContain("--size must be between 1 and 4096");
+  });
 });

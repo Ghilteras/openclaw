@@ -95,6 +95,7 @@ describe("agent concurrency benchmark", () => {
       json: true,
     });
     expect(() => testing.parseOptions(["--runs", "101"])).toThrow("--runs must be at most 100");
+    expect(() => testing.parseOptions(["--runs", "0"])).toThrow("--runs must be at least 1");
     expect(() => testing.parseOptions(["--fanout", "1,1"])).toThrow(
       "--fanout contains duplicate values",
     );
@@ -340,5 +341,28 @@ describe("agent concurrency benchmark", () => {
     expect(failure.stderr.trim().split("\n").at(-1)).toBe(
       "[bench-agent-concurrency] FAILED (exit 1)",
     );
+  });
+
+  it("preserves combined range errors at the worker boundary", () => {
+    const failure = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/bench-agent-concurrency-worker.ts",
+        "--scenario",
+        "admission",
+        "--size",
+        "0",
+        "--runs",
+        "1",
+        "--warmup",
+        "0",
+      ],
+      { cwd: process.cwd(), encoding: "utf8", env: { ...process.env, NODE_NO_WARNINGS: "1" } },
+    );
+
+    expect(failure.status).toBe(1);
+    expect(failure.stderr).toContain("--size must be between 1 and 4096");
   });
 });
