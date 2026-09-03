@@ -142,10 +142,12 @@ export async function probeOwnedGatewayReadiness(
           minProtocol: PROTOCOL_VERSION,
           maxProtocol: PROTOCOL_VERSION,
           client: {
-            id: GATEWAY_CLIENT_NAMES.PROBE,
+            // This first-party local controller uses the server's device-less
+            // backend admission contract, including explicit auth:none fixtures.
+            id: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,
             version: "1.0.0",
             platform: process.platform,
-            mode: GATEWAY_CLIENT_MODES.PROBE,
+            mode: GATEWAY_CLIENT_MODES.BACKEND,
           },
           role: "operator",
           scopes: [],

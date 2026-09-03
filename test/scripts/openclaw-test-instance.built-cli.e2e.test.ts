@@ -14,7 +14,7 @@ import { isProcessAlive } from "../helpers/process-wait.js";
 import { runQaGatewayFixture } from "../helpers/qa-gateway-cleanup.js";
 
 describe("built Gateway readiness ownership", () => {
-  it.each(["password", "trusted-proxy"] as const)(
+  it.each(["none", "password", "trusted-proxy"] as const)(
     "readies the owned Gateway after the fixture rewrites auth to %s",
     async (mode) => {
       const instance = await createOpenClawTestInstance({

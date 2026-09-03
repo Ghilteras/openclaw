@@ -2323,6 +2323,7 @@ describe("scripts/test-projects changed-target routing", () => {
         forwardedArgs: [
           "test/scripts/doctor-config-preflight-plugin-index.built-cli.e2e.test.ts",
           "test/scripts/mcp-channels-seed.built-cli.e2e.test.ts",
+          "test/scripts/openclaw-test-instance.built-cli.e2e.test.ts",
           "test/scripts/sqlite-sessions-transcripts-flip-proof.built-cli.e2e.test.ts",
           "test/scripts/sqlite-sessions-transcripts-flip-proof.e2e.test.ts",
         ],
