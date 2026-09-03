@@ -389,7 +389,9 @@ describe("bootstrapApplication", () => {
 
     try {
       const start = runtime.start();
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 20);
+      });
       expect(component).not.toHaveBeenCalled();
       runtime.stop();
       await start.catch(() => undefined);
