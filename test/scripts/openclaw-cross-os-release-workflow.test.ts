@@ -210,7 +210,8 @@ describe("cross-OS release checks workflow", () => {
     });
     expect(baseline.run).toContain("npm view openclaw versions --json");
     expect(baseline.run).toContain('--versions-json "$versions_json"');
-    expect(baseline.run).toContain("node workflow/scripts/lib/release-upgrade-baseline.mjs");
+    expect(baseline["working-directory"]).toBe("workflow");
+    expect(baseline.run).toContain("node scripts/lib/release-upgrade-baseline.mjs");
     expect(baseline.run).toContain('echo "value=${baseline#openclaw@}"');
     expect(baseline.run).toContain(
       'echo "package_acceptance_package_spec=${package_name}@${package_version}"',

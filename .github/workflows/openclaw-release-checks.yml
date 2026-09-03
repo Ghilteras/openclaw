@@ -823,6 +823,8 @@ jobs:
           steps.inputs.outputs.docker_required == 'true' ||
           (steps.inputs.outputs.cross_os_scheduled == 'true' &&
           steps.inputs.outputs.mode != 'fresh'))
+        # The resolver is trusted workflow code; target metadata is data only.
+        working-directory: workflow
         env:
           CROSS_OS_SCHEDULED: ${{ steps.inputs.outputs.cross_os_scheduled }}
           DOCKER_REQUIRED: ${{ steps.inputs.outputs.docker_required }}
@@ -859,7 +861,7 @@ jobs:
             if [[ -n "$TARGET_CONTEXT_REF" ]]; then
               resolver_args+=(--target-context-ref "$TARGET_CONTEXT_REF")
             fi
-            baseline="$(node workflow/scripts/lib/release-upgrade-baseline.mjs "${resolver_args[@]}")"
+            baseline="$(node scripts/lib/release-upgrade-baseline.mjs "${resolver_args[@]}")"
             echo "value=${baseline#openclaw@}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -881,7 +883,7 @@ jobs:
             # An explicit package override is independent of the selected release target.
             # Do not apply that target's frozen-line baseline contract to it.
             package_baseline="$(
-              node workflow/scripts/lib/release-upgrade-baseline.mjs "${resolver_args[@]}"
+              node scripts/lib/release-upgrade-baseline.mjs "${resolver_args[@]}"
             )"
             echo "package_acceptance_package_spec=${package_name}@${package_version}" >> "$GITHUB_OUTPUT"
             echo "package_acceptance_baseline=${package_baseline#openclaw@}" >> "$GITHUB_OUTPUT"
