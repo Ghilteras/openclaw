@@ -3,7 +3,7 @@ import { canonicalBytes } from "./canonical.js";
 import { decodeUtf8, hex, utf8 } from "./encoding.js";
 
 export const REEF_FEDERATION_NAMESPACE = "openclaw.session-federation.v1";
-export const REEF_FEDERATION_TEXT_MAX_BYTES = 24 * 1024;
+export const REEF_FEDERATION_TEXT_MAX_BYTES = 512;
 
 type PromptFrameBinding = {
   mountId: string;
