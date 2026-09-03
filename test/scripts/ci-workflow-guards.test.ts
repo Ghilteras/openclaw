@@ -680,6 +680,7 @@ function runCiManifestFixture(options: {
         GH_TOKEN: "",
         GITHUB_TOKEN: "",
         GITHUB_OUTPUT: outputPath,
+        GITHUB_RUN_ATTEMPT: "1",
         GITHUB_STEP_SUMMARY: summaryPath,
         RUNNER_TEMP: root,
         PATH: options.remoteTagRefs
@@ -1594,7 +1595,8 @@ function runProtocolSinceFixture(checkout: string, baseSha: string) {
 function runCheckShardFixture(options: {
   frozenTarget: boolean;
   scripts: string[];
-  task?: "guards" | "test-types";
+  task?: "guards" | "npm-lock" | "test-types";
+  checkoutBase?: string;
 }): {
   calls: string[];
   output: string;
@@ -1632,9 +1634,9 @@ function runCheckShardFixture(options: {
       FORMAT_CHECK: "false",
       HISTORICAL_TARGET: options.frozenTarget ? "true" : "false",
       HOSTED_RUNNER_STRIPES: "true",
+      CHECKOUT_BASE_SHA: options.checkoutBase ?? "",
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
       PNPM_CALLS: callsPath,
-      PR_BASE_SHA: "",
       TASK: options.task ?? "guards",
     },
   });
@@ -1700,7 +1702,6 @@ function runDependencyCheckFixture(options: {
         HISTORICAL_TARGET: options.historicalTarget ? "true" : "false",
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
         PNPM_CALLS: callsPath,
-        PR_BASE_SHA: "",
         TASK: "dependencies",
       },
     });
@@ -3534,7 +3535,7 @@ NODE
   );
 
   it.skipIf(process.platform === "win32")(
-    "bounds Windows project overlap to existing self-hosted capacity",
+    "keeps Windows projects serial on each runner while both jobs remain parallel",
     () => {
       const workflow = readCiWorkflow();
       const job = workflow.jobs["checks-windows"];
@@ -3569,9 +3570,7 @@ NODE
             },
           });
           expect(result.status, result.stdout + result.stderr).toBe(0);
-          expect(result.stdout).toContain(
-            `project_parallelism=${runner === "self-hosted" ? 2 : 1}`,
-          );
+          expect(result.stdout).toContain("project_parallelism=1");
         }
       }
       expect(job.strategy["max-parallel"]).toBe(2);
@@ -4386,6 +4385,7 @@ NODE
       "checks-ui-e2e": "ubuntu-24.04",
       "checks-ui-e2e-real-gateway": "ubuntu-24.04",
       "control-ui-i18n": "ubuntu-24.04",
+      "control-ui-performance": "ubuntu-24.04",
       "docker-seed-e2e": "ubuntu-24.04",
       "macos-node": "macos-15",
       "macos-swift": "macos-26",
@@ -5172,6 +5172,7 @@ NODE
       "checks-ui-e2e",
       "checks-ui-e2e-real-gateway",
       "control-ui-i18n",
+      "control-ui-performance",
       "docker-seed-e2e",
       "native-i18n",
       "qa-smoke-ci-profile",
@@ -9140,17 +9141,74 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     const checkShardStep = parsedWorkflow.jobs["check-shard"].steps.find(
       (step: WorkflowStep) => step.name === "Run check shard",
     );
-    expect(parsedWorkflow.jobs["check-shard"].env.CHECKOUT_BASE_SHA).toBe(
-      "${{ ((matrix.task == 'guards' && github.event_name == 'pull_request') || (matrix.task == 'npm-lock' && github.event_name != 'workflow_dispatch')) && needs.preflight.outputs.diff_base_revision || '' }}",
-    );
-    expect(checkShardStep.env.PR_BASE_SHA).toBe(
-      "${{ github.event_name == 'pull_request' && needs.preflight.outputs.diff_base_revision || '' }}",
-    );
     expect(checkShardStep.run).not.toContain("--checkout-git");
     expect(checkShardStep.run).toContain(
-      'test "$(git rev-parse refs/remotes/origin/ci-ratchet-base^{commit})" = "$PR_BASE_SHA"',
+      'test "$(git rev-parse refs/remotes/origin/ci-ratchet-base^{commit})" = "$CHECKOUT_BASE_SHA"',
     );
   });
+
+  it.each([
+    { job: "check-shard", task: "prod-types", events: [] },
+    {
+      job: "checks-fast-core",
+      task: "baseline-ratchets",
+      events: ["pull_request", "push", "workflow_dispatch"],
+    },
+    {
+      job: "checks-fast-core",
+      task: "release-lint-core-1",
+      events: ["pull_request", "push", "workflow_dispatch"],
+    },
+    { job: "checks-fast-core", task: "ci-routing", events: [] },
+  ])("prepares the frozen diff base for $job/$task at checkout", ({ job, task, events }) => {
+    const expression = readCiWorkflow().jobs[job].env?.CHECKOUT_BASE_SHA;
+    const base = "c".repeat(40);
+    expect(typeof expression).toBe("string");
+    for (const eventName of ["pull_request", "push", "workflow_dispatch"] as const) {
+      expect(
+        evaluateWorkflowExpression(expression, {
+          eventName,
+          repository: "openclaw/openclaw",
+          runAttempt: 1,
+          matrix: { task },
+          preflightOutputs: { diff_base_revision: base },
+        }),
+        eventName,
+      ).toBe(events.includes(eventName) ? base : "");
+    }
+  });
+
+  it.each([
+    { label: "manual run", checkoutBase: "", changedScript: true },
+    { label: "target without changed checks", checkoutBase: "c".repeat(40), changedScript: false },
+  ])("keeps the full npm-lock sweep for $label", ({ checkoutBase, changedScript }) => {
+    const result = runCheckShardFixture({
+      task: "npm-lock",
+      frozenTarget: false,
+      checkoutBase,
+      scripts: ["deps:npm-lock:check", ...(changedScript ? ["deps:npm-lock:check:changed"] : [])],
+    });
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls).toEqual(["deps:npm-lock:check"]);
+  });
+
+  it.each([false, true])(
+    "preserves absent npm-lock capability handling (historical=%s)",
+    (historical) => {
+      const result = runCheckShardFixture({
+        task: "npm-lock",
+        frozenTarget: historical,
+        scripts: [],
+      });
+      expect(result.status, result.output).toBe(historical ? 0 : 1);
+      expect(result.calls).toEqual([]);
+      expect(result.output).toContain(
+        historical
+          ? "[skip] historical target predates the transient npm lock contract"
+          : "Current CI targets must provide the deps:npm-lock:check package script.",
+      );
+    },
+  );
 
   it("runs temp path guardrails in the hosted guard shard", () => {
     const requiredScripts = ["check:doctor-deprecation-registry", "check:coercion-helpers"];
@@ -9631,7 +9689,6 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
           LINT_GO_ENV: goEnvPath,
           OPENCLAW_LOCAL_CHECK: "0",
           PATH: `${binDir}:${process.env.PATH ?? ""}`,
-          PR_BASE_SHA: "",
           RELEASE_GATE: releaseGate ? "true" : "false",
           RUN_CONTROL_UI_I18N: "false",
           RUNNER_PROFILE: profile,
@@ -9771,7 +9828,6 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
           CHECKOUT_KIND: "linux-node",
           CHECKOUT_BASE_SHA: String(checkoutBase),
           CHECKOUT_TOKEN: "fixture-checkout-token",
-          PR_BASE_SHA: eventName === "pull_request" ? base : "",
         },
       });
       expect(report.code, report.output).toBe(0);
@@ -9792,7 +9848,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
             ? [
                 "scripts/report-test-temp-creations.mjs",
                 "--base",
-                baseRef,
+                base,
                 "--head",
                 "HEAD",
                 "--no-merge-base",
@@ -9802,7 +9858,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       } else {
         expect(consumers.filter(({ tool }) => tool === "pnpm").map(({ args }) => args)).toEqual([
           needsBase
-            ? ["deps:npm-lock:check:changed", "--base", baseRef, "--head", "HEAD"]
+            ? ["deps:npm-lock:check:changed", "--base", base, "--head", "HEAD"]
             : ["deps:npm-lock:check"],
         ]);
       }
@@ -9830,9 +9886,6 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       contents: "read",
       "pull-requests": "read",
     });
-    expect(checksFastJob.env.CHECKOUT_BASE_SHA).toBe(
-      "${{ (matrix.task == 'baseline-ratchets' || matrix.task == 'bundled-protocol' || startsWith(matrix.task, 'release-lint-')) && needs.preflight.outputs.diff_base_revision || '' }}",
-    );
     expect(checkout.env.CHECKOUT_SHA).toBe("${{ needs.preflight.outputs.checkout_revision }}");
     expect(releaseGateMerge.if).toBe(
       "(matrix.task == 'baseline-ratchets' || startsWith(matrix.task, 'release-lint-')) && github.event_name == 'workflow_dispatch' && inputs.release_gate",
@@ -11219,6 +11272,8 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         "--",
         ":(glob)ui/src/**/*.e2e.test.ts",
         "extensions/qa-lab/src/control-ui-media-transcript.real-gateway.e2e.test.ts",
+        "extensions/qa-lab/src/session-host-command-state.real-gateway.e2e.test.ts",
+        "extensions/qa-lab/src/control-ui-openclaw-delegation.real-gateway.e2e.test.ts",
       ],
       { encoding: "utf8" },
     )
@@ -11234,11 +11289,33 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         true,
       );
       let ownsPrivateServer = false;
-      const visit = (node: ts.Node) => {
+      const visit = (node: ts.Node, inSuiteServer = false) => {
         if (ownsPrivateServer) {
           return;
         }
         if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+          // A Gateway created by the suite's server factory supplies its own UI;
+          // a separate backend in a test can still use the shared UI bundle.
+          if (inSuiteServer && node.expression.text === "createOpenClawTestInstance") {
+            ownsPrivateServer = true;
+            return;
+          }
+          const options = node.arguments[0];
+          if (
+            node.expression.text === "createControlUiE2eSuite" &&
+            options &&
+            ts.isObjectLiteralExpression(options)
+          ) {
+            for (const property of options.properties) {
+              if (
+                (ts.isMethodDeclaration(property) || ts.isPropertyAssignment(property)) &&
+                (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+                property.name.text === "startServer"
+              ) {
+                visit(property, true);
+              }
+            }
+          }
           if (
             node.expression.text === "createSessionManagementE2eSuite" &&
             node.arguments[0]?.kind === ts.SyntaxKind.TrueKeyword
@@ -11256,7 +11333,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
             return;
           }
         }
-        ts.forEachChild(node, visit);
+        ts.forEachChild(node, (child) => visit(child, inSuiteServer));
       };
       visit(sourceFile);
       return ownsPrivateServer;
@@ -11272,6 +11349,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(privateServerFiles).toEqual(uiE2ePrivateServerTestFiles);
     expect(helperPrivateServerFiles.toSorted()).toEqual([
       "ui/src/e2e/child-session-load-errors.e2e.test.ts",
+      "ui/src/e2e/cron-duration-save.real-gateway.e2e.test.ts",
       "ui/src/e2e/mobile-chat-session-menu.e2e.test.ts",
       "ui/src/e2e/mobile-sidebar-session-menu.e2e.test.ts",
       "ui/src/e2e/session-management.delete.e2e.test.ts",
@@ -11302,6 +11380,8 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(config.test?.include).toEqual([
       "ui/src/**/*.e2e.test.ts",
       "extensions/qa-lab/src/control-ui-media-transcript.real-gateway.e2e.test.ts",
+      "extensions/qa-lab/src/session-host-command-state.real-gateway.e2e.test.ts",
+      "extensions/qa-lab/src/control-ui-openclaw-delegation.real-gateway.e2e.test.ts",
     ]);
     expect(projects.map((project) => project.test.name)).toEqual([
       "ui-e2e-bundled",
@@ -11545,29 +11625,39 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(uiE2e.strategy["fail-fast"]).toBe(false);
     expect(uiE2e.strategy["max-parallel"]).toBe(14);
     expect(uiE2e.strategy.matrix).toBe("${{ fromJson(needs.preflight.outputs.ui_e2e_matrix) }}");
-    const expectedUiE2eMatrix = {
-      include: Array.from({ length: 13 }, (_, index) => {
+    const expectedUiE2eMatrices = [6, 12].map((vitestShardCount) => ({
+      include: Array.from({ length: vitestShardCount + 1 }, (_, index) => {
         const shard = index + 1;
         return {
           shard,
-          shard_count: 13,
-          task: shard === 13 ? "browser-extension" : "control-ui",
-          vitest_shard_count: 12,
+          shard_count: vitestShardCount + 1,
+          task: shard === vitestShardCount + 1 ? "browser-extension" : "control-ui",
+          vitest_shard_count: vitestShardCount,
         };
       }),
-    };
+    }));
     for (const runnerBackend of ["blacksmith", "github", "hybrid"] as const) {
-      const manifest = runCiManifestFixture({
-        bundledPlanner: true,
-        eventName: "push",
-        historicalCompatibility: false,
-        runnerBackend,
-        uiE2eProjectsCapability: true,
-      });
-      expect(manifest.status, manifest.output).toBe(0);
-      expect(
-        JSON.parse(expectDefined(manifest.outputs.ui_e2e_matrix, `${runnerBackend} UI E2E matrix`)),
-      ).toEqual(expectedUiE2eMatrix);
+      for (const eventName of ["push", "pull_request"] as const) {
+        for (const runAttempt of ["1", "2", ""]) {
+          const manifest = runCiManifestFixture({
+            bundledPlanner: true,
+            changedPaths: [],
+            eventName,
+            historicalCompatibility: false,
+            runnerBackend,
+            uiE2eProjectsCapability: true,
+            scopeEnv: { GITHUB_RUN_ATTEMPT: runAttempt },
+          });
+          const assertionName = `${runnerBackend} ${eventName} attempt ${runAttempt || "missing"}`;
+          expect(manifest.status, manifest.output).toBe(0);
+          expect(
+            JSON.parse(expectDefined(manifest.outputs.ui_e2e_matrix, assertionName)),
+            assertionName,
+          ).toEqual(
+            expectedUiE2eMatrices[runnerBackend === "blacksmith" && runAttempt === "1" ? 0 : 1],
+          );
+        }
+      }
     }
     expect(workflow.jobs["ci-gate"].needs).toContain("checks-ui-e2e");
     expect(workflow.jobs["ci-gate"].needs).toContain("checks-ui-e2e-real-gateway");
@@ -11605,25 +11695,27 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     });
     expect(realGatewaySetup.with).toEqual(expectedSharedUiE2eSetup);
 
-    // Both Chromium lanes own the same serial workload, so they must share one
-    // routing shape and differ only in Blacksmith size. Pin the literal so a
-    // divergence like the hosted-only real-Gateway row cannot return unnoticed.
-    const uiE2eRunsOnExpression = (blacksmithRunner: string) =>
-      `\${{ vars.OPENCLAW_CI_RUNNER_BACKEND == 'github' && 'ubuntu-24.04' || (vars.OPENCLAW_CI_RUNNER_BACKEND == 'hybrid' && github.run_attempt > 1) && 'ubuntu-24.04' || (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.run_attempt > 1)) && 'ubuntu-24.04' || (github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association)) && '${blacksmithRunner}' || 'ubuntu-24.04') }}`;
+    // Failed-job retries reuse the six-row matrix while live routing selects
+    // hosted runners. Both widths must retain the cache and contributor boundaries.
     const routedUiE2eJobs = [
-      {
-        job: uiE2e,
-        name: "checks-ui-e2e",
-        setup: uiE2eSetup,
-        blacksmithRunner: "blacksmith-8vcpu-ubuntu-2404",
-        runsOn: uiE2eRunsOnExpression("blacksmith-8vcpu-ubuntu-2404"),
-      },
+      ...expectedUiE2eMatrices
+        .flatMap(({ include }) => include)
+        .map((matrix) => ({
+          job: uiE2e,
+          name: `checks-ui-e2e (${matrix.shard}/${matrix.shard_count})`,
+          setup: uiE2eSetup,
+          matrix,
+          blacksmithRunner:
+            matrix.task === "control-ui"
+              ? "blacksmith-32vcpu-ubuntu-2404"
+              : "blacksmith-8vcpu-ubuntu-2404",
+        })),
       {
         job: uiE2eRealGateway,
         name: "checks-ui-e2e-real-gateway",
         setup: realGatewaySetup,
+        matrix: {},
         blacksmithRunner: "blacksmith-16vcpu-ubuntu-2404",
-        runsOn: uiE2eRunsOnExpression("blacksmith-16vcpu-ubuntu-2404"),
       },
     ] as const;
     const routingScenarios = [
@@ -11712,17 +11804,18 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         expected: { blacksmith: true, dependencyCache: "true" },
       },
     ] as const;
-    for (const { blacksmithRunner, job, name: jobName, runsOn, setup } of routedUiE2eJobs) {
-      expect(job["runs-on"]).toBe(runsOn);
+    for (const { blacksmithRunner, job, matrix, name: jobName, setup } of routedUiE2eJobs) {
       for (const { context, expected, name: scenarioName } of routingScenarios) {
         const assertionName = `${jobName}: ${scenarioName}`;
         const expectedRunner = expected.blacksmith ? blacksmithRunner : "ubuntu-24.04";
-        expect(evaluateWorkflowExpression(job["runs-on"], context), assertionName).toBe(
-          expectedRunner,
-        );
+        expect(
+          evaluateWorkflowExpression(job["runs-on"], { ...context, matrix }),
+          assertionName,
+        ).toBe(expectedRunner);
         expect(
           evaluateWorkflowExpression(setup.with?.["dependency-cache"], {
             ...context,
+            matrix,
             runnerEnvironment: expected.blacksmith ? "self-hosted" : "github-hosted",
           }),
           assertionName,
@@ -11832,6 +11925,18 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     );
     const proofUpload = uiE2eRealGateway.steps[proofUploadIndex];
     const realGatewayIndex = uiE2eRealGateway.steps.indexOf(realGatewayStep);
+    // Same-origin admission compares exact build IDs, including the build timestamp.
+    // Include private QA so media bootstrap cannot rebuild runtime behind the UI.
+    const realGatewayBuild = expectDefined(
+      uiE2eRealGateway.steps.find((step: WorkflowStep) => step.run === "pnpm build:ci-artifacts"),
+      "paired runtime and Control UI build",
+    );
+    expect(realGatewayBuild.if).toBeUndefined();
+    expect(realGatewayBuild["continue-on-error"]).toBeUndefined();
+    expect(realGatewayBuild.env).toEqual({ OPENCLAW_BUILD_PRIVATE_QA: "1" });
+    const realGatewayBuildIndex = uiE2eRealGateway.steps.indexOf(realGatewayBuild);
+    expect(realGatewayBuildIndex).toBeGreaterThan(uiE2eRealGateway.steps.indexOf(realGatewaySetup));
+    expect(realGatewayBuildIndex).toBeLessThan(realGatewayIndex);
     expect(realGatewayStep.env).toEqual({
       OPENCLAW_CAPTURE_UI_PROOF:
         "${{ github.event_name == 'workflow_dispatch' && inputs.capture_ui_proof && '1' || '0' }}",
@@ -12799,6 +12904,37 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(additionalBoundaryFingerprint.run).toContain("enabled=false");
   });
 
+  it.skipIf(process.platform === "win32")(
+    "keeps missing performance coverage fatal outside historical targets",
+    () => {
+      const job = readCiWorkflow().jobs["control-ui-performance"];
+      expect(job.needs).toEqual(["preflight"]);
+      expect(job.env.CHECKOUT_BASE_SHA).toBe("${{ needs.preflight.outputs.diff_base_revision }}");
+      const step = job.steps.find(
+        (candidate: WorkflowStep) => candidate.name === "Check Control UI performance against base",
+      );
+      const root = tempDirs.make("openclaw-performance-workflow-");
+      const summary = path.join(root, "summary.md");
+      writeFileSync(path.join(root, "package.json"), "{}");
+      for (const compatibility of ["true", "false"]) {
+        const result = runWorkflowShellScript(step.run, {
+          cwd: root,
+          env: {
+            ...process.env,
+            COMPATIBILITY_TARGET: compatibility,
+            GITHUB_STEP_SUMMARY: summary,
+          },
+        });
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(
+          compatibility === "true" ? 0 : 1,
+        );
+      }
+      expect(readFileSync(summary, "utf8")).toContain(
+        "unavailable on the selected compatibility target",
+      );
+    },
+  );
+
   it("emits one final CI gate after every selected lane", () => {
     const workflow = readCiWorkflow();
     const gate = workflow.jobs["ci-gate"];
@@ -12806,6 +12942,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     const selectedJobs = [
       "pnpm-store-warmup",
       "build-artifacts",
+      "control-ui-performance",
       "native-i18n",
       "checks-ui",
       "checks-ui-e2e",
@@ -13033,6 +13170,21 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       label: "manual Node 22 without artifacts",
       context: { preflightOutputs: { run_build_artifacts: "false" } },
       expected: { "checks-node-compat": false },
+    },
+    {
+      label: "UI performance without runtime artifact changes",
+      context: { preflightOutputs: { run_build_artifacts: "false", run_ui_tests: "true" } },
+      expected: { "control-ui-performance": true },
+    },
+    {
+      label: "UI performance for shared runtime build changes",
+      context: { preflightOutputs: { run_build_artifacts: "true", run_ui_tests: "false" } },
+      expected: { "control-ui-performance": true },
+    },
+    {
+      label: "UI performance outside build and UI scope",
+      context: { preflightOutputs: { run_build_artifacts: "false", run_ui_tests: "false" } },
+      expected: { "control-ui-performance": false },
     },
     {
       label: "ordinary manual screenshot override",
@@ -15227,13 +15379,13 @@ it("pins every Performance Git owner before checkout and preserves Git deadlines
     }
     expect(steps[index]).toEqual({
       name: "Prepare Git owner",
-      uses: "openclaw/openclaw/.github/actions/git-owner@dd4528b6393e7d00063067a080ca7241b48ce475",
+      uses: "openclaw/openclaw/.github/actions/git-owner@a379bbd73e30b84a89aca4d54744ab9ca19082e7",
       ...(decision ? { if: "steps.lane.outputs.run == 'true'" } : {}),
     });
     expect(job["timeout-minutes"]).toBe(timeout);
     const bodies = steps.map(({ run }) => run ?? "").join("\n");
     expect(bodies).not.toMatch(/(?:^|[\s(])git\s/mu);
-    expect(bodies).not.toMatch(/timeout[^\n]*git/u);
+    expect(bodies).not.toMatch(/(?:^|[\s(])timeout\s+[^\n]*\bgit\b/u);
     const ownerDeadlines = [...bodies.matchAll(/--(?:checkout-)?git (\d+)/gu)].map((match) =>
       Number(match[1]),
     );
@@ -15241,14 +15393,15 @@ it("pins every Performance Git owner before checkout and preserves Git deadlines
     if (jobId !== "publish") {
       expect(bodies).not.toMatch(/timeout=\d+/u);
     } else {
-      expect(bodies.match(/timeout=120/g)).toHaveLength(3);
+      expect(bodies.match(/timeout=120/g)).toHaveLength(2);
       expect(bodies).not.toMatch(/timeout=(?!120)\d+/u);
       expect(bodies.match(/for attempt in range\(1, 6\)/gu)).toHaveLength(1);
       expect(bodies.match(/backoff\(attempt \* 2\)/gu)).toHaveLength(1);
       expect(bodies).toContain('"push", "origin", "HEAD:main", timeout=120, reclaim_locks=True');
       expect(
         bodies.match(/"fetch", "--depth=1", "origin", "main", timeout=120, reclaim_locks=True/gu),
-      ).toHaveLength(2);
+      ).toHaveLength(1);
+      expect(bodies).toContain('fetch(sys.argv[3], "main", max_attempts=3, retry_failures=True)');
       expect(bodies).toContain("if error.code != 1:");
       expect(bodies).toContain(
         '"ls-tree", "--name-only", "FETCH_HEAD", "--", f"{dest}/report.json"',

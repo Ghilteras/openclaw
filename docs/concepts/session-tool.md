@@ -49,7 +49,7 @@ Gateway sharing operations are outside this run-audit boundary.
 
 `sessions_list` returns focused discovery rows: session key, durable session ID, agent, kind, channel, label/title/preview fields, sidebar group, parent and child relationships, last update, archive/pin state, state version, model, context/total token counts, run status, and whether the last run aborted. Filter by `kinds` (array; accepted values: `main`, `group`, `cron`, `hook`, `node`, `other`), exact `label`, exact `agentId`, `search` text, or recency (`activeMinutes`). Active sessions are returned by default; pass `archived: true` to inspect archived sessions instead. Set `includeDerivedTitles`, `includeLastMessage`, or `messageLimit` (capped at 20) when you need mailbox-style triage: a visibility-scoped derived title, a last-message preview snippet, or bounded recent messages on each row. Use the returned `sessionId` as `expectedSessionId` when the `sessions` tool archives, restores, or deletes another session; this prevents a stale key from targeting a replacement. Delivery routing, other internal IDs, per-run timings/settings, cost estimates, and transcript paths remain omitted; use `session_status`, conversation tools, and `sessions_history` for those owner-specific details. Derived titles and previews are produced only for sessions the caller can already see under the configured session tool visibility policy, so unrelated sessions stay hidden. When visibility is restricted, `sessions_list` returns optional `visibility` metadata showing the effective mode and a warning that results may be scope-limited.
 
-`sessions_history` fetches the conversation transcript for a specific session. By default, tool results are excluded; pass `includeTools: true` to see them. Use `limit` for the newest bounded tail. Pass `offset: 0` when you need pagination metadata, then pass returned `nextOffset` values to page backward through older OpenClaw transcript windows without reading raw transcript files. Explicit offset pages do not merge external CLI fallback imports; use the default newest-tail view (no `offset`) when you need that merged display history.
+`sessions_history` fetches the conversation transcript for a specific session. By default, tool results are excluded; pass `includeTools: true` to see them. Use `limit` for the newest bounded tail. Pass `offset: 0` when you need pagination metadata, then pass returned `nextOffset` values to page backward through older OpenClaw transcript windows without reading raw transcript files. When an eligible bound external CLI transcript contributes messages, history returns a merged snapshot instead of a numeric offset page—even with an explicit `offset`. The Gateway treats these as terminal snapshots (`hasMore: false`); oversized snapshots remain byte-bounded, so terminal does not imply complete. Local offset paging applies when no external import survives. A requested `messageId` that is absent from the visible history returns empty history rather than the newest messages.
 
 Durably admitted inputs from `sessions_send` or the Gateway `agent` method
 appear separately in `pendingInputs`, not in transcript `messages`. Each row
@@ -174,18 +174,21 @@ Session tools are scoped to limit what the agent can see:
 | `self`  | Only the current session                                          |
 | `tree`  | Current + spawned; when called from main, all same-agent sessions |
 | `agent` | All sessions for this agent                                       |
-| `all`   | All sessions (cross-agent if configured)                          |
+| `all`   | All sessions (cross-agent access is on by default)                |
 
-Default is `agent`: unsandboxed sessions, including retained cron sessions, can
-list, read, search, message, and manage other sessions of the same agent. This
-can include other users sharing that agent. Set `tree` explicitly for current
-plus spawned scope; its canonical main-session exception still covers all
-same-agent sessions. Set `self` for strict current-session access, including main.
+Default is `all`: unsandboxed sessions, including retained cron sessions, can
+list, read, search, message, and inspect status across agents on the Gateway.
+This can include other users' transcripts. Cross-agent access is on by default
+and governed by `tools.agentToAgent`; set `enabled: false` to block ordinary
+cross-agent access or use `allow` to restrict permitted agent pairs; requester-owned native subagent and ACP child sessions stay reachable under `tree` or `all` either way. Set `agent` for same-agent-only
+access, or `tree` for current plus spawned scope; its canonical main-session
+exception still covers all same-agent sessions. Set `self` for strict
+current-session access, including main.
 
-The existing `agent` scope does not include children owned by another agent.
+The `agent` scope does not include children owned by another agent.
 Keep explicit `tree` when relying on its owned native/ACP child exception, or
-use `all` with the appropriate `tools.agentToAgent` policy. Ordinary cross-agent
-access remains gated. A sandboxed caller under the default spawned-only session
+use the default `all` with the appropriate `tools.agentToAgent` policy. A sandboxed
+caller under the default spawned-only session
 tool clamp stays limited to its spawn subtree. Incognito sessions remain hidden
 from every cross-session tool. Ambient group watches still add activity notices
 and prompt hints; they do not grant access.
