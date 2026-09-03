@@ -1,21 +1,22 @@
 import Darwin
 import Foundation
+import Synchronization
 import Testing
 @testable import OpenClaw
 
 struct PipeReadStreamTests {
-    @Test func `cancelled finish still joins reader cleanup`() throws {
+    @Test func `cancelled finish still joins reader cleanup`() async throws {
         let pipe = Pipe()
         let probe = PipeReadProbe()
-        let entered = DispatchSemaphore(value: 0)
+        let entered = AsyncTestGate()
         let release = DispatchSemaphore(value: 0)
-        let started = DispatchSemaphore(value: 0)
-        let joined = DispatchSemaphore(value: 0)
+        let started = AsyncTestGate()
+        let joined = Mutex(false)
         let reader = try PipeReadStream(
             handle: pipe.fileHandleForReading,
             onData: { data in
                 probe.append(data)
-                entered.signal()
+                entered.open()
                 release.wait()
             },
             onClose: { probe.finish() })
@@ -26,17 +27,18 @@ struct PipeReadStreamTests {
         }
         try pipe.fileHandleForReading.close()
         try pipe.fileHandleForWriting.write(contentsOf: Data("first".utf8))
-        try #require(entered.wait(timeout: .now() + 2) == .success)
+        await entered.wait()
         let closing = Task {
-            started.signal()
+            started.open()
             await reader.finish()
-            joined.signal()
+            joined.withLock { $0 = true }
         }
         closing.cancel()
-        try #require(started.wait(timeout: .now() + 2) == .success)
-        #expect(joined.wait(timeout: .now() + 0.1) == .timedOut)
+        await started.wait()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!joined.withLock { $0 })
         release.signal()
-        #expect(joined.wait(timeout: .now() + 2) == .success)
+        await closing.value
         #expect(probe.finishCount == 1)
     }
 
