@@ -36,6 +36,11 @@ export type TranscriptsRuntimeContext = {
   logger: TranscriptsLogger;
 };
 
+export type TranscriptsStartCandidate = {
+  session?: TranscriptSessionDescriptor;
+  discardable?: true;
+};
+
 type ActiveTranscriptsSession = {
   session: TranscriptSessionDescriptor;
   providerId: string;
@@ -329,7 +334,7 @@ export async function startTranscripts(params: {
   startupWaitMs?: number;
   configuredLifecycle?: true;
   lifecycleToken?: symbol;
-  existingSession?: TranscriptSessionDescriptor;
+  candidate?: TranscriptsStartCandidate;
   onCaptureEnded?: () => void;
 }) {
   if (params.abortSignal?.aborted) {
@@ -358,18 +363,19 @@ export async function startTranscripts(params: {
       source: providerSource,
     });
   }
+  const previousSession = params.candidate?.session;
   const session: TranscriptSessionDescriptor = {
     sessionId:
-      params.existingSession?.sessionId ??
+      previousSession?.sessionId ??
       readTranscriptStringParam(params.rawParams, "sessionId", { trim: true }) ??
       createTranscriptSessionId(),
     title:
       readTranscriptStringParam(params.rawParams, "title", { trim: true }) ??
-      params.existingSession?.title,
+      previousSession?.title,
     source: sanitizeTranscriptSourceLocator(providerSource),
-    startedAt: params.existingSession?.startedAt ?? new Date().toISOString(),
+    startedAt: previousSession?.startedAt ?? new Date().toISOString(),
     metadata: {
-      ...params.existingSession?.metadata,
+      ...previousSession?.metadata,
       ...(params.ctx.agentId ? { agentId: params.ctx.agentId } : {}),
     },
   };
@@ -385,7 +391,13 @@ export async function startTranscripts(params: {
   };
   const startupAbort = createStartupAbortScope(params.abortSignal);
   try {
-    await params.store.writeSession(session);
+    const inserted = await params.store.writeSession(session);
+    if (params.candidate) {
+      params.candidate.session = session;
+      if (inserted) {
+        params.candidate.discardable = true;
+      }
+    }
     let result: TranscriptsStartResult;
     try {
       result = await provider.start({
@@ -438,6 +450,10 @@ export async function startTranscripts(params: {
     if (!result.ok) {
       entry.phase = "failed";
       throw new Error(result.error);
+    }
+    // Accepted capture is a real meeting even when it ends without any speech.
+    if (params.candidate) {
+      delete params.candidate.discardable;
     }
     activeSessions.set(session.sessionId, entry);
     if (!session.title) {
@@ -507,10 +523,14 @@ export async function startTranscripts(params: {
       }
       await finalizeTranscriptCapture({ ...params, entry });
     }
-    // Failed reopening must not erase the durable stop time: the next bounded
-    // attempt still needs to find this same meeting, not create an empty sibling.
-    if (entry.phase === "failed" && params.existingSession) {
-      await params.store.writeSession(params.existingSession);
+    // Retain one tuple through retries and preserve the stop time of reopened history.
+    if (entry.phase === "failed" && params.candidate) {
+      const stopped = {
+        ...(previousSession ?? session),
+        stoppedAt: previousSession?.stoppedAt ?? new Date().toISOString(),
+      };
+      await params.store.writeSession(stopped);
+      params.candidate.session = stopped;
     }
     throw error;
   } finally {

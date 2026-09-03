@@ -43,6 +43,7 @@ import {
 import { queryTranscriptReadEntries, type TranscriptReadOptions } from "./store-read.js";
 import {
   appendMeetingTranscriptUtterance,
+  deleteEmptyMeetingTranscriptCandidate,
   meetingTranscriptDb,
   meetingTranscriptSessionQuery,
   meetingTranscriptUtteranceQuery,
@@ -52,6 +53,7 @@ import {
   sessionFromRow,
   summaryFromRow,
   utteranceFromRow,
+  writeMeetingTranscriptSession,
 } from "./store-sqlite.js";
 import type * as StoreTypes from "./store-types.js";
 import type { TranscriptsSummary } from "./summary.js";
@@ -84,11 +86,11 @@ export class TranscriptsStore {
     return openOpenClawStateDatabase(this.databaseOptions);
   }
 
-  private transaction(
+  private transaction<T>(
     operationLabel: string,
-    operation: (database: OpenClawStateDatabase) => void,
-  ): void {
-    runOpenClawStateWriteTransaction(operation, this.databaseOptions, { operationLabel });
+    operation: (database: OpenClawStateDatabase) => T,
+  ): T {
+    return runOpenClawStateWriteTransaction(operation, this.databaseOptions, { operationLabel });
   }
 
   sessionDir(session: TranscriptSessionDescriptor): string {
@@ -367,7 +369,7 @@ export class TranscriptsStore {
     ).rows.toReversed();
   }
 
-  async writeSession(session: TranscriptSessionDescriptor): Promise<void> {
+  async writeSession(session: TranscriptSessionDescriptor): Promise<boolean> {
     ensureMeetingTranscriptsSchema(this.databaseOptions);
     if (
       !this.readSessionByIdentity(session) &&
@@ -394,40 +396,16 @@ export class TranscriptsStore {
         }
       }
     }
-    const sessionValues = {
-      selector: transcriptSessionSelector(session),
-      export_key: transcriptSessionExportKey(session),
-      session_slug: safeTranscriptPathSegment(session.sessionId),
-      provider_id: session.source.providerId,
-      title: session.title ?? null,
-      source_json: JSON.stringify(session.source),
-      stopped_at: session.stoppedAt ?? null,
-      metadata_json: session.metadata ? JSON.stringify(session.metadata) : null,
-    };
-    const now = Date.now();
-    this.transaction("meeting-transcripts.session.write", ({ db: database }) => {
-      executeSqliteQuerySync(
-        database,
-        meetingTranscriptDb(database)
-          .insertInto("meeting_transcript_sessions")
-          .values({
-            session_id: session.sessionId,
-            started_at: session.startedAt,
-            ...sessionValues,
-            export_manifest_json: "{}",
-            export_pending_json: "[]",
-            next_utterance_seq: 0,
-            created_at_ms: now,
-            updated_at_ms: now,
-          })
-          .onConflict((conflict) =>
-            conflict.columns(["session_id", "started_at"]).doUpdateSet({
-              ...sessionValues,
-              updated_at_ms: now,
-            }),
-          ),
-      );
-    });
+    return this.transaction("meeting-transcripts.session.write", ({ db }) =>
+      writeMeetingTranscriptSession(db, session, Date.now()),
+    );
+  }
+
+  deleteEmptySessionCandidate(session: TranscriptSessionDescriptor): void {
+    ensureMeetingTranscriptsSchema(this.databaseOptions);
+    this.transaction("meeting-transcripts.session.discard-empty", ({ db }) =>
+      deleteEmptyMeetingTranscriptCandidate(db, session),
+    );
   }
 
   async readSession(sessionSelector: string): Promise<TranscriptSessionDescriptor | undefined> {
