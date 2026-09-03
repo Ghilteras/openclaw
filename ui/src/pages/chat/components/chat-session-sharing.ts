@@ -6,6 +6,12 @@ import type {
   SessionVisibility,
 } from "../../../api/types.ts";
 import { icons } from "../../../components/icons.ts";
+import {
+  personActivityLink,
+  renderPersonAvatarLink,
+  renderPersonName,
+  type PersonActivityRouting,
+} from "../../../components/person-activity-link.ts";
 import { renderSessionOwnerChip } from "../../../components/session-owner-chip.ts";
 import { syncDropdownItemRadio } from "../../../components/web-awesome.ts";
 import { t } from "../../../i18n/index.ts";
@@ -25,6 +31,7 @@ export type ChatSessionSharingProps = {
   visibilityDisabledReason?: string;
   memberAddDisabledReason?: string;
   memberRemoveDisabledReason?: string;
+  personActivity?: PersonActivityRouting;
   onOpen: () => void;
   onVisibilityChange: (visibility: SessionVisibility) => void;
   onMemberChange: (identityId: string, member: boolean) => void;
@@ -110,8 +117,12 @@ export function renderChatSessionSharing(props: ChatSessionSharingProps, inline 
   }
   const result = props.state?.result;
   const owner = result?.owner ?? session.owner?.actor;
+  const ownerActivity = personActivityLink(
+    owner?.identity?.type === "profile" ? owner.identity.id : undefined,
+    props.personActivity,
+  );
   const members = new Set(result?.members.map((member) => member.identityId) ?? []);
-  // The shared header owner chip presents effective ownership; this picker manages mutable members.
+  // The owner row presents effective ownership; selectable rows below manage mutable members.
   const identities =
     result?.identities.filter((identity) => identity.id !== result.owner?.id) ?? [];
   const allowed = result?.allowedVisibilities ?? props.allowedVisibilities ?? [visibility];
@@ -169,10 +180,17 @@ export function renderChatSessionSharing(props: ChatSessionSharingProps, inline 
           <div class="chat-pane__sharing-owner">
             <span class="chat-pane__sharing-member-icon" aria-hidden="true">
               ${owner.type === "human"
-                ? renderSessionOwnerChip(owner, "header", "owned")
+                ? renderPersonAvatarLink(
+                    renderSessionOwnerChip(owner, "header", "owned"),
+                    ownerActivity,
+                  )
                 : icons.bot}
             </span>
-            <span class="session-menu__text">${owner.label ?? owner.id}</span>
+            ${renderPersonName(
+              owner.label ?? owner.id ?? t("chat.sessionSharing.owner"),
+              ownerActivity,
+              "session-menu__text",
+            )}
           </div>
         `
       : nothing}

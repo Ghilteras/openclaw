@@ -241,6 +241,8 @@ suite.define(() => {
               },
               participants: [{ identity: { type: "profile", id: "profile-mira" }, label: "Mira" }],
               participantCount: 1,
+              sharingRole: "owner",
+              visibility: "shared",
               updatedAt: now - 60_000,
             },
           ]),
@@ -257,7 +259,13 @@ suite.define(() => {
         };
         const associatedSessions = sessionList.sessions;
         await installMockGateway(page, {
-          featureMethods: ["chat.metadata", "chat.startup", "progressCard.get"],
+          featureMethods: [
+            "chat.metadata",
+            "chat.startup",
+            "progressCard.get",
+            "session.members.listEvidence",
+            "session.visibility.set",
+          ],
           hasMultipleSessionSharingIdentities: true,
           presenceUsers: [
             {
@@ -299,6 +307,19 @@ suite.define(() => {
           ],
           methodResponses: {
             "progressCard.get": { card: null },
+            "session.members.listEvidence": {
+              sessionKey,
+              owner: {
+                type: "human",
+                id: "profile-ada",
+                identity: { type: "profile", id: "profile-ada" },
+                label: "Ada King",
+              },
+              members: [],
+              identities: [],
+              role: "owner",
+              allowedVisibilities: ["shared"],
+            },
             "sessions.list": {
               cases: [
                 ...["profile-ada", "profile-mira"].map((involvingProfileId) => ({
@@ -320,9 +341,8 @@ suite.define(() => {
 
         await page.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
 
-        const ownerLink = page.locator(
-          ".chat-pane__header a.person-activity-avatar-link:has(openclaw-session-owner-chip)",
-        );
+        await page.getByRole("button", { name: "Session sharing" }).click();
+        const ownerLink = page.locator(".chat-pane__sharing-owner a.person-activity-link");
         await ownerLink.waitFor({ state: "visible" });
         expect(await ownerLink.getAttribute("href")).toBe("/activity?person=profile-ada");
         const participantLink = page.locator(
@@ -343,6 +363,12 @@ suite.define(() => {
         expect(await legacyGroup.locator('a[href*="/activity?person="]').count()).toBe(0);
         await captureProof(page, "chat-identity-links.png");
 
+        await ownerLink.click();
+        await waitForControlUiRoute(page, { pathname: "/activity", routeId: "activity" });
+        expect(new URL(page.url()).searchParams.get("person")).toBe("profile-ada");
+        await captureProof(page, "chat-owner-activity.png");
+
+        await page.goBack();
         await participantLink.click();
         await waitForControlUiRoute(page, { pathname: "/activity", routeId: "activity" });
         expect(new URL(page.url()).searchParams.get("person")).toBe("profile-mira");

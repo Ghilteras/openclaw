@@ -192,6 +192,7 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
       sharingReadAccess.allowed || sharingVisibilityAccess.allowed
         ? undefined
         : sharingReadAccess.reason;
+    const personActivity = this.personActivityRouting();
     const sharing =
       sharingMethodsSupported && row
         ? {
@@ -209,6 +210,7 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
             memberRemoveDisabledReason: sharingMemberRemoveAccess.allowed
               ? undefined
               : sharingMemberRemoveAccess.reason,
+            personActivity,
             onOpen: () => void this.loadSessionSharing(row),
             onVisibilityChange: (visibility: SessionVisibility) =>
               void this.setSessionVisibility(row, visibility),
@@ -409,7 +411,6 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
       this.context.sessions?.state?.result?.sessions ?? [],
     );
     const showOwnerChip = (result?.owners?.length ?? 0) >= 2 || (row?.participantCount ?? 0) > 0;
-    const personActivity = this.personActivityRouting();
     const renderedOwnerIdentity = showOwnerChip ? row?.owner?.actor.identity : undefined;
     const viewers = catalog
       ? undefined
