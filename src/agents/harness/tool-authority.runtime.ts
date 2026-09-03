@@ -66,11 +66,14 @@ export async function withPreparedEmbeddedRunToolAuthority<T, Attempt extends To
       groupSpace: attempt.groupSpace ?? undefined,
     },
   };
-  // Reply-owned attempts retain their full original snapshot, including facts
-  // not forwarded to a harness. Direct attempts use the actual prepared inputs.
-  const direct = operation ? undefined : prepareReplyToolAuthority(input, narrow);
-  const fingerprint = operation ? attempt.toolAuthorityFingerprint : direct?.fingerprint;
   let live = true;
+  // Preserve the complete admitted snapshot, but bind its hash and projection
+  // only after hooks or native ownership have selected the actual model.
+  const direct = operation ? undefined : prepareReplyToolAuthority(input, narrow);
+  if (operation) {
+    assertActive();
+  }
+  const fingerprint = operation ? operation.bindToolAuthorityRoute(route) : direct?.fingerprint();
   function assertActive() {
     if (
       !live ||

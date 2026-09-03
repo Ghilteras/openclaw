@@ -498,24 +498,19 @@ describe("embedded-agent active-run steering", () => {
         pendingInputAuthorityFingerprint: "fallback-authority",
         toolAuthorityFingerprint: "default-authority",
       } as const;
-      const outcome = await queueEmbeddedAgentMessageWithOutcomeAsync(
+      const outcome = queueEmbeddedAgentMessageWithOutcomeAsync(
         "session-pending-question",
         "2",
         options,
       );
-
-      expect(outcome).toMatchObject({ queued: true, target: "embedded_run" });
       if (unconfirmed) {
-        expect(outcome).toMatchObject({
-          transcriptCommit: "unconfirmed",
-          errorMessage: error.message,
-        });
-        expect(outcome).not.toHaveProperty("deliveredAtMs");
+        await expect(outcome).rejects.toBe(error);
+        expect(options.onQueueAccepted).not.toHaveBeenCalled();
       } else {
-        expect(outcome).not.toHaveProperty("transcriptCommit");
+        await expect(outcome).resolves.toMatchObject({ queued: true, target: "embedded_run" });
+        expect(options.onQueueAccepted).toHaveBeenCalledExactlyOnceWith(true);
       }
       expect(claimPendingUserInputAnswer).toHaveBeenCalledExactlyOnceWith("2", options);
-      expect(options.onQueueAccepted).toHaveBeenCalledExactlyOnceWith(true);
       expect(queueMessage).not.toHaveBeenCalled();
     },
   );
@@ -650,27 +645,28 @@ describe("embedded-agent active-run steering", () => {
       });
       const onQueueAccepted = vi.fn();
 
-      const outcome = await queueEmbeddedAgentMessageWithOutcomeAsync(
-        "session-unconfirmed",
-        "continue",
-        {
-          isInboundUserMessage: true,
-          toolAuthorityFingerprint: "same-authority",
-          waitForTranscriptCommit: true,
-          onQueueAccepted,
-        },
-      );
-
-      expect(outcome).toEqual({
-        queued: true,
-        sessionId: "session-unconfirmed",
-        target: "embedded_run",
-        gatewayHealth: "live",
-        transcriptCommit: "unconfirmed",
-        errorMessage,
-        enqueuedAtMs: expect.any(Number),
+      const outcome = queueEmbeddedAgentMessageWithOutcomeAsync("session-unconfirmed", "continue", {
+        isInboundUserMessage: true,
+        toolAuthorityFingerprint: "same-authority",
+        waitForTranscriptCommit: true,
+        onQueueAccepted,
       });
-      expect(onQueueAccepted).toHaveBeenCalledExactlyOnceWith(true);
+
+      if (source === "question-error") {
+        await expect(outcome).rejects.toBe(error);
+        expect(onQueueAccepted).not.toHaveBeenCalled();
+      } else {
+        await expect(outcome).resolves.toEqual({
+          queued: true,
+          sessionId: "session-unconfirmed",
+          target: "embedded_run",
+          gatewayHealth: "live",
+          transcriptCommit: "unconfirmed",
+          errorMessage,
+          enqueuedAtMs: expect.any(Number),
+        });
+        expect(onQueueAccepted).toHaveBeenCalledExactlyOnceWith(true);
+      }
       expect(queueMessage).toHaveBeenCalledOnce();
     },
   );

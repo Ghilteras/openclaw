@@ -357,9 +357,12 @@ export function queueEmbeddedAgentMessageWithOutcome(
   }
   logActiveRunMessageAccepted(sessionId);
   void prepared.queueMessage(text, prepared.options).catch((err: unknown) => {
-    diag.debug(
-      `queue message rejected after enqueue: sessionId=${sessionId} err=${formatErrorMessage(err)}`,
-    );
+    const message = `queue message rejected after enqueue: sessionId=${sessionId} err=${formatErrorMessage(err)}`;
+    if (err instanceof QuestionAnswerUnconfirmedError) {
+      diag.warn(message);
+    } else {
+      diag.debug(message);
+    }
   });
   return {
     queued: true,
@@ -587,8 +590,7 @@ async function queueEmbeddedAgentMessageAsync(
   };
   const failed = (error: unknown): EmbeddedAgentQueueMessageOutcome => {
     if (error instanceof QuestionAnswerUnconfirmedError) {
-      options?.onQueueAccepted?.(true);
-      return unconfirmed(error.message);
+      throw error;
     }
     const errorMessage = formatErrorMessage(error);
     diag.debug(`queue message rejected: sessionId=${sessionId} err=${errorMessage}`);

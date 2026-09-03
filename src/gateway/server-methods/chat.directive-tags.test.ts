@@ -26,7 +26,7 @@ import { setReplyPayloadMetadata, type ReplyPayload } from "../../auto-reply/rep
 import { getTotalPendingReplies } from "../../auto-reply/reply/dispatcher-registry.js";
 import { markInboundContextLabel } from "../../auto-reply/reply/inbound-context-marker.js";
 import {
-  replyRunRegistry as baseReplyRunRegistry,
+  replyRunRegistry,
   type ReplyBackendQueueMessageOptions,
   type ReplyOperation,
 } from "../../auto-reply/reply/reply-run-registry.js";
@@ -83,15 +83,6 @@ type TranscriptUpdate = Parameters<
 
 const TEST_TOOL_AUTHORITY_FINGERPRINT = "test-tool-authority";
 const TEST_TOOL_AUTHORITY_ROUTE = { provider: "openai", model: "gpt-5.6-sol" } as const;
-const replyRunRegistry = {
-  ...baseReplyRunRegistry,
-  begin(...args: Parameters<typeof baseReplyRunRegistry.begin>) {
-    const operation = baseReplyRunRegistry.begin(...args);
-    operation.bindToolAuthorityRoute(TEST_TOOL_AUTHORITY_ROUTE);
-    operation.bindToolAuthorityFingerprint(TEST_TOOL_AUTHORITY_FINGERPRINT);
-    return operation;
-  },
-};
 
 const mockState = vi.hoisted(() => {
   const createTestState = () => ({
@@ -1086,8 +1077,11 @@ function managedAudioBlocks(content: Array<Record<string, unknown>>) {
 }
 
 function bindTestToolAuthority(operation: ReplyOperation) {
-  operation.bindToolAuthorityProjector(() => TEST_TOOL_AUTHORITY_FINGERPRINT);
-  operation.bindToolAuthorityRoute({ provider: "anthropic", model: "test-model" });
+  operation.bindToolAuthoritySnapshot({
+    fingerprint: () => TEST_TOOL_AUTHORITY_FINGERPRINT,
+    project: () => TEST_TOOL_AUTHORITY_FINGERPRINT,
+  });
+  operation.bindToolAuthorityRoute(TEST_TOOL_AUTHORITY_ROUTE);
 }
 
 function beginActiveReplyOperation(params: {

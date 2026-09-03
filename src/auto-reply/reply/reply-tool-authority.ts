@@ -16,8 +16,8 @@ import { resolveOriginMessageProvider } from "./origin-routing.js";
 import type { FollowupRun } from "./queue.js";
 import type {
   ReplyToolAuthorityOverlay,
-  ReplyToolAuthorityProjector,
   ReplyToolAuthorityRoute,
+  ReplyToolAuthoritySnapshot,
 } from "./reply-run-registry.contracts.js";
 
 export type ReplyToolAuthorityInput = {
@@ -274,24 +274,14 @@ export function resolveFollowupRunToolAuthorityFingerprint(
   return resolveReplyToolAuthorityInputFingerprint(snapshotFollowupRunToolAuthority(run), route);
 }
 
-/** Projects a new inbound turn against one active run's frozen owner authority. */
-export function createFollowupRunToolAuthorityProjector(
-  run: ReplyToolAuthorityInput,
-  narrow?: (input: ReplyToolAuthorityInput) => ReplyToolAuthorityInput,
-): ReplyToolAuthorityProjector {
-  return prepareReplyToolAuthority(run, narrow).project;
-}
-
 /** Capture execution policy once; incoming overlays replace only caller-owned facts. */
 export function prepareReplyToolAuthority(
   run: ReplyToolAuthorityInput,
   narrow?: (input: ReplyToolAuthorityInput) => ReplyToolAuthorityInput,
-): { fingerprint: string; project: ReplyToolAuthorityProjector } {
+): ReplyToolAuthoritySnapshot {
   const snapshot = snapshotFollowupRunToolAuthority(run);
   return {
-    get fingerprint() {
-      return resolveReplyToolAuthorityInputFingerprint(snapshot);
-    },
+    fingerprint: (route) => resolveReplyToolAuthorityInputFingerprint(snapshot, route),
     project: (overlay, route) => {
       const incoming = applyReplyToolAuthorityOverlay(snapshot, overlay);
       return resolveReplyToolAuthorityInputFingerprint(narrow ? narrow(incoming) : incoming, route);

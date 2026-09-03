@@ -52,7 +52,7 @@ import {
 } from "./reply-run-registry.js";
 import { testing } from "./reply-run-registry.test-support.js";
 import {
-  createFollowupRunToolAuthorityProjector,
+  prepareReplyToolAuthority,
   resolveFollowupRunToolAuthorityFingerprint,
 } from "./reply-tool-authority.js";
 import { admitReplyTurn } from "./reply-turn-admission.js";
@@ -188,38 +188,77 @@ describe("reply run registry", () => {
     );
   });
 
-  it("projects only while the active operation owns a concrete route", () => {
-    const run = createQueueTestRun({ prompt: "operation projection" });
-    const operation = createTestReplyOperation({ sessionId: "session-projector" });
-    const projector = createFollowupRunToolAuthorityProjector(run);
-    const overlay = toolAuthorityOverlay(run);
+  it.each(["complete", "fail", "abortByUser", "abortForRestart"] as const)(
+    "requires a snapshot for route preparation and rejects it after %s",
+    (close) => {
+      const run = createQueueTestRun({ prompt: "operation projection" });
+      const operation = createTestReplyOperation({ sessionId: "session-projector" });
+      const snapshot = prepareReplyToolAuthority(run);
+      const overlay = toolAuthorityOverlay(run);
+      const route = { provider: "openai", model: "gpt-primary" };
 
-    operation.bindToolAuthorityProjector(projector);
-    expect(operation.projectToolAuthorityFingerprint(overlay)).toBeUndefined();
+      expect(() => operation.bindToolAuthorityRoute(route)).toThrow(
+        "Reply operation has no active tool authority snapshot",
+      );
+      expect(operation.toolAuthorityRoute).toBeUndefined();
+      expect(operation.toolAuthorityFingerprint).toBeUndefined();
+      operation.bindToolAuthoritySnapshot(snapshot);
+      expect(operation.projectToolAuthorityFingerprint(overlay)).toBeUndefined();
 
-    operation.bindToolAuthorityRoute({ provider: "openai", model: "gpt-primary" });
-    expect(operation.projectToolAuthorityFingerprint(overlay)).toBe(
-      resolveFollowupRunToolAuthorityFingerprint(run, {
-        provider: "openai",
-        model: "gpt-primary",
-      }),
-    );
+      const fingerprint = resolveFollowupRunToolAuthorityFingerprint(run, route);
+      expect(operation.bindToolAuthorityRoute(route)).toBe(fingerprint);
+      expect(operation.projectToolAuthorityFingerprint(overlay)).toBe(fingerprint);
 
-    operation.complete();
-    expect(operation.projectToolAuthorityFingerprint(overlay)).toBeUndefined();
-  });
+      if (close === "fail") {
+        operation.fail("run_failed");
+      } else {
+        operation[close]();
+      }
+      expect(operation.projectToolAuthorityFingerprint(overlay)).toBeUndefined();
+      expect(() => operation.bindToolAuthorityRoute({ ...route, model: "gpt-late" })).toThrow(
+        "Reply operation has no active tool authority snapshot",
+      );
+      expect(operation.toolAuthorityRoute).toEqual(route);
+      expect(operation.toolAuthorityFingerprint).toBe(fingerprint);
+    },
+  );
 
-  it("tracks the concrete authority route across fallback candidates", () => {
+  it("keeps the initial policy snapshot while tracking concrete fallback authority", () => {
+    const run = createQueueTestRun({ prompt: "route authority" });
     const operation = createTestReplyOperation({ sessionId: "session-route" });
+    const snapshot = prepareReplyToolAuthority(run);
+    const primary = { provider: "openai", model: "gpt-primary" };
+    const fallback = { provider: "anthropic", model: "claude-fallback" };
+    const primaryFingerprint = resolveFollowupRunToolAuthorityFingerprint(run, primary);
+    const fallbackFingerprint = resolveFollowupRunToolAuthorityFingerprint(run, fallback);
+    const overlay = toolAuthorityOverlay(run);
+    operation.bindToolAuthoritySnapshot(snapshot);
 
-    operation.bindToolAuthorityRoute({ provider: "openai", model: "gpt-primary" });
-    expect(operation.toolAuthorityRoute).toEqual({ provider: "openai", model: "gpt-primary" });
+    expect(operation.bindToolAuthorityRoute(primary)).toBe(primaryFingerprint);
+    expect(operation.toolAuthorityRoute).toEqual(primary);
+    expect(operation.toolAuthorityFingerprint).toBe(primaryFingerprint);
 
-    operation.bindToolAuthorityRoute({ provider: "anthropic", model: "claude-fallback" });
-    expect(operation.toolAuthorityRoute).toEqual({
-      provider: "anthropic",
-      model: "claude-fallback",
+    run.run.execOverrides = { security: "deny" };
+    expect(() => operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(run))).toThrow(
+      "Reply operation cannot change tool authority after admission",
+    );
+    expect(operation.toolAuthorityFingerprint).toBe(primaryFingerprint);
+    expect(operation.bindToolAuthorityRoute(fallback)).toBe(fallbackFingerprint);
+    expect(operation.toolAuthorityRoute).toEqual(fallback);
+    expect(operation.toolAuthorityFingerprint).toBe(fallbackFingerprint);
+    expect(operation.projectToolAuthorityFingerprint(overlay)).toBe(fallbackFingerprint);
+
+    operation.bindToolAuthoritySnapshot(snapshot);
+    expect(operation.toolAuthorityRoute).toEqual(fallback);
+    expect(operation.toolAuthorityFingerprint).toBe(fallbackFingerprint);
+    operation.attachBackend({
+      kind: "embedded",
+      cancel: vi.fn(),
+      toolAuthorityFingerprint: "backend-exact-authority",
     });
+    operation.bindToolAuthoritySnapshot(snapshot);
+    expect(operation.toolAuthorityRoute).toEqual(fallback);
+    expect(operation.toolAuthorityFingerprint).toBe("backend-exact-authority");
     operation.complete();
   });
 
@@ -1951,7 +1990,10 @@ describe("reply run registry", () => {
   it("rejects inbound steering when tool authority changes before backend admission", async () => {
     const queueMessage = vi.fn(async () => {});
     const operation = createTestReplyOperation({ sessionId: "session-authority" });
-    operation.bindToolAuthorityFingerprint("authority-a");
+    operation.bindToolAuthoritySnapshot({
+      fingerprint: () => "authority-a",
+      project: () => "authority-a",
+    });
     operation.attachBackend({
       kind: "embedded",
       cancel: vi.fn(),
@@ -1984,9 +2026,8 @@ describe("reply run registry", () => {
       async (_text: string, _options?: ReplyBackendQueueMessageOptions) => {},
     );
     const operation = createTestReplyOperation({ sessionId: "session-projected-authority" });
-    operation.bindToolAuthorityProjector(createFollowupRunToolAuthorityProjector(run));
+    operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(run));
     operation.bindToolAuthorityRoute(route);
-    operation.bindToolAuthorityFingerprint(resolveFollowupRunToolAuthorityFingerprint(run, route));
     operation.attachBackend({
       kind: "embedded",
       cancel: vi.fn(),
@@ -2179,8 +2220,8 @@ describe("reply run registry", () => {
       await expect(attempt.acceptance).resolves.toBe(unconfirmed);
       if (unconfirmed) {
         await expect(attempt.outcome).resolves.toEqual({
-          status: "accepted",
-          result: { transcriptCommit: "unconfirmed", errorMessage: error.message },
+          status: "indeterminate",
+          errorMessage: error.message,
         });
         expect(onQueueAccepted).toHaveBeenCalledExactlyOnceWith(true);
       } else {

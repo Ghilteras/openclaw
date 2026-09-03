@@ -4,7 +4,7 @@ import type { ReplyToolAuthorityOverlay } from "../../auto-reply/reply/reply-run
 import { createReplyOperation } from "../../auto-reply/reply/reply-run-registry.js";
 import { testing as replyTesting } from "../../auto-reply/reply/reply-run-registry.test-support.js";
 import {
-  createFollowupRunToolAuthorityProjector,
+  prepareReplyToolAuthority,
   resolveFollowupRunToolAuthorityFingerprint,
 } from "../../auto-reply/reply/reply-tool-authority.js";
 import { rotateAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
@@ -404,8 +404,7 @@ describe("host-prepared embedded tool authority", () => {
       const operation = createReplyOperation({ sessionId, sessionKey, resetTriggered: false });
       const parent = createQueueTestRun({ prompt: "parent reply" });
       parent.run.traceAuthorized = true;
-      operation.bindToolAuthorityProjector(createFollowupRunToolAuthorityProjector(parent));
-      operation.bindToolAuthorityFingerprint(resolveFollowupRunToolAuthorityFingerprint(parent));
+      operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(parent));
       try {
         await withPreparedEmbeddedRunToolAuthority(
           { admittedRunContext, replyOperation: operation },
@@ -435,87 +434,101 @@ describe("host-prepared embedded tool authority", () => {
     });
   });
 
-  it("keeps a normal reply's richer snapshot and concrete fallback route", async () => {
-    await admitted(async ({ admittedRunContext }) => {
-      const original = createQueueTestRun({ prompt: "normal reply" });
-      original.run.traceAuthorized = true;
-      original.run.clientCaps = ["normal-client"];
-      const route = { provider: "anthropic", model: "fallback-test" };
-      const operation = createReplyOperation({ sessionId, sessionKey, resetTriggered: false });
-      const projectOriginal = createFollowupRunToolAuthorityProjector(original);
-      let failProjection = false;
-      operation.bindToolAuthorityProjector((overlay, selectedRoute) => {
-        if (failProjection) {
-          throw new Error("projection failed");
+  it.each(["candidate", "prepared-model", "unprepared"])(
+    "keeps a normal reply's richer snapshot when the route is chosen at %s",
+    async (selectionPhase) => {
+      await admitted(async ({ admittedRunContext }) => {
+        const original = createQueueTestRun({ prompt: "normal reply" });
+        original.run.traceAuthorized = true;
+        original.run.clientCaps = ["normal-client"];
+        original.run.approvalReviewerDeviceId = "review-device";
+        const route = { provider: "anthropic", model: "fallback-test" };
+        const operation = createReplyOperation({ sessionId, sessionKey, resetTriggered: false });
+        const snapshot = prepareReplyToolAuthority(original);
+        let failProjection = false;
+        operation.bindToolAuthoritySnapshot({
+          ...snapshot,
+          project: (overlay, selectedRoute) => {
+            if (failProjection) {
+              throw new Error("projection failed");
+            }
+            return snapshot.project(overlay, selectedRoute);
+          },
+        });
+        const initialRoute =
+          selectionPhase === "candidate"
+            ? route
+            : { provider: original.run.provider, model: original.run.model };
+        if (selectionPhase !== "unprepared") {
+          operation.bindToolAuthorityRoute(initialRoute);
         }
-        return projectOriginal(overlay, selectedRoute);
+        const initialFingerprint = snapshot.fingerprint(initialRoute);
+        const fingerprint = snapshot.fingerprint(route);
+        await withPreparedEmbeddedRunToolAuthority(
+          { admittedRunContext, replyOperation: operation },
+          {
+            ...attempt,
+            provider: route.provider,
+            modelId: route.model,
+            toolAuthorityFingerprint: initialFingerprint,
+          },
+          undefined,
+          async (prepared) => {
+            const queue = vi.fn(async () => {});
+            const handle = {
+              ...createEmbeddedRunHandle({
+                runId: attempt.runId,
+                toolAuthorityFingerprint: prepared.toolAuthorityFingerprint,
+                queueMessage: queue,
+              }),
+              kind: "embedded" as const,
+              cancel: () => {},
+            };
+            setActiveEmbeddedRun(sessionId, handle, sessionKey, attempt.sessionFile);
+            operation.attachBackend(handle);
+            operation.setPhase("running");
+            const incoming = {
+              senderIsOwner: false,
+              disableTools: false,
+              traceAuthorized: true,
+              clientCaps: ["normal-client"],
+              approvalReviewerDeviceId: "review-device",
+            };
+            await expect(steer(incoming)).resolves.toMatchObject({ queued: true });
+            expect(prepared.toolAuthorityFingerprint).toBe(fingerprint);
+            await expect(
+              steer({
+                ...incoming,
+                get permissionMode() {
+                  operation.attachBackend({ ...handle });
+                  return undefined;
+                },
+              }),
+            ).resolves.toMatchObject({ queued: false, reason: "tool_authority_mismatch" });
+            operation.attachBackend(handle);
+            failProjection = true;
+            await expect(steer(incoming, fingerprint)).resolves.toMatchObject({
+              queued: false,
+              reason: "tool_authority_mismatch",
+            });
+            failProjection = false;
+            operation.bindToolAuthorityRoute({ provider: "openai", model: "replacement-route" });
+            await expect(steer(incoming, fingerprint)).resolves.toMatchObject({
+              queued: false,
+              reason: "tool_authority_mismatch",
+            });
+            operation.bindToolAuthorityRoute(route);
+            operation.attachBackend({ ...handle });
+            // A different attached backend cannot confer authority on the published handle.
+            await expect(steer(incoming)).resolves.toMatchObject({
+              queued: false,
+              reason: "tool_authority_mismatch",
+            });
+            expect(queue).toHaveBeenCalledOnce();
+          },
+        );
+        operation.complete();
       });
-      operation.bindToolAuthorityRoute(route);
-      const fingerprint = resolveFollowupRunToolAuthorityFingerprint(original, route);
-      operation.bindToolAuthorityFingerprint(fingerprint);
-      await withPreparedEmbeddedRunToolAuthority(
-        { admittedRunContext, replyOperation: operation },
-        {
-          ...attempt,
-          provider: route.provider,
-          modelId: route.model,
-          toolAuthorityFingerprint: fingerprint,
-        },
-        undefined,
-        async (prepared) => {
-          expect(prepared.toolAuthorityFingerprint).toBe(fingerprint);
-          const queue = vi.fn(async () => {});
-          const handle = {
-            ...createEmbeddedRunHandle({
-              runId: attempt.runId,
-              toolAuthorityFingerprint: fingerprint,
-              queueMessage: queue,
-            }),
-            kind: "embedded" as const,
-            cancel: () => {},
-          };
-          setActiveEmbeddedRun(sessionId, handle, sessionKey, attempt.sessionFile);
-          operation.attachBackend(handle);
-          operation.setPhase("running");
-          const incoming = {
-            senderIsOwner: false,
-            disableTools: false,
-            traceAuthorized: true,
-            clientCaps: ["normal-client"],
-          };
-          await expect(steer(incoming)).resolves.toMatchObject({ queued: true });
-          await expect(
-            steer({
-              ...incoming,
-              get permissionMode() {
-                operation.attachBackend({ ...handle });
-                return undefined;
-              },
-            }),
-          ).resolves.toMatchObject({ queued: false, reason: "tool_authority_mismatch" });
-          operation.attachBackend(handle);
-          failProjection = true;
-          await expect(steer(incoming, fingerprint)).resolves.toMatchObject({
-            queued: false,
-            reason: "tool_authority_mismatch",
-          });
-          failProjection = false;
-          operation.bindToolAuthorityRoute({ provider: "openai", model: "replacement-route" });
-          await expect(steer(incoming, fingerprint)).resolves.toMatchObject({
-            queued: false,
-            reason: "tool_authority_mismatch",
-          });
-          operation.bindToolAuthorityRoute(route);
-          operation.attachBackend({ ...handle });
-          // A different attached backend cannot confer authority on the published handle.
-          await expect(steer(incoming)).resolves.toMatchObject({
-            queued: false,
-            reason: "tool_authority_mismatch",
-          });
-          expect(queue).toHaveBeenCalledOnce();
-        },
-      );
-      operation.complete();
-    });
-  });
+    },
+  );
 });

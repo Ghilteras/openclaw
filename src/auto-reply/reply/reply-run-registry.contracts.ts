@@ -93,10 +93,10 @@ export type ReplyToolAuthorityOverlay = Readonly<{
   toolBindings?: Readonly<Record<string, unknown>>;
 }>;
 
-export type ReplyToolAuthorityProjector = (
-  overlay: ReplyToolAuthorityOverlay,
-  route: ReplyToolAuthorityRoute,
-) => string;
+export type ReplyToolAuthoritySnapshot = Readonly<{
+  fingerprint(route?: ReplyToolAuthorityRoute): string;
+  project: (overlay: ReplyToolAuthorityOverlay, route: ReplyToolAuthorityRoute) => string;
+}>;
 
 export type ReplyBackendQueueMessageResult = {
   /** Input is non-replayable, but its delivery or commitment could not be confirmed. */
@@ -190,6 +190,7 @@ type ReplyMessageInjectionRejectionReason =
   | "runtime_rejected";
 
 export type ReplyMessageInjectionOutcome =
+  | { status: "indeterminate"; errorMessage: string }
   | { status: "accepted"; result?: ReplyBackendQueueMessageResult }
   | { status: "rejected"; reason: ReplyMessageInjectionRejectionReason; errorMessage?: string };
 
@@ -295,14 +296,12 @@ export type ReplyOperation = {
   /** Mark this operation as an in-flight terminal-session recovery. */
   markTerminalRecovery(): void;
   markAcceptedSteeredInboundAudio(): void;
-  /** Bind provisional request authority before a concrete backend attempt attaches. */
-  bindToolAuthorityFingerprint(fingerprint: string): void;
-  /** Bind the active run's immutable authority projector for direct inbound steering. */
-  bindToolAuthorityProjector(projector: ReplyToolAuthorityProjector): void;
+  /** Freeze the complete caller policy before a concrete backend attempt attaches. */
+  bindToolAuthoritySnapshot(snapshot: ReplyToolAuthoritySnapshot): void;
   /** Project an inbound turn through the current concrete route; settled owners fail closed. */
   projectToolAuthorityFingerprint(overlay: ReplyToolAuthorityOverlay): string | undefined;
-  /** Record the concrete candidate route; fallback attempts may replace it. */
-  bindToolAuthorityRoute(route: ReplyToolAuthorityRoute): void;
+  /** Prepare fingerprint and projection together for the final concrete attempt route. */
+  bindToolAuthorityRoute(route: ReplyToolAuthorityRoute): string;
   updateSessionId(nextSessionId: string): void;
   /**
    * Move this queued operation to another session key's run slot. Native command

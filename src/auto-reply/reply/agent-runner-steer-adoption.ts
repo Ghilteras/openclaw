@@ -3,6 +3,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { isIngressAdoptionLostError } from "../../channels/message/ingress-drain.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import type { ReplyPayload } from "../types.js";
 import {
   scheduleFollowupDrainAfterReplyOperationClear,
   type RunReplyAgentParams,
@@ -67,7 +68,9 @@ function resolveAcceptedSteerRunId(params: ActiveReplySteerParams): string {
   );
 }
 
-export async function runActiveReplySteer(params: ActiveReplySteerParams): Promise<"handled"> {
+export async function runActiveReplySteer(
+  params: ActiveReplySteerParams,
+): Promise<"handled" | ReplyPayload> {
   const {
     followupRun,
     queueKey,
@@ -178,7 +181,19 @@ export async function runActiveReplySteer(params: ActiveReplySteerParams): Promi
     if (finalization.status === "rejected") {
       return await fallback(finalization.outcome.reason);
     }
-    parked.consume();
+    // Uncertain dispatch cannot relinquish source custody through onAbandoned,
+    // even if the source's later adoption callback rejects.
+    parked.consume(finalization.status === "indeterminate" ? "consumed" : undefined);
+    if (finalization.status === "indeterminate") {
+      if (replyOperationRunState) {
+        replyOperationRunState.admission = {
+          status: "skipped",
+          reason: "question-response-indeterminate",
+        };
+      }
+      typing.cleanup();
+      return { text: finalization.outcome.errorMessage, isError: true };
+    }
     const transcriptCommitUnconfirmed =
       finalization.outcome.result?.transcriptCommit === "unconfirmed";
     if (finalization.aborted) {
