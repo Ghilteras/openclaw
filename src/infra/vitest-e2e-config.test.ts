@@ -8,6 +8,12 @@ import { BUNDLED_PLUGIN_E2E_TEST_GLOB } from "../../test/vitest/vitest.bundled-p
 import e2eConfig, { createE2EVitestConfig } from "../../test/vitest/vitest.e2e.config.ts";
 import { createTuiPtyVitestConfig } from "../../test/vitest/vitest.tui-pty.config.ts";
 
+const uiE2eQaLabTestFiles = [
+  "extensions/qa-lab/src/control-ui-media-transcript.real-gateway.e2e.test.ts",
+  "extensions/qa-lab/src/session-host-command-state.real-gateway.e2e.test.ts",
+  "extensions/qa-lab/src/control-ui-openclaw-delegation.real-gateway.e2e.test.ts",
+];
+
 describe("e2e vitest config", () => {
   it("runs as a standalone config instead of inheriting unit projects", () => {
     expect(e2eConfig.test?.projects).toBeUndefined();
@@ -30,6 +36,7 @@ describe("e2e vitest config", () => {
       "test/setup.ts",
       "test/setup-openclaw-runtime.ts",
     ]);
+    expect(e2eConfig.test?.exclude).toEqual(expect.arrayContaining(uiE2eQaLabTestFiles));
   });
 
   it("keeps every terminal integration test exclusively in the serial PTY lane", () => {

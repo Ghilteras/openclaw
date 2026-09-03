@@ -5,6 +5,7 @@ import baseConfig from "./vitest.config.ts";
 import { RepoE2eSequencer } from "./vitest.e2e.sequencer.ts";
 import { resolveRepoRootPath, sharedVitestConfig } from "./vitest.shared.config.ts";
 import { tuiPtyTestFiles } from "./vitest.test-shards.mjs";
+import { uiE2eQaLabTestFiles } from "./vitest.ui-e2e-paths.mjs";
 
 function resolveE2EWorkerCount(env: Record<string, string | undefined>): number {
   const requestedWorkers = Number.parseInt(env.OPENCLAW_E2E_WORKERS ?? "", 10);
@@ -25,6 +26,7 @@ const { projects: _projects, ...baseTest } = baseTestWithProjects as {
 const exclude = [
   ...(baseTest.exclude ?? []).filter((p) => p !== "**/*.e2e.test.ts"),
   ...tuiPtyTestFiles,
+  ...uiE2eQaLabTestFiles,
 ];
 
 export function createE2EVitestConfig(env: Record<string, string | undefined> = process.env) {
