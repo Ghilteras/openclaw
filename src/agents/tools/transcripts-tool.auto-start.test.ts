@@ -34,12 +34,17 @@ afterEach(() => {
 });
 
 describe("transcripts auto-start stop reporting", () => {
-  it.each([false, true])(
-    "retries startup cleanup even after shutdown times out: %s",
-    async (late) => {
+  it.each([
+    { whenOccupied: false, late: false },
+    { whenOccupied: false, late: true },
+    { whenOccupied: true, late: false },
+    { whenOccupied: true, late: true },
+  ])(
+    "retries startup cleanup (occupied=$whenOccupied, late=$late)",
+    async ({ whenOccupied, late }) => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       const stateDir = tempDirs.make("transcripts-start-cleanup-");
-      const entered = createDeferred();
+      const entered = createDeferred<TranscriptStartRequest>();
       const release = createDeferred();
       const stop = vi
         .fn<NonNullable<TranscriptSourceProvider["stop"]>>()
@@ -49,8 +54,12 @@ describe("transcripts auto-start stop reporting", () => {
         id: "start-cleanup",
         name: "Start cleanup",
         sourceKinds: ["live-audio"],
+        async watchOccupancy(request) {
+          request.onOccupied();
+          return { ok: true, value: { stop() {} } };
+        },
         async start(request) {
-          entered.resolve();
+          entered.resolve(request);
           await release.promise;
           return { ok: true, session: request.session };
         },
@@ -64,16 +73,22 @@ describe("transcripts auto-start stop reporting", () => {
       });
       const ctx = {
         stateDir,
-        config: { transcripts: { autoStart: [{ providerId: provider.id, sessionId: "pending" }] } },
+        config: {
+          transcripts: {
+            autoStart: [{ providerId: provider.id, sessionId: "pending", whenOccupied }],
+          },
+        },
         caller: { kind: "operator" as const, source: "local" as const },
         logger: { warn: vi.fn() },
       };
       const service = createTranscriptsAutoStartService(ctx);
       await withPluginRuntimeRegistryScope(registry, async () => {
         let stopping: Promise<void> | undefined;
+        let request: TranscriptStartRequest | undefined;
         try {
           service.start();
-          await entered.promise;
+          request = await entered.promise;
+          const sessionId = request.session.sessionId;
           stopping = service.stop();
           if (late) {
             await vi.advanceTimersByTimeAsync(5_000);
@@ -83,19 +98,21 @@ describe("transcripts auto-start stop reporting", () => {
           await stopping;
           await vi.waitFor(() => {
             expect(stop.mock.calls.map(([request]) => request.sessionId)).toEqual([
-              "pending",
-              "pending",
+              sessionId,
+              sessionId,
             ]);
-            expect(activeSessions.has("pending")).toBe(false);
+            expect(activeSessions.has(sessionId)).toBe(false);
           });
         } finally {
           release.resolve();
           await stopping;
           await service.stop();
-          await createTranscriptsTool(ctx).execute("cleanup", {
-            action: "stop",
-            sessionId: "pending",
-          });
+          if (request) {
+            await createTranscriptsTool(ctx).execute("cleanup", {
+              action: "stop",
+              sessionId: request.session.sessionId,
+            });
+          }
           vi.useRealTimers();
         }
       });

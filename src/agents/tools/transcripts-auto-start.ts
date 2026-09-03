@@ -340,6 +340,9 @@ export function createTranscriptsAutoStartService(ctx: TranscriptsRuntimeContext
             capture = undefined;
           }
           if (stopped) {
+            if (capture) {
+              await stopCapture(capture, store);
+            }
             discardCandidate(candidate, store);
           } else if (occupied && !controller.signal.aborted) {
             retry(() => begin(attempt + 1), attempt, error, "capture");
