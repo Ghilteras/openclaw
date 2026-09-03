@@ -218,7 +218,11 @@ describe("cross-OS release checks workflow", () => {
     expect(baseline.run).toContain(
       'echo "package_acceptance_baseline=${package_baseline#openclaw@}"',
     );
-    const packageOverrideResolver = baseline.run.match(
+    const baselineRun = baseline.run;
+    if (!baselineRun) {
+      throw new Error("Resolve upgrade baseline step must have a shell body");
+    }
+    const packageOverrideResolver = baselineRun.match(
       /if \[\[ "\$PACKAGE_ACCEPTANCE_SCHEDULED" == "true" &&\s+-n "\$PACKAGE_ACCEPTANCE_PACKAGE_SPEC" \]\]; then(?<body>[\s\S]*?)\n\s*fi/,
     )?.groups?.body;
     expect(packageOverrideResolver).toBeDefined();
