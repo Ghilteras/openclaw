@@ -68,10 +68,7 @@ describe("PDF tool static prepared runtime", () => {
         });
         const agentDir = state.agentDir();
         await fs.mkdir(agentDir, { recursive: true });
-        const lease = await acquireAgentRunPreparedModelRuntime(
-          { agentDir, config },
-          { catalogMode: "static" },
-        );
+        const lease = await acquireAgentRunPreparedModelRuntime({ agentDir, config });
 
         try {
           const stores = lease.snapshot.createStores();

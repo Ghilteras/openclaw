@@ -759,7 +759,6 @@ describe("describeImageWithModelCore", () => {
           { provider: "google", modelId: "gemini-2.5-flash", agentId: "vision-agent" },
         ],
       }),
-      { catalogMode: "static" },
     );
     expect(resolveModelAsyncMock).toHaveBeenCalledWith(
       "google",

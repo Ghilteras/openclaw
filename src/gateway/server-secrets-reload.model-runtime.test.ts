@@ -282,7 +282,7 @@ describe("secret reload model-runtime publication", () => {
           resolveRuntimeSnapshotGeneration: () => "newer",
           clients: [],
         });
-        nextPublication = refreshPreparedModelRuntimeSnapshots(current, { catalogMode: "static" });
+        nextPublication = refreshPreparedModelRuntimeSnapshots(current);
         const reader = prepareModelRuntimeSnapshot({
           config: current,
           agentId: "main",

@@ -198,7 +198,7 @@ it("acquires direct completion runtime for the exact selected model", async () =
         },
       ],
     }),
-    expect.objectContaining({ catalogMode: "static" }),
+    expect.any(Object),
   );
   expect(modelResolver).toHaveBeenCalledOnce();
 });
@@ -222,7 +222,7 @@ it("selects an explicit agent completion model before runtime acquisition", asyn
     expect.objectContaining({
       runtimePluginSelections: [{ provider: "ollama", modelId: "qwen3:0.6b", agentId: "main" }],
     }),
-    expect.objectContaining({ catalogMode: "static" }),
+    expect.any(Object),
   );
   expect(modelResolver).toHaveBeenCalledOnce();
 });
