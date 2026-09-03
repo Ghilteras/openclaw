@@ -9,7 +9,8 @@ export const en: TranslationMap & {
   debug: TranslationMap & { overlay: TranslationMap };
   // Lazy en-devices.ts assigns into this namespace.
   devices: TranslationMap;
-  desktop: TranslationMap;
+  desktop: TranslationMap &
+    Record<"title" | "openWindow" | "unavailable" | "toggle" | "reconnect", string>;
   updates: TranslationMap;
 } = {
   capacityMeter: {
