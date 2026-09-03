@@ -9,7 +9,6 @@ import {
   isTranscriptSessionActive,
   resolveSourceProvider,
 } from "../../agents/tools/transcripts-tool-runtime.js";
-import { resolveStateDir } from "../../config/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveTranscriptsConfig } from "../../transcripts/config.js";
 import { projectTranscriptSession, readTranscriptNotes } from "../../transcripts/read.js";
@@ -24,11 +23,7 @@ function projectSessions(entries: TranscriptReadEntry[], config: OpenClawConfig)
   return entries.map((entry) => {
     const providerId = entry.session.source.providerId;
     if (!names.has(providerId)) {
-      names.set(
-        providerId,
-        resolveSourceProvider(providerId, { config, stateDir: resolveStateDir(), logger: console })
-          ?.name,
-      );
+      names.set(providerId, resolveSourceProvider(providerId, config)?.name);
     }
     return projectTranscriptSession(
       entry,

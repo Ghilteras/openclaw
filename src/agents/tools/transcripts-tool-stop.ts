@@ -91,7 +91,7 @@ export async function stopTranscripts(params: {
   try {
     let providerStopError: string | undefined;
     if (selectedActive && selectedActive.phase !== "terminal") {
-      const provider = resolveSourceProvider(selectedActive.providerId, params.ctx);
+      const provider = resolveSourceProvider(selectedActive.providerId, params.ctx.config);
       if (selectedActive.cleanupPending) {
         providerStopError = await stopPendingTranscriptCapture({
           ctx: params.ctx,

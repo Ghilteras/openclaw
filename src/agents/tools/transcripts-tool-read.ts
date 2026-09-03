@@ -39,7 +39,7 @@ export async function listPastTranscripts({ ctx, store, rawParams }: ReadParams)
       const { overview: _overview, ...session } = projectTranscriptSession(
         entry,
         isTranscriptSessionActive(entry.session),
-        resolveSourceProvider(entry.session.source.providerId, ctx)?.name,
+        resolveSourceProvider(entry.session.source.providerId, ctx.config)?.name,
       );
       sessions.push(session);
       if (sessions.length === limit) {

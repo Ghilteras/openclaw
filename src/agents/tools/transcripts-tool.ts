@@ -86,7 +86,7 @@ async function importTranscripts(params: {
     ...sourceFromParams(params.rawParams),
     ...(params.ctx.agentId ? { agentId: params.ctx.agentId } : {}),
   };
-  const provider = resolveSourceProvider(requestedSource.providerId, params.ctx);
+  const provider = resolveSourceProvider(requestedSource.providerId, params.ctx.config);
   if (!provider?.importTranscript) {
     throw new Error(`transcripts provider ${requestedSource.providerId} cannot import transcripts`);
   }

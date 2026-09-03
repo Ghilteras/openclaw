@@ -341,7 +341,7 @@ export function createTranscriptsAutoStartService(ctx: TranscriptsRuntimeContext
       }
       void runPending(async (controller) => {
         try {
-          const provider = resolveSourceProvider(entry.providerId, ctx);
+          const provider = resolveSourceProvider(entry.providerId, ctx.config);
           if (!provider) {
             throw new Error("provider is not available");
           }

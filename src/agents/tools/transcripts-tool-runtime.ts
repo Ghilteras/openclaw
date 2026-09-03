@@ -216,10 +216,10 @@ export function sourceFromParams(params: Record<string, unknown>): TranscriptSou
   };
 }
 
-export function resolveSourceProvider(providerId: string, ctx: TranscriptsRuntimeContext) {
+export function resolveSourceProvider(providerId: string, config?: OpenClawConfig) {
   return providerId === manualTranscriptSourceProvider.id
     ? manualTranscriptSourceProvider
-    : getTranscriptSourceProvider(providerId, ctx.config);
+    : getTranscriptSourceProvider(providerId, config);
 }
 
 function bindSourceToTurnAccount(params: {
@@ -388,7 +388,7 @@ export async function startTranscripts(params: {
     ...sourceFromParams(params.rawParams),
     ...(params.ctx.agentId ? { agentId: params.ctx.agentId } : {}),
   };
-  const provider = resolveSourceProvider(requestedSource.providerId, params.ctx);
+  const provider = resolveSourceProvider(requestedSource.providerId, params.ctx.config);
   if (!provider?.start) {
     throw new Error(`transcripts provider ${requestedSource.providerId} cannot start live capture`);
   }

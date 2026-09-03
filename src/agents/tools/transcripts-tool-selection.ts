@@ -43,7 +43,7 @@ export async function canAccessTranscriptSession(
   if (readOnly && ctx.caller?.kind === "operator") {
     return true;
   }
-  const provider = resolveSourceProvider(session.source.providerId, ctx);
+  const provider = resolveSourceProvider(session.source.providerId, ctx.config);
   if (readOnly && (ctx.caller?.kind !== "channel" || !provider?.accessControl)) {
     return false;
   }
