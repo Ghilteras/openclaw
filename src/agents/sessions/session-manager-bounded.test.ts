@@ -1,4 +1,5 @@
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import {
@@ -316,5 +317,51 @@ it("keeps a multi-megabyte transcript readable after removing a trailing assista
   ]);
   const context = readSessionTranscriptBoundedActiveContextCore(scope, limits);
   expect(context.activeLeafEntryId).toBe(retained.messageId);
+  expect(context.events.at(-1)).toMatchObject({ message: { content: "retained" } });
+});
+
+it("falls back to full replacement when yield cleanup finds a dirty projection", async () => {
+  const dir = tempDirs.make("openclaw-session-manager-dirty-suffix-");
+  const scope = {
+    agentId: "main",
+    sessionId: "dirty-suffix-session",
+    sessionKey: "agent:main:dirty-suffix-session",
+    storePath: path.join(dir, "sessions.json"),
+  };
+  await upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 1 });
+  await appendTranscriptMessage(scope, {
+    cwd: dir,
+    message: { role: "user", content: "retained" },
+  });
+  await appendTranscriptMessage(scope, {
+    cwd: dir,
+    message: { role: "assistant", content: "yield artifact" },
+  });
+
+  const database = new DatabaseSync(path.join(dir, "openclaw-agent.sqlite"));
+  database
+    .prepare("UPDATE session_transcript_index_state SET needs_rebuild = 1 WHERE session_id = ?")
+    .run(scope.sessionId);
+  database.close();
+
+  const manager = SessionManager.open(scope, dir);
+  expect(
+    manager.removeTrailingEntries(
+      (entry) => entry.type === "message" && entry.message.role === "assistant",
+    ),
+  ).toBe(1);
+  await expect(loadTranscriptEvents(scope)).resolves.toMatchObject([
+    { type: "session" },
+    { message: { role: "user", content: "retained" } },
+  ]);
+
+  await waitForSessionTranscriptIndexReconcile({
+    agentId: scope.agentId,
+    path: path.join(dir, "openclaw-agent.sqlite"),
+  });
+  const context = readSessionTranscriptBoundedActiveContextCore(scope, {
+    maxBytes: 4096,
+    maxEvents: 3,
+  });
   expect(context.events.at(-1)).toMatchObject({ message: { content: "retained" } });
 });

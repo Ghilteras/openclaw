@@ -55,6 +55,7 @@ import {
   replaceSqliteTranscriptSuffixInTransaction,
 } from "./session-accessor.sqlite-transcript-suffix.js";
 import type { SessionTranscriptWriteTransactionContext } from "./session-accessor.types.js";
+import { sessionTranscriptIndexNeedsReconcile } from "./session-transcript-index.js";
 import type { TranscriptEntryAnchor } from "./transcript-entry-anchor.js";
 import {
   assertOwnedTranscriptWriteCommit,
@@ -196,6 +197,12 @@ export function replaceTranscriptSuffixSync(
       (fencedScope.expectedWriterRunId !== undefined &&
         (fresh.entry as InternalSessionEntry).activeWriterRunId !== fencedScope.expectedWriterRunId)
     ) {
+      return;
+    }
+    if (sessionTranscriptIndexNeedsReconcile(database.db, resolved.sessionId)) {
+      replaceSqliteTranscriptEventsInTransaction(database, resolved, nextEvents);
+      replaced = true;
+      committed = true;
       return;
     }
     replaceSqliteTranscriptSuffixInTransaction(database, resolved, plan);
@@ -610,6 +617,7 @@ function assertNonMessageTranscriptEvent(event: TranscriptEvent): void {
   }
   // Message records require parent-link, idempotency, and redaction handling
   // from appendTranscriptMessage; raw event writes would bypass those invariants.
+  // SAFETY: object shape was checked above; this only reads an optional discriminator.
   if ((event as { type?: unknown }).type === "message") {
     throw new Error(
       "appendTranscriptEvent cannot write message transcript records; use appendTranscriptMessage instead.",
