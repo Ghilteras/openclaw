@@ -61,7 +61,13 @@ describe("provider channel login runtime", () => {
     const sendMessage = vi.fn(async () => {});
     mocks.runModelsAuthLoginFlowCore.mockImplementationOnce(async (options) => {
       await options.prompter.text({ message: "Enter a secret" });
-      return { providerId: "xai", methodId: "oauth", profiles: [] };
+      return {
+        providerId: "xai",
+        methodId: "oauth",
+        modelAccess: "already-visible",
+        authRefresh: "refreshed",
+        profiles: [],
+      };
     });
 
     await expect(runProviderChannelLoginFlow({ ...loginParams, sendMessage })).rejects.toThrow(
