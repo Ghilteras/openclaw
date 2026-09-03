@@ -28,6 +28,7 @@ import { proveHotReloadNodePolicies } from "./gateway-config-hot-reload-nodes.js
 import { prepareGatewayPairingFixture } from "./gateway-config-hot-reload-pairing.js";
 import { proveHotReloadRequests } from "./gateway-config-hot-reload-requests.js";
 import { proveHotReloadSecurity } from "./gateway-config-hot-reload-security.js";
+import { proveHotReloadTerminalDeferredRestart } from "./gateway-config-hot-reload-terminal-deferred.js";
 import {
   proveHotReloadTerminalLifecycle,
   proveHotReloadTerminalStartup,
@@ -580,8 +581,18 @@ async function runProof(repoRoot: string, outputDir: string, appendLog: (text: s
       failures.push(...channels.failures);
       security = await proveHotReloadSecurity({ repoRoot, outputDir, appendLog });
       failures.push(...security.failures);
+      const terminalDeferred = await proveHotReloadTerminalDeferredRestart({
+        repoRoot,
+        outputDir,
+        appendLog,
+      });
+      failures.push(...terminalDeferred.failures);
       await checkContinuity();
-      passedChecks = evidence.length + channels.evidence.length + security.evidence.length;
+      passedChecks =
+        evidence.length +
+        channels.evidence.length +
+        security.evidence.length +
+        terminalDeferred.evidence.length;
       // Positive control: startup-owned Control UI routing must replace the boot.
       const beforeControl = await rpc<ConfigResult>("config.get");
       const control = await rpc<{ sentinel: { payload: { stats: { requiresRestart: boolean } } } }>(
@@ -606,12 +617,14 @@ async function runProof(repoRoot: string, outputDir: string, appendLog: (text: s
         metadataProbes,
         channels,
         security,
+        terminalDeferred,
         counts: {
           passed: passedChecks,
           failed: failures.length,
           primary: evidence.length,
           channels: channels.evidence.length,
           security: security.evidence.length,
+          terminalDeferred: terminalDeferred.evidence.length,
         },
         startupOnlyControl: {
           prefix: "gateway.controlUi.enabled",
@@ -686,10 +699,10 @@ async function main() {
     await writer.write({
       status: passed ? "pass" : "fail",
       durationMs: Date.now() - started,
-      details: `${passedChecks} settings checks passed across the primary, channel, and security Gateway fixtures; startup-only positive controls restarted${passed ? "" : `; failures: ${failures.map(({ prefix }) => prefix).join(", ")}`}`,
+      details: `${passedChecks} settings checks passed across the primary, channel, security, and deferred-restart Gateway fixtures; startup-only positive controls restarted${passed ? "" : `; failures: ${failures.map(({ prefix }) => prefix).join(", ")}`}`,
       artifacts: [
         { kind: "summary", filePath: summaryPath },
-        ...["security", "channels"].map((name) => ({
+        ...["security", "channels", "terminal-deferred"].map((name) => ({
           kind: "summary",
           filePath: path.join(outputDir, `gateway-config-hot-reload-${name}.json`),
         })),

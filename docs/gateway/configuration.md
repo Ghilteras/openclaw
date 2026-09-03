@@ -626,6 +626,9 @@ Terminal enablement also hot-applies. Disabling terminals closes attached,
 detached, and conversation-owned sessions and cancels pending opens. Re-enabling
 allows fresh sessions; closed sessions do not return. Reload open Control UI
 pages to pick up the terminal's content security policy.
+An unrelated deferred restart does not delay a committed terminal enable or shell
+change. A pending restart can still keep earlier terminal or sandbox restrictions
+in force until that restart completes or its rejected changes are reverted.
 
 Browser default-profile changes apply on the next request. Launch-setting
 changes replace affected managed browser processes when next used; externally
