@@ -10,7 +10,10 @@ import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import type { SessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelegramNativeCommandDeps } from "./bot-native-command-deps.runtime.js";
-import { createTelegramGroupCommandContext } from "./bot-native-commands.fixture-test-support.js";
+import {
+  createTelegramGroupCommandContext,
+  stubTelegramProviderLoginFlow,
+} from "./bot-native-commands.fixture-test-support.js";
 import { registerTelegramNativeCommands } from "./bot-native-commands.js";
 import {
   createCommandBot,
@@ -58,7 +61,7 @@ vi.mock("openclaw/plugin-sdk/session-store-runtime", async () => {
   };
 });
 
-type TelegramLoginFlow = NonNullable<TelegramNativeCommandDeps["runModelsAuthLoginFlow"]>;
+type TelegramLoginFlow = NonNullable<TelegramNativeCommandDeps["runProviderChannelLoginFlow"]>;
 type TelegramLoginResult = Awaited<ReturnType<TelegramLoginFlow>>;
 type LoginFlowResult = Partial<TelegramLoginResult> &
   Pick<TelegramLoginResult, "providerId" | "methodId" | "profiles">;
@@ -100,10 +103,7 @@ function registerLoginCommand(params: {
         ...nativeParams,
         telegramDeps: {
           ...nativeParams.telegramDeps,
-          runModelsAuthLoginFlow: async (options) => {
-            const result = await params.loginFlow(options);
-            return { modelAccess: "already-visible", authRefresh: "refreshed", ...result };
-          },
+          runProviderChannelLoginFlow: stubTelegramProviderLoginFlow(params.loginFlow),
           sendMessageTelegram,
         } as never,
       }),

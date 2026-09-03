@@ -426,6 +426,7 @@ export function createTelegramBotCore(
     opts: runtimeOpts,
     telegramDeps: {
       ...telegramDeps,
+      runProviderChannelLoginFlow: defaultTelegramNativeCommandDeps.runProviderChannelLoginFlow,
       sendMessageTelegram: defaultTelegramNativeCommandDeps.sendMessageTelegram,
     },
   });

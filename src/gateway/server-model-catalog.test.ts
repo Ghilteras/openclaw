@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import type { ModelCatalogSnapshot } from "../agents/model-catalog.types.js";
 import {
   preparePublishedModelCatalogOwnerIdentity,
@@ -25,8 +25,8 @@ import {
 
 // The Gateway reaches the published owner through a lazy import, so the spy must target the
 // live module namespace rather than a hoisted module mock.
-let loadPublishedPreparedModelCatalogOwnerSnapshot: ReturnType<
-  typeof vi.spyOn<typeof preparedModelCatalog, "loadPublishedPreparedModelCatalogOwnerSnapshot">
+let loadPublishedPreparedModelCatalogOwnerSnapshot: MockInstance<
+  typeof preparedModelCatalog.loadPublishedPreparedModelCatalogOwnerSnapshot
 >;
 beforeEach(() => {
   loadPublishedPreparedModelCatalogOwnerSnapshot = vi.spyOn(
@@ -42,11 +42,8 @@ type PublishedOwnerSnapshot = Awaited<
 >;
 // Tests hand the Gateway a published-owner candidate; the runtime snapshot fields it never
 // reads stay absent.
-const asPublishedOwner = (value: PublishedModelCatalogOwnerCandidate) =>
-  value as PublishedOwnerSnapshot;
-function stubPublishedOwner(
-  load: () => Promise<PublishedModelCatalogOwnerCandidate> | PublishedModelCatalogOwnerCandidate,
-) {
+const asPublishedOwner = (value: object) => value as unknown as PublishedOwnerSnapshot;
+function stubPublishedOwner(load: () => Promise<object> | object) {
   loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () =>
     asPublishedOwner(await load()),
   );

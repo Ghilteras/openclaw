@@ -15,7 +15,6 @@ import {
   releaseProviderLoginFlow,
   reserveProviderLoginFlow,
   resolveProviderChannelLoginChoice,
-  runProviderChannelLoginFlow,
 } from "openclaw/plugin-sdk/provider-auth-login-flow-runtime";
 import { danger } from "openclaw/plugin-sdk/runtime-env";
 import {
@@ -168,7 +167,7 @@ export async function executeTelegramLoginCommand(params: {
         agentId: dispatch.route.agentId,
         sessionKey: dispatch.targetSessionKey,
       });
-      const loginResult = await runProviderChannelLoginFlow({
+      const loginResult = await dispatch.telegramDeps.runProviderChannelLoginFlow({
         choice: loginChoice,
         agentId: dispatch.route.agentId,
         config: dispatch.runtimeCfg,

@@ -452,7 +452,7 @@ describe("detectInferenceBackends", () => {
     expect(candidates).toMatchObject([
       {
         kind: "codex-cli",
-        detail: "logged in",
+        detail: "logged in · authentication method unavailable",
       },
       {
         kind: "gemini-cli",
@@ -665,7 +665,7 @@ describe("detectInferenceBackends", () => {
     expect(candidates).toHaveLength(1);
     expect(candidates[0]).toMatchObject({
       kind: "codex-cli",
-      detail: "logged in",
+      detail: "logged in · authentication method unavailable",
     });
   });
 
@@ -688,7 +688,9 @@ describe("detectInferenceBackends", () => {
       },
     });
 
-    expect(candidates).toMatchObject([{ kind: "codex-cli", detail: "logged in" }]);
+    expect(candidates).toMatchObject([
+      { kind: "codex-cli", detail: "logged in · authentication method unavailable" },
+    ]);
     expect(probed).toContain(chatGPTCli);
     expect(probed).not.toContain(legacyCodexCli);
   });

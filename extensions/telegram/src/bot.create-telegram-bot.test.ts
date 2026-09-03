@@ -2230,10 +2230,10 @@ describe("createTelegramBot", () => {
   });
 
   it("lets an owner start Codex login from a pairing-policy DM callback", async () => {
-    const runModelsAuthLoginFlow = vi
-      .spyOn(defaultTelegramNativeCommandDeps, "runModelsAuthLoginFlow")
+    const runProviderChannelLoginFlow = vi
+      .spyOn(defaultTelegramNativeCommandDeps, "runProviderChannelLoginFlow")
       .mockImplementation(async (params) => {
-        await params.prompter.deviceCode?.({
+        await params.sendDeviceCode?.({
           title: "OpenAI Codex device code",
           code: "OWNER-CODE",
           message: "URL: https://auth.openai.com/codex/device",
@@ -2268,14 +2268,14 @@ describe("createTelegramBot", () => {
         }),
       );
 
-      expect(runModelsAuthLoginFlow).toHaveBeenCalledOnce();
+      expect(runProviderChannelLoginFlow).toHaveBeenCalledOnce();
       expect(sendMessageSpy).toHaveBeenCalledWith(
         1234,
         expect.stringContaining("Code: <code>OWNER-CODE</code>"),
         expect.objectContaining({ parse_mode: "HTML" }),
       );
     } finally {
-      runModelsAuthLoginFlow.mockRestore();
+      runProviderChannelLoginFlow.mockRestore();
     }
   });
 
