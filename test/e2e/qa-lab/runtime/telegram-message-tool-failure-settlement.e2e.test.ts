@@ -10,8 +10,12 @@ type JsonObject = Record<string, unknown>;
 const BOT_TOKEN = `424242:${"A".repeat(35)}`;
 const CHAT_ID = -1001234;
 const SENDER_ID = 777;
-const FAILURE_TEXT =
-  "⚠️ mock-openai/gpt-5.6-luna-alt request failed (provider internal error, HTTP 500). This is usually temporary — try again shortly.";
+const PRIMARY_MODEL_ID = "gpt-5.6-luna";
+const FALLBACK_MODEL_ID = "gpt-5.6-luna-alt";
+const PRIMARY_MODEL = `mock-openai/${PRIMARY_MODEL_ID}`;
+const FALLBACK_MODEL = `mock-openai/${FALLBACK_MODEL_ID}`;
+const GENERIC_FAILURE_TEXT =
+  "Something went wrong while processing your request. Please try again.";
 const RAW_ERROR_CANARY = "untrusted-provider-detail-qa-canary";
 
 async function readRequest(req: IncomingMessage): Promise<JsonObject> {
@@ -29,6 +33,7 @@ function succeed(res: ServerResponse, result: unknown = true) {
 test("visibly settles a message-tool-only Telegram turn after a provider failure", async () => {
   const pendingPolls = new Set<ServerResponse>();
   const telegramSends: JsonObject[] = [];
+  const providerModels: string[] = [];
   let providerRequests = 0;
   let updateDelivered = false;
 
@@ -47,6 +52,10 @@ test("visibly settles a message-tool-only Telegram turn after a provider failure
     const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
     if (pathname.startsWith("/v1/")) {
       providerRequests += 1;
+      const body = await readRequest(req);
+      if (typeof body.model === "string") {
+        providerModels.push(body.model);
+      }
       writeJson(res, 500, { error: { message: `provider returned HTTP 500 ${RAW_ERROR_CANARY}` } });
       return;
     }
@@ -104,6 +113,8 @@ test("visibly settles a message-tool-only Telegram turn after a provider failure
             repoRoot,
             useRepoCli: true,
             providerBaseUrl: `${apiRoot}/v1`,
+            primaryModel: PRIMARY_MODEL,
+            alternateModel: FALLBACK_MODEL,
             transportBaseUrl: apiRoot,
             transport: {
               requiredPluginIds: ["telegram"],
@@ -155,22 +166,25 @@ test("visibly settles a message-tool-only Telegram turn after a provider failure
 
           await expect
             .poll(
-              () => ({
-                providerRequests,
-                sends: telegramSends.map((send) => ({
+              () =>
+                telegramSends.map((send) => ({
                   chatId: send.chat_id,
                   silent: send.disable_notification,
                   text: send.text,
                 })),
-              }),
               { interval: 100, timeout: 30_000 },
             )
-            .toEqual({
-              providerRequests: expect.any(Number),
-              sends: [{ chatId: String(CHAT_ID), silent: true, text: FAILURE_TEXT }],
-            });
+            .toEqual([{ chatId: String(CHAT_ID), silent: true, text: expect.any(String) }]);
           expect(providerRequests).toBeGreaterThan(0);
-          expect(telegramSends.map((send) => send.text).join("\n")).not.toContain(RAW_ERROR_CANARY);
+          expect(providerModels).toContain(PRIMARY_MODEL_ID);
+          expect(providerModels).toContain(FALLBACK_MODEL_ID);
+          const failureText = String(telegramSends[0]?.text ?? "");
+          expect(failureText).toContain(`${FALLBACK_MODEL} request failed`);
+          expect(failureText).toContain("provider internal error");
+          expect(failureText).toContain("HTTP 500");
+          expect(failureText).toContain("This is usually temporary");
+          expect(failureText).not.toContain(RAW_ERROR_CANARY);
+          expect(failureText).not.toBe(GENERIC_FAILURE_TEXT);
         } finally {
           await stopQaGatewayFixture(gatewayOwner);
           for (const poll of pendingPolls) {
