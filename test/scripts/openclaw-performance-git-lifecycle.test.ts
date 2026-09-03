@@ -47,7 +47,9 @@ posixIt.each(Object.keys(steps) as PerformanceGitMode[])(
     const report = await performanceRun(mode);
     expect(report.code, report.output).toBe(0);
     expect(report.readyAttempts.length).toBeGreaterThan(0);
-    if (mode === "prepare") expect(report.githubOutput).toContain("ready=true\n");
+    if (mode === "prepare") {
+      expect(report.githubOutput).toContain("ready=true\n");
+    }
     if (mode === "publish") {
       expect(report.pushes).toHaveLength(1);
       expect(report.fetches).toHaveLength(0);
@@ -126,7 +128,7 @@ const terminalCases = [
 // Every injected lifecycle failure must stop at its command, before later policy actions.
 posixIt.each(
   terminalCases.flatMap((entry) =>
-    (["cleanup-failure", "cancel"] as const).map((code) => ({ ...entry, code })),
+    (["cleanup-failure", "cancel"] as const).map((code) => Object.assign({}, entry, { code })),
   ),
 )(
   "$mode $operation $code fences every later action",
@@ -236,7 +238,9 @@ posixIt.each([124, 125, 143, "hang"] as const)(
       const scope = JSON.parse(command.envProbe!);
       expect(scope.token).toBe(false);
       expect(scope.auth).toBe(command.args[0] === "push");
-      if (scope.auth) expect(scope).toMatchObject({ count: "2", hooks: "/dev/null", prompt: "0" });
+      if (scope.auth) {
+        expect(scope).toMatchObject({ count: "2", hooks: "/dev/null", prompt: "0" });
+      }
     }
     expect(JSON.stringify(report)).not.toContain("fixture-performance-token");
     expect(JSON.stringify(report)).not.toContain(
