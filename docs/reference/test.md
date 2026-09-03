@@ -195,6 +195,10 @@ reconcile dependencies before the remote wrapper starts.
 
 ## Core commands
 
+Run the test toolchain on Node 22.22.3+, Node 24.15+, or Node 26+. Vitest 5
+excludes Node 25 from its declared engine range; OpenClaw's Node 25 runtime
+support is unchanged.
+
 The test toolchain pins Vitest `5.0.0-rc.4`, including its browser and coverage
 packages. Use `describe(name, { concurrent: false }, callback)` for ordered
 suites. Await asynchronous assertions, keep `vi.mock`/`vi.hoisted` at module
@@ -607,6 +611,10 @@ They print a companion `<output>.reports-<unique>` directory. Keep that director
 it contains original reports, per-attempt coverage files when coverage is enabled,
 and an `index.json` with child exit codes, signals, timeouts and unstarted work.
 Only the accepted retry attempt contributes to the aggregate.
+
+Native blob reports can only be merged by the exact Vitest version that produced
+them. Preserve older report sets as evidence; to merge with the current toolchain,
+rerun the tests to generate fresh blobs instead of mixing versions.
 
 The aggregate preserves the accepted case inventory, but is not a lossless
 replacement for the originals. Native merging does not restore snapshot summaries
