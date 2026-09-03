@@ -56,6 +56,7 @@ export function listSkillCommandsForWorkspace(params: {
     params.includeAllowlistHidden || params.sessionEntry?.skillLibrarySelections?.length
       ? loadWorkspaceSkills(params.workspaceDir, {
           config: params.cfg,
+          agentId: params.agentId,
           eligibility,
           pluginMetadataSnapshot: params.pluginMetadataSnapshot,
         })

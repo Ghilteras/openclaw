@@ -89,6 +89,7 @@ export function buildWorkspaceSkillCommandSpecs(
         config: opts?.config,
         managedSkillsDir: opts?.managedSkillsDir,
         bundledSkillsDir: opts?.bundledSkillsDir,
+        agentId: opts?.agentId,
         skillFilter: effectiveSkillFilter,
         eligibility: opts?.eligibility,
         pluginMetadataSnapshot: opts?.pluginMetadataSnapshot,
