@@ -69,6 +69,7 @@ export function makeRetentionFixtures(profile: RetentionProfile, now: number): R
   for (let i = 0; i < RETENTION_PROFILES[profile].archived; i++) {
     add(`dashboard:archived-${padded(i)}`, {
       archivedAt: now - RETENTION_DAY_MS,
+      archiveReason: ([undefined, "manual", "stale-dashboard", "restart-recovery"] as const)[i % 4],
       updatedAt: now - 90 * RETENTION_DAY_MS,
     });
   }
@@ -191,7 +192,11 @@ export function readRetentionEntry(store: RetentionStore, key: string): SessionE
   });
 }
 
-export function readRetentionSnapshot(store: RetentionStore, selectedKeys?: ReadonlySet<string>) {
+export function readRetentionSnapshot(
+  store: RetentionStore,
+  selectedKeys?: ReadonlySet<string>,
+  selectedWindowIds?: ReadonlySet<string>,
+) {
   return readRetentionDatabase(store, (db) => {
     const identities = createHash("sha256");
     const windows = createHash("sha256");
@@ -222,6 +227,9 @@ export function readRetentionSnapshot(store: RetentionStore, selectedKeys?: Read
       if (selectedKeys && !selectedKeys.has(String(row.session_key))) {
         continue;
       }
+      if (selectedWindowIds && !selectedWindowIds.has(String(row.session_id))) {
+        continue;
+      }
       generations++;
       windows.update(JSON.stringify([row.session_key, row.session_id]) + "\n");
     }
@@ -232,6 +240,9 @@ export function readRetentionSnapshot(store: RetentionStore, selectedKeys?: Read
       )
       .iterate()) {
       if (selectedKeys && !selectedKeys.has(String(row.session_key))) {
+        continue;
+      }
+      if (selectedWindowIds && !selectedWindowIds.has(String(row.session_id))) {
         continue;
       }
       eventCount++;
@@ -311,7 +322,10 @@ export async function proveRetentionOwners(
     assert.equal(after.active, RETENTION_PROFILES[profile].cap);
     assert.equal(cleanup.modelRunPruned, 1);
     assert.equal(cleanup.pruned, 5);
-    assert.equal(cleanup.capped, 0);
+    const capArchives = RETENTION_PROFILES[profile].fresh + 9 - RETENTION_PROFILES[profile].cap;
+    assert.equal(cleanup.capArchived, capArchives);
+    assert.equal(cleanup.capped, capArchives);
+    assert.equal(cleanup.archived, capArchives + 8);
     for (const row of rows) {
       const entry = loadSessionEntry({ ...store, sessionKey: row.key });
       if (row.disposable) {
@@ -319,8 +333,16 @@ export async function proveRetentionOwners(
         continue;
       }
       assert.equal(entry?.sessionId, row.entry.sessionId);
+      if (row.entry.archivedAt !== undefined) {
+        assert.equal(entry?.archivedAt, row.entry.archivedAt);
+        assert.equal(entry?.archiveReason, row.entry.archiveReason);
+      }
+      if (row.key.includes(":dashboard:fresh-") && entry?.archivedAt !== undefined) {
+        assert.equal(entry.archiveReason, "active-session-cap");
+      }
       if (row.key.includes(":aged-")) {
         assert(entry?.archivedAt, `30-day archive ${row.key}`);
+        assert.equal(entry.archiveReason, "age-retention");
       }
       if (!row.key.includes(":dashboard:") && !row.key.includes(":aged-")) {
         assert.equal(entry?.archivedAt, undefined, `protected ${row.key}`);
@@ -425,27 +447,56 @@ export async function prepareRetentionDiskFixtures(store: RetentionStore) {
     generations: 3,
   };
   await seedRetentionFixtures(store, [candidate, explicit], () => {});
-  const retainedKeys = readRetentionDatabase(
-    store,
-    (db) =>
-      new Set(
-        db
-          .prepare(
-            "SELECT session_key FROM session_nodes WHERE archived_at IS NOT NULL OR pinned_at IS NOT NULL",
-          )
-          .all()
-          .map((row) => String(row.session_key))
-          .filter((key) => key !== explicit.key),
-      ),
-  );
-  const protectedBefore = readRetentionSnapshot(store, retainedKeys);
+  // Independent fixture oracle: only ordinary dashboard cap archives are disposable.
+  // Legacy/manual/dashboard-age/recovery/age archives and pins retain every window.
+  const expected = readRetentionDatabase(store, (db) => {
+    const retainedKeys = new Set<string>();
+    const survivingKeys = new Set<string>();
+    const capKeys = new Set<string>();
+    const currentIds = new Set<string>();
+    for (const row of db
+      .prepare("SELECT session_key, current_session_id, entry_json FROM session_nodes")
+      .iterate()) {
+      const key = String(row.session_key);
+      const entry = JSON.parse(String(row.entry_json)) as SessionEntry;
+      if (entry.archivedAt !== undefined && entry.archiveReason === "active-session-cap") {
+        assert(
+          key.startsWith(retentionSessionKey("dashboard:fresh-")),
+          "unexpected cap archive fixture",
+        );
+        assert.equal(entry.pinnedAt, undefined);
+        assert.notEqual(entry.status, "running");
+        assert.notEqual(entry.modelSelectionLocked, true);
+        assert.notEqual(entry.delivery?.kind, "external");
+        capKeys.add(key);
+      } else {
+        survivingKeys.add(key);
+        currentIds.add(String(row.current_session_id));
+        if (entry.archivedAt !== undefined || entry.pinnedAt !== undefined) {
+          retainedKeys.add(key);
+        }
+      }
+    }
+    const expectedWindowIds = new Set<string>();
+    for (const row of db.prepare("SELECT session_key, session_id FROM session_windows").iterate()) {
+      if (retainedKeys.has(String(row.session_key)) || currentIds.has(String(row.session_id))) {
+        expectedWindowIds.add(String(row.session_id));
+      }
+    }
+    retainedKeys.delete(explicit.key);
+    assert(capKeys.size > 0, "disk proof must exercise the cap-archive last tier");
+    return { retainedKeys, survivingKeys, expectedWindowIds, capKeys };
+  });
+  const protectedBefore = readRetentionSnapshot(store, expected.retainedKeys);
   assert(protectedBefore.nodes > 0 && protectedBefore.events > 0);
   return {
     candidate,
     explicit,
-    retainedKeys,
+    retainedKeys: expected.retainedKeys,
     protectedBefore,
     allBefore: readRetentionSnapshot(store),
+    expectedAfter: readRetentionSnapshot(store, expected.survivingKeys, expected.expectedWindowIds),
+    capKeys: expected.capKeys,
   };
 }
 
@@ -464,12 +515,15 @@ export async function proveRetentionDiskScenario(
   // Startup may kick the budget before the RPC arrives. Authoritative state deltas,
   // not the RPC's individual removed count, own reclamation and preservation proof.
   assert(afterSweep.generations < allBefore.generations, "unprotected history must reclaim");
-  assert.equal(
-    afterSweep.identityHash,
-    allBefore.identityHash,
-    "disk pressure changed logical identities",
+  assert.deepEqual(
+    afterSweep,
+    prepared.expectedAfter,
+    "exact disk-tier survivor identities and history bytes",
   );
-  assert.equal(afterSweep.nodes, allBefore.nodes);
+  assert.equal(afterSweep.nodes, allBefore.nodes - prepared.capKeys.size);
+  for (const key of prepared.capKeys) {
+    assert.equal(readRetentionEntry(store, key), undefined, "cap archive last-tier deletion");
+  }
   assertRetentionConserved(protectedBefore, readRetentionSnapshot(store, retainedKeys));
   const candidateAfter = readRetentionSnapshot(store, new Set([candidate.key]));
   assert.equal(candidateAfter.generations, 1);
@@ -504,6 +558,8 @@ export async function proveRetentionDiskScenario(
     afterSweep,
     afterDelete,
     reclaimedGenerations: allBefore.generations - afterSweep.generations,
+    reclaimedCapArchives: prepared.capKeys.size,
+    expectedAfter: prepared.expectedAfter,
     disk,
     cleanup,
     repeated,

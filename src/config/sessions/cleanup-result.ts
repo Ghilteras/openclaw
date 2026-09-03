@@ -15,8 +15,6 @@ export type SessionCleanupSummary = {
   dryRun: boolean;
   beforeCount: number;
   afterCount: number;
-  beforeActiveCount?: number;
-  afterActiveCount?: number;
   missing: number;
   dmScopeRetired: number;
   modelRunPruned: number;
@@ -132,8 +130,6 @@ function isSessionCleanupSummary(value: unknown): value is SessionCleanupSummary
     typeof value.dryRun === "boolean" &&
     typeof value.beforeCount === "number" &&
     typeof value.afterCount === "number" &&
-    (value.beforeActiveCount === undefined || typeof value.beforeActiveCount === "number") &&
-    (value.afterActiveCount === undefined || typeof value.afterActiveCount === "number") &&
     typeof value.missing === "number" &&
     typeof value.dmScopeRetired === "number" &&
     typeof value.modelRunPruned === "number" &&

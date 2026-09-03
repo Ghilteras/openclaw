@@ -24,6 +24,14 @@ async function replaceWithoutMaintenance(
 it("persists reasons and caps the least-recently-touched active row after dashboard archival", async () => {
   const storePath = fixture.storePath();
   const now = Date.now();
+  const agedKey = "agent:main:ordinary:aged";
+  await replaceWithoutMaintenance(
+    { sessionKey: agedKey, storePath },
+    {
+      sessionId: "ordinary-aged",
+      updatedAt: now - 40 * DAY_MS,
+    },
+  );
   const dashboardKey = "agent:main:dashboard:stale";
   const recentlyTouchedKey = "agent:main:ordinary:recently-touched";
   const leastRecentlyTouchedKey = "agent:main:ordinary:least-recently-touched";
@@ -60,11 +68,18 @@ it("persists reasons and caps the least-recently-touched active row after dashbo
       archiveDashboardAfterMs: 7 * DAY_MS,
       maxEntries: 2,
       mode: "enforce",
-      pruneAfterMs: 365 * DAY_MS,
+      pruneAfterMs: 30 * DAY_MS,
     },
   });
 
-  expect(result).toMatchObject({ archived: 2, capArchived: 1, capped: 1 });
+  expect(result).toMatchObject({ archived: 3, capArchived: 1, capped: 1, pruned: 0 });
+  expect(loadSessionEntry({ sessionKey: agedKey, storePath })).toMatchObject({
+    sessionId: "ordinary-aged",
+    updatedAt: now - 40 * DAY_MS,
+    archivedAt: expect.any(Number),
+    archiveReason: "age-retention",
+  });
+  expect(loadSessionEntry({ sessionKey: agedKey, storePath })?.archivedBy).toBeUndefined();
   expect(loadSessionEntry({ sessionKey: dashboardKey, storePath })).toMatchObject({
     archivedAt: expect.any(Number),
     archiveReason: "stale-dashboard",

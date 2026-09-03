@@ -724,40 +724,41 @@ describe.each([publicAccessorAdapter, sqliteAdapter])(
       }
     });
 
-    t(
-      "prunes stale SQLite entries below the entry cap without parsing on every write",
-      async () => {
-        const scope = sqliteAdapter.entryScope(paths);
-        const staleScope = {
-          ...scope,
-          sessionKey: "agent:main:stale-under-cap",
-        };
-        const staleEntry = {
-          model: "stale",
-          sessionId: "stale-under-cap",
-          updatedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
-        };
-        await patchSessionEntryCore(staleScope, () => staleEntry, {
-          fallbackEntry: staleEntry,
-          replaceEntry: true,
-          skipMaintenance: true,
-        });
+    t("archives stale SQLite entries below the entry cap on ordinary writes", async () => {
+      const scope = sqliteAdapter.entryScope(paths);
+      const staleScope = {
+        ...scope,
+        sessionKey: "agent:main:stale-under-cap",
+      };
+      const staleEntry = {
+        model: "stale",
+        sessionId: "stale-under-cap",
+        updatedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+      };
+      await patchSessionEntryCore(staleScope, () => staleEntry, {
+        fallbackEntry: staleEntry,
+        replaceEntry: true,
+        skipMaintenance: true,
+      });
 
-        await upsertSessionEntryCore(scope, {
-          model: "fresh",
-          sessionId: "fresh-session",
-          updatedAt: Date.now(),
-        });
+      await upsertSessionEntryCore(scope, {
+        model: "fresh",
+        sessionId: "fresh-session",
+        updatedAt: Date.now(),
+      });
 
-        await vi.waitFor(() => {
-          expect(loadSessionEntry(staleScope)).toBeUndefined();
+      await vi.waitFor(() => {
+        expect(loadSessionEntry(staleScope)).toMatchObject({
+          ...staleEntry,
+          archivedAt: expect.any(Number),
+          archiveReason: "age-retention",
         });
-        expect(loadSessionEntry(scope)).toMatchObject({
-          model: "fresh",
-          sessionId: "fresh-session",
-        });
-      },
-    );
+      });
+      expect(loadSessionEntry(scope)).toMatchObject({
+        model: "fresh",
+        sessionId: "fresh-session",
+      });
+    });
 
     t("serializes concurrent SQLite entry patches", async () => {
       const scope = sqliteAdapter.entryScope(paths);
@@ -1560,11 +1561,15 @@ describe("sqlite session normalization", () => {
       ["active", Date.now()],
     ] as const) {
       const entry = { sessionId: `${key}-session`, updatedAt };
-      await patchSessionEntryCore(scopeFor(`agent:main:${key}`), () => entry, {
-        fallbackEntry: entry,
-        replaceEntry: true,
-        skipMaintenance: true,
-      });
+      await patchSessionEntryCore(
+        scopeFor(`agent:main:${key === "active" ? key : `subagent:${key}`}`),
+        () => entry,
+        {
+          fallbackEntry: entry,
+          replaceEntry: true,
+          skipMaintenance: true,
+        },
+      );
     }
     const staleTranscriptEvent = {
       id: "stale-event",
@@ -1572,7 +1577,7 @@ describe("sqlite session normalization", () => {
       type: "metadata",
     };
     await appendTranscriptEvent(
-      { ...scopeFor("agent:main:stale"), sessionId: "stale-session" },
+      { ...scopeFor("agent:main:subagent:stale"), sessionId: "stale-session" },
       staleTranscriptEvent,
     );
     // A publisher's temporary file must not satisfy the archive-ready check.
@@ -1602,7 +1607,7 @@ describe("sqlite session normalization", () => {
         env,
         storePath: paths.sqlitePath,
       }).map((summary) => summary.sessionKey),
-    ).toEqual(["agent:main:active", "agent:main:older", "agent:main:stale"]);
+    ).toEqual(["agent:main:active", "agent:main:subagent:older", "agent:main:subagent:stale"]);
 
     const notify = vi.fn();
     const unsubscribe = onSessionIdentityMutation(notify);
@@ -1916,6 +1921,7 @@ describe("sqlite session normalization", () => {
       sessionKey,
       storePath: paths.sqlitePath,
     });
+    const now = Date.now();
     const pinnedKey = "agent:main:pinned-dashboard";
     const pinnedSessionId = "pinned-dashboard-session";
     const pinnedTranscriptEvent = {
@@ -1939,9 +1945,9 @@ describe("sqlite session normalization", () => {
     );
     await patchSessionEntryCore(
       scopeFor("agent:main:recent-dashboard"),
-      () => ({ sessionId: "recent-dashboard-session", updatedAt: 3 }),
+      () => ({ sessionId: "recent-dashboard-session", updatedAt: now - 1 }),
       {
-        fallbackEntry: { sessionId: "recent-dashboard-session", updatedAt: 3 },
+        fallbackEntry: { sessionId: "recent-dashboard-session", updatedAt: now - 1 },
         replaceEntry: true,
         skipMaintenance: true,
       },
@@ -1949,9 +1955,9 @@ describe("sqlite session normalization", () => {
 
     await patchSessionEntryCore(
       scopeFor("agent:main:maintenance-trigger"),
-      () => ({ sessionId: "maintenance-trigger-session", updatedAt: 4 }),
+      () => ({ sessionId: "maintenance-trigger-session", updatedAt: now }),
       {
-        fallbackEntry: { sessionId: "maintenance-trigger-session", updatedAt: 4 },
+        fallbackEntry: { sessionId: "maintenance-trigger-session", updatedAt: now },
         replaceEntry: true,
       },
     );
@@ -1966,8 +1972,18 @@ describe("sqlite session normalization", () => {
           agentId: "main",
           env,
           storePath: paths.sqlitePath,
-        }).map((summary) => summary.sessionKey),
+        })
+          .filter((summary) => summary.entry.archivedAt === undefined)
+          .map((summary) => summary.sessionKey),
       ).toEqual(["agent:main:maintenance-trigger", pinnedKey]);
+    });
+    expect(
+      listSessionEntryRows({ agentId: "main", env, storePath: paths.sqlitePath }),
+    ).toHaveLength(3);
+    expect(loadSessionEntry(scopeFor("agent:main:recent-dashboard"))).toMatchObject({
+      sessionId: "recent-dashboard-session",
+      archivedAt: expect.any(Number),
+      archiveReason: "active-session-cap",
     });
     await expect(
       loadTranscriptEvents({

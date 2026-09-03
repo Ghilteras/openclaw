@@ -170,8 +170,6 @@ export type SessionArchivedTranscriptCleanupRule = {
 
 export type SessionEntryLifecycleMutationResult = {
   beforeCount: number;
-  beforeActiveCount?: number;
-  afterActiveCount?: number;
   removedEntries: number;
   removedSessionKeys: string[];
   archived: number;

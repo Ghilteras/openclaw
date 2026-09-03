@@ -42,6 +42,7 @@ import {
   appendTranscriptMessageSync,
   applySessionEntryLifecycleMutation,
   loadSessionEntry,
+  listSessionEntriesCore,
   loadTranscriptEventsSync,
   replaceSessionEntry,
   replaceSessionEntrySync,
@@ -101,15 +102,20 @@ describe("sessions cleanup applied summary", () => {
             opts: { enforce: true },
             targets: [{ agentId: "main", storePath }],
           });
+        const activeCount = () =>
+          listSessionEntriesCore({ storePath }).filter(
+            ({ entry }) => entry.archivedAt === undefined,
+          ).length;
+        expect(activeCount()).toBe(3);
         const result = await run();
+        expect(activeCount()).toBe(1);
         const expected = {
           beforeCount: 4,
           afterCount: 3,
-          beforeActiveCount: 3,
-          afterActiveCount: 1,
-          archived: 1,
+          archived: pressure === "age" ? 1 : 0,
+          capArchived: pressure === "count" ? 1 : 0,
           pruned: pressure === "age" ? 1 : 0,
-          capped: pressure === "count" ? 1 : 0,
+          capped: pressure === "count" ? 2 : 0,
           wouldMutate: true,
         };
         expect(result.previewResults[0]?.summary).toMatchObject(expected);
@@ -119,6 +125,7 @@ describe("sessions cleanup applied summary", () => {
         expect(loadSessionEntry(scope("conversation"))).toMatchObject({
           sessionId: "conversation",
           archivedAt: expect.any(Number),
+          archiveReason: pressure === "age" ? "age-retention" : "active-session-cap",
         });
         expect(loadTranscriptEventsSync(scope("conversation"))).toEqual(history);
         const repeated = await run();
@@ -180,15 +187,19 @@ describe("sessions cleanup applied summary", () => {
         archiveDashboardAfterMs: null,
       };
       try {
+        const activeCount = () =>
+          listSessionEntriesCore({ storePath }).filter(
+            ({ entry }) => entry.archivedAt === undefined,
+          ).length;
+        expect(activeCount()).toBe(9);
         const result = await applySessionEntryLifecycleMutation({ storePath, maintenanceOverride });
+        expect(activeCount()).toBe(8);
         expect(result).toMatchObject({
           archived: 1,
           pruned: 0,
           capped: 0,
           beforeCount: 9,
           afterCount: 9,
-          beforeActiveCount: 9,
-          afterActiveCount: 8,
         });
         for (const name of Object.keys(protectedEntries)) {
           expect(
@@ -214,6 +225,8 @@ describe("sessions cleanup applied summary", () => {
             loadSessionEntry(scope("conversation")),
           ),
         ).toBeUndefined();
+        expect(loadSessionEntry(scope("conversation"))?.archiveReason).toBeUndefined();
+        expect(loadSessionEntry(scope("conversation"))?.archivedBy).toBeUndefined();
         appendTranscriptMessageSync(scope("conversation"), {
           eventId: "restored-message",
           message: { role: "user", content: [{ type: "text", text: "Continue after restore" }] },

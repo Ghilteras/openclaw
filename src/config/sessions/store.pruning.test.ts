@@ -79,17 +79,22 @@ function createMaintenanceArtifacts() {
 // ---------------------------------------------------------------------------
 
 describe("pruneStaleEntries", () => {
-  it("removes entries older than maxAgeDays", () => {
+  it("archives durable entries older than maxAgeDays without changing identity", () => {
     const now = Date.now();
     const store = makeStore([
       ["old", makeEntry(now - 31 * DAY_MS)],
       ["fresh", makeEntry(now - DAY_MS)],
     ]);
 
+    const oldId = store.old?.sessionId;
     const pruned = pruneStaleEntries(store, 30 * DAY_MS);
 
-    expect(pruned).toBe(1);
-    expect(store.old).toBeUndefined();
+    expect(pruned).toBe(0);
+    expect(store.old).toMatchObject({
+      sessionId: oldId,
+      archivedAt: expect.any(Number),
+      archiveReason: "age-retention",
+    });
     expect(store).toHaveProperty("fresh");
   });
 
@@ -104,10 +109,15 @@ describe("pruneStaleEntries", () => {
       ["agent:main:discord:channel:ops", { ...makeEntry(now - 31 * DAY_MS), chatType: "channel" }],
     ]);
 
+    const oldId = store.old?.sessionId;
     const pruned = pruneStaleEntries(store, 30 * DAY_MS);
 
-    expect(pruned).toBe(1);
-    expect(store.old).toBeUndefined();
+    expect(pruned).toBe(0);
+    expect(store.old).toMatchObject({
+      sessionId: oldId,
+      archivedAt: expect.any(Number),
+      archiveReason: "age-retention",
+    });
     expect(store).toHaveProperty("agent:main:slack:channel:C123:thread:1710000000.000100");
     expect(store).toHaveProperty("agent:main:telegram:group:-100123:topic:77");
     expect(store).toHaveProperty("agent:main:slack:channel:C999");
@@ -123,11 +133,16 @@ describe("pruneStaleEntries", () => {
       ["old", makeEntry(now - 31 * DAY_MS)],
     ]);
 
+    const oldId = store.old?.sessionId;
     const pruned = pruneStaleEntries(store, 30 * DAY_MS);
 
-    expect(pruned).toBe(1);
+    expect(pruned).toBe(0);
     expect(store).toHaveProperty(lockedKey);
-    expect(store.old).toBeUndefined();
+    expect(store.old).toMatchObject({
+      sessionId: oldId,
+      archivedAt: expect.any(Number),
+      archiveReason: "age-retention",
+    });
   });
 
   it("preserves archived entries until they are unarchived", () => {
@@ -139,9 +154,14 @@ describe("pruneStaleEntries", () => {
     expect(pruneStaleEntries(store, 30 * DAY_MS)).toBe(0);
     expect(store).toHaveProperty("archived");
 
+    const id = store.archived?.sessionId;
     delete store.archived?.archivedAt;
-    expect(pruneStaleEntries(store, 30 * DAY_MS)).toBe(1);
-    expect(store.archived).toBeUndefined();
+    expect(pruneStaleEntries(store, 30 * DAY_MS)).toBe(0);
+    expect(store.archived).toMatchObject({
+      sessionId: id,
+      archivedAt: expect.any(Number),
+      archiveReason: "age-retention",
+    });
   });
 
   it("preserves pinned entries until they are unpinned", () => {
@@ -153,9 +173,14 @@ describe("pruneStaleEntries", () => {
     expect(pruneStaleEntries(store, 30 * DAY_MS)).toBe(0);
     expect(store).toHaveProperty("pinned");
 
+    const id = store.pinned?.sessionId;
     delete store.pinned?.pinnedAt;
-    expect(pruneStaleEntries(store, 30 * DAY_MS)).toBe(1);
-    expect(store.pinned).toBeUndefined();
+    expect(pruneStaleEntries(store, 30 * DAY_MS)).toBe(0);
+    expect(store.pinned).toMatchObject({
+      sessionId: id,
+      archivedAt: expect.any(Number),
+      archiveReason: "age-retention",
+    });
   });
 });
 
@@ -225,9 +250,9 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
   it("preserves the active session and cleans artifacts using the final referenced session set", async () => {
     const now = Date.now();
     const store = makeStore([
-      ["stale", { sessionId: "stale-session", updatedAt: now - 30 * DAY_MS }],
+      ["agent:main:hook:stale", { sessionId: "stale-session", updatedAt: now - 30 * DAY_MS }],
       [
-        "stale-shared",
+        "agent:main:hook:stale-shared",
         {
           sessionId: "shared-session",
           updatedAt: now - 30 * DAY_MS,
@@ -272,8 +297,8 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
     });
 
     expect(result.changedStore).toBe(true);
-    expect(store.stale).toBeUndefined();
-    expect(store["stale-shared"]).toBeUndefined();
+    expect(store["agent:main:hook:stale"]).toBeUndefined();
+    expect(store["agent:main:hook:stale-shared"]).toBeUndefined();
     expect(store).toHaveProperty("fresh-shared");
     expect(store).toHaveProperty("active");
     expect(archiveCalls).toEqual([
@@ -291,7 +316,7 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
   it("reports archive retention failure without aborting file-backed maintenance", async () => {
     const now = Date.now();
     const store = makeStore([
-      ["stale", { sessionId: "stale-session", updatedAt: now - 30 * DAY_MS }],
+      ["agent:main:hook:stale", { sessionId: "stale-session", updatedAt: now - 30 * DAY_MS }],
       ["fresh", { sessionId: "fresh-session", updatedAt: now }],
     ]);
     const cleanupError = new Error("archive cleanup denied");
@@ -322,7 +347,7 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
     });
 
     expect(result.changedStore).toBe(true);
-    expect(store.stale).toBeUndefined();
+    expect(store["agent:main:hook:stale"]).toBeUndefined();
     expect(store).toHaveProperty("fresh");
     expect(onMaintenanceApplied).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith("session transcript archive retention cleanup failed", {
@@ -542,7 +567,11 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
         log: { warn: () => {}, info: () => {} },
         artifacts: createMaintenanceArtifacts(),
       });
-      expect(otherStore.old).toBeUndefined();
+      expect(otherStore.old).toMatchObject({
+        sessionId: activeSessionId,
+        archivedAt: expect.any(Number),
+        archiveReason: "age-retention",
+      });
 
       const activeStore = makeStore([
         ["old", { sessionId: activeSessionId, updatedAt: now - 31 * DAY_MS }],
@@ -555,7 +584,8 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
         log: { warn: () => {}, info: () => {} },
         artifacts: createMaintenanceArtifacts(),
       });
-      expect(activeStore).toHaveProperty("old");
+      expect(activeStore.old).toMatchObject({ sessionId: activeSessionId });
+      expect(activeStore.old?.archivedAt).toBeUndefined();
 
       admission.release();
       await applyFileBackedSessionStoreMaintenance({
@@ -565,7 +595,11 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
         log: { warn: () => {}, info: () => {} },
         artifacts: createMaintenanceArtifacts(),
       });
-      expect(activeStore.old).toBeUndefined();
+      expect(activeStore.old).toMatchObject({
+        sessionId: activeSessionId,
+        archivedAt: expect.any(Number),
+        archiveReason: "age-retention",
+      });
     } finally {
       admission.release();
     }
@@ -915,6 +949,7 @@ describe("resolveMaintenanceConfigFromInput", () => {
     const maintenance = resolveMaintenanceConfigFromInput();
 
     expect(maintenance.mode).toBe("enforce");
+    expect(maintenance.maxEntries).toBe(5000);
   });
 
   it("defaults gateway model-run probes to fixed 24h retention", () => {
@@ -1033,6 +1068,7 @@ describe("resolveMaintenanceConfigFromInput", () => {
     expect(resolveSessionEntryMaintenanceHighWater(2)).toBe(3);
     expect(resolveSessionEntryMaintenanceHighWater(50)).toBe(75);
     expect(resolveSessionEntryMaintenanceHighWater(500)).toBe(550);
+    expect(resolveSessionEntryMaintenanceHighWater(5000)).toBe(5500);
   });
 });
 

@@ -130,9 +130,15 @@ export async function inspectSqliteSessionHistoryDiskBudget(
 
 function collectProtectedHistoricalSessionIds(params: {
   database: OpenClawAgentDatabase;
+  preserveRecentMs?: number | null;
   storePath: string;
 }): Set<string> {
-  const protectedSessionIds = readReferencedSessionIds(params.database);
+  const protectedSessionIds = readReferencedSessionIds(
+    params.database,
+    undefined,
+    undefined,
+    params,
+  );
   for (const sessionId of collectAdmissionProtectedSessionIds(params)) {
     protectedSessionIds.add(sessionId);
   }
@@ -544,7 +550,12 @@ async function enforceSessionHistoryMaintenanceSerialized(
             sessionId,
             storePath: params.storePath,
           });
-          for (const referenced of readReferencedSessionIds(database, undefined, [sessionId])) {
+          for (const referenced of readReferencedSessionIds(
+            database,
+            undefined,
+            [sessionId],
+            params.maintenance,
+          )) {
             protectedBeforeArchive.add(referenced);
           }
           return planSessionStateDeleteIfUnreferenced({
@@ -576,6 +587,9 @@ async function enforceSessionHistoryMaintenanceSerialized(
               transactionDb,
               materialized,
               protectedAtDelete,
+              undefined,
+              undefined,
+              params.maintenance,
             );
             const db = getSessionKysely(transactionDb.db);
             deleted =

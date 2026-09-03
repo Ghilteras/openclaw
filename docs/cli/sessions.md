@@ -123,7 +123,7 @@ validate every key and preview the result without changing session state.
 Archive reasons are assigned automatically and displayed as human-readable text
 in the Control UI. Explicit archive commands record `manual`; maintenance-owned
 archives record their owning trigger. Missing reasons remain protected as legacy
-state. Under disk pressure, only sessions explicitly archived by `maxEntries`
+state. Age-retention archives also remain protected under disk pressure. Only sessions explicitly archived by `maxEntries`
 are eligible for automatic deletion after cheaper cleanup tiers are exhausted.
 
 ## Delete sessions
@@ -258,7 +258,9 @@ openclaw sessions cleanup --json
   pressure-gated: it only removes stale probe rows when session-entry
   maintenance/cap pressure is reached. When it runs, model-run cleanup
   happens before global stale cleanup and capping.
-- `maxEntries` caps the unarchived session row count; archived rows do not
+- `pruneAfter` archives eligible durable sessions in place (`archive-age`), preserving
+  their ids and all transcript generations. Disposable automation rows still delete.
+- `maxEntries` defaults to 5000 and caps the unarchived session row count; archived rows do not
   consume it. Eligible ordinary overflow is reported as `archive-cap` and
   archived, while synthetic runtime overflow remains disposable. Protected
   unarchived rows are reported as `keep` and still consume the cap. If those

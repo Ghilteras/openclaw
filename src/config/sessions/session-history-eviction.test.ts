@@ -47,6 +47,7 @@ import {
   replaceSessionEntrySync,
   resetSessionEntryLifecycle,
 } from "./session-accessor.js";
+import { readReferencedSessionIds } from "./session-accessor.sqlite-lifecycle-state.js";
 import { getSessionKysely } from "./session-accessor.sqlite-scope.js";
 import {
   enforceSqliteSessionHistoryDiskBudget,
@@ -196,61 +197,80 @@ describe("SQLite historical session disk budget", () => {
     },
   );
 
-  it("evicts the oldest historical session and stops after reaching high water", async () => {
-    const sessionKey = "agent:main:history-order";
-    await createHistoricalTranscript({
-      content: "oldest " + "x".repeat(64 * 1024),
-      nextSessionId: "newer-history",
-      sessionId: "oldest-history",
-      sessionKey,
-      updatedAt: 10,
-    });
-    await appendTranscriptMessage(
-      { sessionId: "newer-history", sessionKey, storePath },
-      { message: { role: "user", content: "newer " + "y".repeat(64 * 1024) } },
-    );
-    await resetSessionEntryLifecycle({
-      storePath,
-      target: { canonicalKey: sessionKey, storeKeys: [sessionKey] },
-      buildNextEntry: () => ({ sessionId: "live-history", updatedAt: 30 }),
-    });
-    setSessionUpdatedAt("newer-history", 20);
-    settlePhysicalUsage();
-    database().db.exec("ANALYZE; PRAGMA analysis_limit = 37;");
-    expect(
-      database()
-        .db.prepare("SELECT stat FROM sqlite_stat1 WHERE idx = ?")
-        .get("idx_agent_session_windows_updated_at"),
-    ).toEqual({ stat: expect.stringMatching(/^3\b/u) });
-    settlePhysicalUsage();
-    const before = await measureSessionPhysicalDiskUsage(storePath);
+  it.each([false, true])(
+    "evicts oldest history before the entry tier and stops at high water (cap archive: %s)",
+    async (capArchive) => {
+      const sessionKey = "agent:main:history-order";
+      await createHistoricalTranscript({
+        content: "oldest " + "x".repeat(64 * 1024),
+        nextSessionId: "newer-history",
+        sessionId: "oldest-history",
+        sessionKey,
+        updatedAt: 10,
+      });
+      await appendTranscriptMessage(
+        { sessionId: "newer-history", sessionKey, storePath },
+        { message: { role: "user", content: "newer " + "y".repeat(64 * 1024) } },
+      );
+      await resetSessionEntryLifecycle({
+        storePath,
+        target: { canonicalKey: sessionKey, storeKeys: [sessionKey] },
+        buildNextEntry: () => ({ sessionId: "live-history", updatedAt: 30 }),
+      });
+      if (capArchive) {
+        replaceSessionEntrySync(
+          { sessionKey, storePath },
+          {
+            sessionId: "live-history",
+            updatedAt: 30,
+            archivedAt: 40,
+            archiveReason: "active-session-cap",
+          },
+        );
+      }
+      if (capArchive) {
+        expect(readReferencedSessionIds(database(), undefined, ["oldest-history"])).toEqual(
+          new Set(["oldest-history"]),
+        );
+      }
+      setSessionUpdatedAt("newer-history", 20);
+      settlePhysicalUsage();
+      database().db.exec("ANALYZE; PRAGMA analysis_limit = 37;");
+      expect(
+        database()
+          .db.prepare("SELECT stat FROM sqlite_stat1 WHERE idx = ?")
+          .get("idx_agent_session_windows_updated_at"),
+      ).toEqual({ stat: expect.stringMatching(/^3\b/u) });
+      settlePhysicalUsage();
+      const before = await measureSessionPhysicalDiskUsage(storePath);
 
-    const result = await enforceSqliteSessionHistoryDiskBudget({
-      storePath,
-      mode: "enforce",
-      maintenance: {
-        maxDiskBytes: before.totalBytes - 1,
-        highWaterBytes: before.totalBytes - 1,
-      },
-    });
+      const result = await enforceSqliteSessionHistoryDiskBudget({
+        storePath,
+        mode: "enforce",
+        maintenance: {
+          maxDiskBytes: before.totalBytes - 1,
+          highWaterBytes: before.totalBytes - 1,
+        },
+      });
 
-    expect(result?.removedEntries).toBe(1);
-    expect(result?.totalBytesAfter).toBeLessThanOrEqual(before.totalBytes - 1);
-    expect(result?.totalBytesAfter).toBe(
-      (await measureSessionPhysicalDiskUsage(storePath)).totalBytes,
-    );
-    expect(sessionExists("oldest-history")).toBe(false);
-    expect(sessionExists("newer-history")).toBe(true);
-    expect(sessionExists("live-history")).toBe(true);
-    expect(readArchiveNames("oldest-history")).toHaveLength(1);
-    expect(readArchiveNames("newer-history")).toHaveLength(0);
-    expect(
-      database()
-        .db.prepare("SELECT stat FROM sqlite_stat1 WHERE idx = ?")
-        .get("idx_agent_session_windows_updated_at"),
-    ).toEqual({ stat: expect.stringMatching(/^3\b/u) });
-    expect(database().db.prepare("PRAGMA analysis_limit").get()).toEqual({ analysis_limit: 37 });
-  });
+      expect(result?.removedEntries).toBe(1);
+      expect(result?.totalBytesAfter).toBeLessThanOrEqual(before.totalBytes - 1);
+      expect(result?.totalBytesAfter).toBe(
+        (await measureSessionPhysicalDiskUsage(storePath)).totalBytes,
+      );
+      expect(sessionExists("oldest-history")).toBe(false);
+      expect(sessionExists("newer-history")).toBe(true);
+      expect(sessionExists("live-history")).toBe(true);
+      expect(readArchiveNames("oldest-history")).toHaveLength(1);
+      expect(readArchiveNames("newer-history")).toHaveLength(0);
+      expect(
+        database()
+          .db.prepare("SELECT stat FROM sqlite_stat1 WHERE idx = ?")
+          .get("idx_agent_session_windows_updated_at"),
+      ).toEqual({ stat: expect.stringMatching(/^3\b/u) });
+      expect(database().db.prepare("PRAGMA analysis_limit").get()).toEqual({ analysis_limit: 37 });
+    },
+  );
 
   it("pages past protected archives to evict cap-created sessions under pressure", async () => {
     const capKey = "agent:main:explicit:cap-archived";
@@ -546,7 +566,15 @@ describe("SQLite historical session disk budget", () => {
     }
   });
 
-  it.each(["recent", "archived", "pinned"] as const)(
+  it.each([
+    "recent",
+    "archived",
+    "pinned",
+    "manual",
+    "age-retention",
+    "stale-dashboard",
+    "restart-recovery",
+  ] as const)(
     "preserves every generation of a %s session under physical pressure",
     async (protection) => {
       const now = Date.now();
@@ -572,7 +600,10 @@ describe("SQLite historical session disk budget", () => {
         {
           sessionId: "recent-live",
           updatedAt: protection === "recent" ? now : now - 8 * dayMs,
-          ...(protection === "archived" ? { archivedAt: now } : {}),
+          ...(protection !== "recent" && protection !== "pinned" ? { archivedAt: now } : {}),
+          ...(protection !== "recent" && protection !== "pinned" && protection !== "archived"
+            ? { archiveReason: protection }
+            : {}),
           ...(protection === "pinned" ? { pinnedAt: now } : {}),
         },
       );
@@ -627,7 +658,7 @@ describe("SQLite historical session disk budget", () => {
     },
   );
 
-  it.each(["archivedAt", "pinnedAt"] as const)(
+  it.each(["archivedAt", "pinnedAt", "age-retention", "manual"] as const)(
     "rechecks %s on the logical owner before deleting an older generation",
     async (field) => {
       const sessionKey = "agent:main:archive-race";
@@ -638,6 +669,15 @@ describe("SQLite historical session disk budget", () => {
         sessionKey,
         updatedAt: Date.now(),
       });
+      replaceSessionEntrySync(
+        { sessionKey, storePath },
+        {
+          sessionId: "race-live",
+          updatedAt: Date.now(),
+          archivedAt: Date.now(),
+          archiveReason: "active-session-cap",
+        },
+      );
       const archive = await import("./session-accessor.sqlite-archive.js");
       const materialize = archive.materializeSessionStateDeletePlans;
       vi.spyOn(archive, "materializeSessionStateDeletePlans").mockImplementationOnce(
@@ -645,7 +685,13 @@ describe("SQLite historical session disk budget", () => {
           const prepared = await materialize(plans);
           replaceSessionEntrySync(
             { sessionKey, storePath },
-            { sessionId: "race-live", updatedAt: Date.now(), [field]: Date.now() },
+            {
+              sessionId: "race-live",
+              updatedAt: Date.now(),
+              ...(field === "age-retention" || field === "manual"
+                ? { archivedAt: Date.now(), archiveReason: field }
+                : { [field]: Date.now() }),
+            },
           );
           return prepared;
         },

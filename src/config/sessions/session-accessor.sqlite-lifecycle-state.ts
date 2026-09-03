@@ -2,7 +2,6 @@ import { uniqueStrings } from "@openclaw/normalization-core/string-normalization
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
-  iterateSqliteQuerySync,
 } from "../../infra/kysely-sync.js";
 import { coerceRequiredSqliteNumber as sqliteNumber } from "../../infra/sqlite-number.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
@@ -12,7 +11,6 @@ import {
   type OpenClawAgentDatabase,
   type OpenClawAgentDatabaseOptions,
 } from "../../state/openclaw-agent-db.js";
-import { chunkItems } from "../../utils/chunk-items.js";
 import { persistSessionTranscriptArchive } from "./session-accessor.sqlite-archive-store.js";
 import type {
   MaterializedSessionStateDeletePlan,
@@ -40,7 +38,10 @@ import type {
   ProjectedLifecycleMutation,
   SessionEntryRemovalPlan,
 } from "./session-accessor.sqlite-lifecycle-types.js";
-import { collectSessionStateIdsForEntry } from "./session-accessor.sqlite-references.js";
+import {
+  addRetainedWindowSessionReferences,
+  collectSessionStateIdsForEntry,
+} from "./session-accessor.sqlite-references.js";
 import { cloneSessionEntry, getSessionKysely } from "./session-accessor.sqlite-scope.js";
 import { deleteSessionTranscriptIndexInTransaction } from "./session-transcript-index.js";
 import type { SessionEntry } from "./types.js";
@@ -161,38 +162,19 @@ export function readReferencedSessionIds(
   database: OpenClawAgentDatabase,
   excludedSessionKeys: ReadonlySet<string> = new Set(),
   candidateSessionIds?: readonly string[],
+  diskBudget?: { preserveRecentMs?: number | null },
 ): Set<string> {
   if (candidateSessionIds?.length === 0) {
     return new Set();
   }
-  const db = getSessionKysely(database.db);
   const sessionIds = readSessionNodeReferences(database, excludedSessionKeys, candidateSessionIds);
-  // A retained logical owner protects all its history, even generations omitted from
-  // entry references. Explicit reset/delete excludes its target owner; automatic deletion
-  // rechecks this relation inside its commit after archive materialization has awaited.
-  // Inventory callers need every retained window; deletion only needs its candidates.
-  // Bound parameters independently of the number of planned lifecycle generations.
-  const batches = candidateSessionIds ? chunkItems(candidateSessionIds, 400) : [undefined];
-  for (const batch of batches) {
-    let query = db
-      .selectFrom("session_windows")
-      .innerJoin("session_nodes", "session_nodes.session_key", "session_windows.session_key")
-      .select(["session_windows.session_id", "session_nodes.session_key"])
-      .where((eb) =>
-        eb.or([
-          eb("session_nodes.archived_at", "is not", null),
-          eb("session_nodes.pinned_at", "is not", null),
-        ]),
-      );
-    if (batch) {
-      query = query.where("session_windows.session_id", "in", batch);
-    }
-    for (const row of iterateSqliteQuerySync(database.db, query)) {
-      if (!excludedSessionKeys.has(row.session_key)) {
-        sessionIds.add(row.session_id);
-      }
-    }
-  }
+  addRetainedWindowSessionReferences(
+    database,
+    sessionIds,
+    excludedSessionKeys,
+    candidateSessionIds,
+    diskBudget,
+  );
   return sessionIds;
 }
 
@@ -245,6 +227,7 @@ export function deleteMaterializedSessionStatePlans(
   excludedSessionKeys?: ReadonlySet<string>,
   /** Synchronous mutation notification; durable completion still belongs to COMMIT. */
   onDeleted?: () => void,
+  diskBudget?: { preserveRecentMs?: number | null },
 ): SessionLifecycleArchivedTranscript[] {
   if (plans.length === 0) {
     return [];
@@ -254,6 +237,7 @@ export function deleteMaterializedSessionStatePlans(
     database,
     excludedSessionKeys,
     plans.map((plan) => plan.sessionId),
+    diskBudget,
   );
   for (const sessionId of protectedSessionIds ?? []) {
     referencedSessionIds.add(sessionId);

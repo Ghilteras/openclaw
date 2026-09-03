@@ -72,7 +72,7 @@ describe("recent session maintenance preservation", () => {
         } else if (boundary === "pruning") {
           expect(pruneStaleEntries(store, 30 * DAY_MS, { log: false })).toBe(1);
         } else {
-          expect(capEntryCount(store, protectedKeys.length, { log: false })).toBe(1);
+          expect(capEntryCount(store, protectedKeys.length, { log: false })).toBe(3);
         }
 
         for (const key of protectedKeys) {
@@ -115,7 +115,7 @@ describe("recent session maintenance preservation", () => {
     expect(store).not.toHaveProperty(syntheticKey);
 
     store[staleKey] = { sessionId: "stale-2", updatedAt: now - 8 * DAY_MS };
-    expect(capEntryCount(store, 1, { preserveRecentMs })).toBe(0);
+    expect(capEntryCount(store, 1, { preserveRecentMs })).toBe(1);
     expect(store).toHaveProperty(recentKey);
     expect(store[staleKey]?.archivedAt).toEqual(expect.any(Number));
   });

@@ -36,7 +36,8 @@ limits even when the retained artifact directory is deeply nested.
 | massive |           100,000 |             6,000 |                   23 |    212,046 / 1,060,230 |             64 / 4 |   60 min |
 
 The 23 extra rows are eight non-dashboard durable conversations older than 30 days,
-nine protected cases, and six disposable cases. Protected cases cover main, pin,
+nine protected cases, and six disposable cases. The existing archives cover manual,
+legacy, stale-dashboard, and recovery reasons. Protected cases cover main, pin,
 direct/group/thread routing, model lock, running status, a real process-local admission,
 and recent activity. Disposable cases cover cron, hook, ACP, subagent, heartbeat,
 and the strict one-shot model-run UUID key. Fresh cap victims are two days old,
@@ -66,6 +67,13 @@ read-only state connections for verification. Startup may kick the budget before
 cleanup RPC arrives, so full authoritative before/after deltas—not a guessed per-RPC
 removal count—prove reclamation. Protected identity/window/event hashes, repeated
 cleanup, all three explicit-delete generations, and integrity checks remain mandatory.
+Only positively cap-created archives may be deleted by the final disk tier. Before
+starting the Gateway, the fixture independently records that exact class and the
+expected surviving current/history windows; the post-sweep full identity/window/event
+hashes must match. Age, manual, legacy, dashboard, recovery, and pinned history must
+survive. Reports account for reclaimed cap rows separately from reclaimed generations.
+Owner tests additionally prove artifacts/history precede current-session deletion
+and that cleanup stops at high water; the one-byte stress budget exhausts all tiers.
 
 ### Find the retained conversation through Activity
 
