@@ -179,31 +179,59 @@ describe("cross-OS release checks workflow", () => {
     expect(baselineMetadata.run).toContain("const entry = resolveNpmJsonEntries(payload).at(-1);");
   });
 
-  it("passes a frozen-line predecessor to every upgrade-validation caller", () => {
+  it("passes one exact predecessor to every scheduled upgrade-validation caller", () => {
     const release = readWorkflow(RELEASE_CHECKS_PATH);
     const target = job(release, "resolve_target");
-    const baseline = step(target, "Resolve frozen upgrade baseline");
+    const baseline = step(target, "Resolve upgrade baseline");
     const installSmoke = job(release, "install_smoke_release_checks");
+    const crossOs = job(release, "cross_os_release_checks");
+    const docker = job(release, "docker_e2e_release_checks");
     const packageAcceptance = job(release, "package_acceptance_release_checks");
 
-    expect(target.outputs?.frozen_upgrade_baseline).toBe(
-      "${{ steps.frozen_upgrade_baseline.outputs.value }}",
+    expect(target.outputs?.upgrade_baseline).toBe("${{ steps.upgrade_baseline.outputs.value }}");
+    expect(target.outputs?.package_acceptance_exact_package_spec).toBe(
+      "${{ steps.upgrade_baseline.outputs.package_acceptance_package_spec }}",
+    );
+    expect(target.outputs?.package_acceptance_upgrade_baseline).toBe(
+      "${{ steps.upgrade_baseline.outputs.package_acceptance_baseline }}",
     );
     expect(baseline.if).toContain("steps.inputs.outputs.install_smoke_scheduled == 'true'");
     expect(baseline.if).toContain("steps.inputs.outputs.package_acceptance_scheduled == 'true'");
-    expect(baseline.if).toContain("startsWith(inputs.target_context_ref, 'extended-stable/')");
+    expect(baseline.if).toContain("steps.inputs.outputs.docker_required == 'true'");
+    expect(baseline.if).toContain("steps.inputs.outputs.cross_os_scheduled == 'true'");
+    expect(baseline.if).toContain("steps.inputs.outputs.mode != 'fresh'");
     expect(baseline.env).toMatchObject({
+      DOCKER_REQUIRED: "${{ steps.inputs.outputs.docker_required }}",
       GH_TOKEN: "${{ github.token }}",
+      PACKAGE_ACCEPTANCE_PACKAGE_SPEC:
+        "${{ steps.inputs.outputs.package_acceptance_package_spec }}",
       TARGET_CONTEXT_REF: "${{ inputs.target_context_ref }}",
       TARGET_SHA: "${{ steps.ref.outputs.sha }}",
     });
+    expect(baseline.run).toContain("npm view openclaw versions --json");
+    expect(baseline.run).toContain('--versions-json "$versions_json"');
     expect(baseline.run).toContain("node workflow/scripts/lib/release-upgrade-baseline.mjs");
     expect(baseline.run).toContain('echo "value=${baseline#openclaw@}"');
+    expect(baseline.run).toContain(
+      'echo "package_acceptance_package_spec=${package_name}@${package_version}"',
+    );
+    expect(baseline.run).toContain(
+      'echo "package_acceptance_baseline=${package_baseline#openclaw@}"',
+    );
     expect(installSmoke.with?.update_baseline_version).toBe(
-      "${{ needs.resolve_target.outputs.frozen_upgrade_baseline || 'latest' }}",
+      "${{ needs.resolve_target.outputs.upgrade_baseline }}",
+    );
+    expect(crossOs.with?.previous_version).toBe(
+      "${{ needs.resolve_target.outputs.upgrade_baseline }}",
+    );
+    expect(docker.with?.published_upgrade_survivor_baseline).toBe(
+      "${{ format('openclaw@{0}', needs.resolve_target.outputs.upgrade_baseline) }}",
+    );
+    expect(packageAcceptance.with?.package_spec).toBe(
+      "${{ needs.resolve_target.outputs.package_acceptance_exact_package_spec || needs.resolve_target.outputs.release_package_spec || 'openclaw@beta' }}",
     );
     expect(packageAcceptance.with?.published_upgrade_survivor_baseline).toBe(
-      "${{ needs.resolve_target.outputs.frozen_upgrade_baseline && format('openclaw@{0}', needs.resolve_target.outputs.frozen_upgrade_baseline) || 'openclaw@latest' }}",
+      "${{ format('openclaw@{0}', needs.resolve_target.outputs.package_acceptance_upgrade_baseline || needs.resolve_target.outputs.upgrade_baseline) }}",
     );
   });
 
