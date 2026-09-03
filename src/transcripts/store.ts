@@ -348,22 +348,15 @@ export class TranscriptsStore {
     return queryTranscriptReadEntries(this.database().db, options);
   }
 
-  readUtteranceEntries(session: TranscriptSessionDescriptor, maxUtterances: number) {
+  readUtteranceEntries(session: TranscriptSessionDescriptor, maxUtterances?: number) {
     const database = this.database();
+    const query = meetingTranscriptUtteranceQuery(database.db, session).selectAll();
+    if (maxUtterances === undefined) {
+      return executeSqliteQuerySync(database.db, query.orderBy("sequence", "asc")).rows;
+    }
     return executeSqliteQuerySync(
       database.db,
-      meetingTranscriptUtteranceQuery(database.db, session)
-        .select([
-          "sequence",
-          "started_at",
-          "ended_at",
-          "speaker_id",
-          "speaker_label",
-          "text",
-          "final",
-        ])
-        .orderBy("sequence", "desc")
-        .limit(maxUtterances),
+      query.orderBy("sequence", "desc").limit(maxUtterances),
     ).rows.toReversed();
   }
 
@@ -514,20 +507,8 @@ export class TranscriptsStore {
     session: TranscriptSessionDescriptor,
     options: { maxUtterances?: number } = {},
   ): Promise<TranscriptUtterance[]> {
-    const database = this.database();
     const maxUtterances = resolveOptionalIntegerOption(options.maxUtterances, { min: 1 });
-    const query = meetingTranscriptUtteranceQuery(database.db, session).selectAll();
-    if (maxUtterances === undefined) {
-      return executeSqliteQuerySync(database.db, query.orderBy("sequence", "asc")).rows.map(
-        utteranceFromRow,
-      );
-    }
-    return executeSqliteQuerySync(
-      database.db,
-      query.orderBy("sequence", "desc").limit(maxUtterances),
-    )
-      .rows.toReversed()
-      .map(utteranceFromRow);
+    return this.readUtteranceEntries(session, maxUtterances).map(utteranceFromRow);
   }
 
   async writeSummary(
