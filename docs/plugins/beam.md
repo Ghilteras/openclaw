@@ -183,7 +183,7 @@ When browsing Claude sessions on paired nodes, update those nodes alongside the 
 
 `404 Not Found`
 
-: The Beam plugin is disabled, the Gateway has not restarted since enablement, or the request is reaching another Gateway.
+: The Beam plugin is disabled, the Gateway has not reloaded it since enablement, or the request is reaching another Gateway.
 
 `401 Unauthorized`
 
