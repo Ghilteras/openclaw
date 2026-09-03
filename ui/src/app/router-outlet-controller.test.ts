@@ -237,8 +237,8 @@ describe("RouterOutletController not-found boundary", () => {
           id: "first",
           path: "/first",
           component: () => module("first"),
-          loader: () => {
-            throw { type: "notFound" };
+          loader: (): TestData => {
+            throw Object.assign(new Error("Initial route not found"), { type: "notFound" });
           },
         }),
         definePage({
