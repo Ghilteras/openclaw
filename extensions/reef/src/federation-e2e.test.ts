@@ -92,8 +92,8 @@ describe("Reef federated prompt E2E", () => {
       },
       hostState,
       (peer) => {
-        const peerTrust = hostTrust.values.get(peer);
-        return peerTrust ? reefPeerIdentity(peerTrust) : undefined;
+        const currentTrust = hostTrust.values.get(peer);
+        return currentTrust ? reefPeerIdentity(currentTrust) : undefined;
       },
     );
     const outcomes: string[] = [];
