@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SessionManager } from "../src/agents/sessions/session-manager.js";
 import type { OpenClawConfig } from "../src/config/types.openclaw.js";
 import { connectGatewayClient, disconnectGatewayClient } from "../src/gateway/test-helpers.e2e.js";
+import { writeOpenAiResponsesSse } from "./helpers/openai-responses-sse.js";
 import {
   createOpenClawTestInstance,
   type OpenClawTestInstance,
@@ -261,7 +262,7 @@ function writeModelResponse(response: ServerResponse, sequence: number): void {
       id: COMPACTION_ID,
       encrypted_content: COMPACTION_DATA,
     };
-    writeSseEvents(response, [
+    writeOpenAiResponsesSse(response, [
       { type: "response.output_item.added", output_index: 0, item: compaction },
       { type: "response.output_item.done", output_index: 0, item: compaction },
       {
@@ -303,16 +304,5 @@ function writeModelResponse(response: ServerResponse, sequence: number): void {
       usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 },
     },
   });
-  writeSseEvents(response, events);
-}
-
-function writeSseEvents(response: ServerResponse, events: MockSseEvent[]): void {
-  response.writeHead(200, {
-    "content-type": "text/event-stream",
-    "cache-control": "no-store",
-    connection: "keep-alive",
-  });
-  response.end(
-    `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
-  );
+  writeOpenAiResponsesSse(response, events);
 }
