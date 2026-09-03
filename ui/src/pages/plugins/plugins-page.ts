@@ -282,22 +282,24 @@ class PluginsPage extends OpenClawLightDomElement {
       this.ensureInitialData();
       return;
     }
-    if (!this.gateway.isRouteDataCurrent(data)) {
-      this.ensureInitialData();
-      return;
-    }
-    this.replaceResult(data.result);
-    this.error = data.error;
     const detailPluginId =
       this.surface === "settings"
         ? pluginSettingsIdFromPath(data.location.pathname, this.context.basePath)
         : null;
+    // Route location is UI state, not Gateway data. Apply it even when the
+    // catalog snapshot is stale so deep links do not fall back to Installed.
     if (this.surface === "settings" && !detailPluginId) {
       this.settingsTab =
         new URLSearchParams(data.location.search).get("tab") === "advanced"
           ? "advanced"
           : "installed";
     }
+    if (!this.gateway.isRouteDataCurrent(data)) {
+      this.ensureInitialData();
+      return;
+    }
+    this.replaceResult(data.result);
+    this.error = data.error;
     if (detailPluginId !== this.detail?.pluginId) {
       void this.showDetails(detailPluginId);
     }
