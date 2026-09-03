@@ -186,15 +186,20 @@ export async function proveRetentionUi(params: {
       }
     });
   });
-  const show = async (state: string) => {
+  const show = async (state: "active" | "archived") => {
     await page.goto(`${base}/sessions`, { waitUntil: "domcontentloaded" });
-    await page
-      .locator(`openclaw-sessions-page .sessions-view-segment wa-radio[value="${state}"]`)
-      .click();
-    await page
-      .locator("openclaw-sessions-page tr.session-data-row")
-      .first()
-      .waitFor({ state: "visible" });
+    const table = page.locator("openclaw-sessions-page");
+    await table.locator(`.sessions-view-segment wa-radio[value="${state}"]`).click();
+    await table.locator("tr.session-data-row").first().waitFor({ state: "visible" });
+    // Old active rows remain visible during the archive fetch. Wait for rendered
+    // archive data, not only the selected filter or its RPC, before capturing it.
+    if (state === "archived") {
+      await table
+        .locator(".sessions-heading-fact")
+        .filter({ hasText: /^\s*[1-9]\d*\s+Archived\s*$/u })
+        .waitFor({ state: "visible" });
+    }
+    await table.getByRole("button", { name: "Refresh", exact: true }).waitFor({ state: "visible" });
   };
   const paginate = async (name: string) => {
     const table = page.locator("openclaw-sessions-page");
