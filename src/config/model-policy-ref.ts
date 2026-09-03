@@ -1,18 +1,9 @@
 import { parseModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import { containsAsciiControlCharacter } from "@openclaw/normalization-core/string-normalization";
 
 const MODEL_POLICY_COMPAT_SELECTORS = new Set(["openrouter:auto", "openrouter:free"]);
-
-function hasControlCharacter(value: string): boolean {
-  for (const char of value) {
-    const codePoint = char.codePointAt(0) ?? 0;
-    if (codePoint <= 0x1f || codePoint === 0x7f) {
-      return true;
-    }
-  }
-  return false;
-}
 
 function hasValidSegments(
   segments: readonly string[],
@@ -26,7 +17,7 @@ function hasValidSegments(
         segment.length > 0 &&
         !segment.includes("*") &&
         !/\s/u.test(segment) &&
-        !hasControlCharacter(segment),
+        !containsAsciiControlCharacter(segment),
     )
   );
 }

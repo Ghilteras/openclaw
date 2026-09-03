@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { containsAsciiControlCharacter } from "@openclaw/normalization-core/string-normalization";
 import { resolveStateDir } from "../config/paths.js";
 import { sanitizeUntrustedFileName } from "../infra/fs-safe-advanced.js";
 import { root as fsRoot } from "../infra/fs-safe.js";
@@ -62,23 +63,14 @@ function buildPdfWrapper(url: string): string {
   return `<!doctype html><html><body style="margin:0;background:#e5e7eb;"><object data="${escaped}" type="application/pdf" style="width:100%;height:100vh;border:0;"><iframe src="${escaped}" style="width:100%;height:100vh;border:0;"></iframe><p style="padding:16px;font:14px system-ui,sans-serif;">Unable to render PDF preview. <a href="${escaped}" target="_blank" rel="noopener noreferrer">Open PDF</a>.</p></object></body></html>`;
 }
 
-function hasControlCharacter(value: string): boolean {
-  for (const char of value) {
-    const code = char.charCodeAt(0);
-    if (code < 0x20 || code === 0x7f) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function normalizeLogicalPath(value: string): string {
   const normalized = value.replaceAll("\\", "/").replace(/^\/+/, "");
   const parts = normalized.split("/").filter(Boolean);
   if (
     parts.length === 0 ||
     parts.some(
-      (part) => part === "." || part === ".." || part.includes(":") || hasControlCharacter(part),
+      (part) =>
+        part === "." || part === ".." || part.includes(":") || containsAsciiControlCharacter(part),
     )
   ) {
     throw new Error("canvas document logicalPath invalid");
