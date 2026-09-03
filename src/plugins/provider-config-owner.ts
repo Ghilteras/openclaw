@@ -18,6 +18,15 @@ export const CORE_BUILT_IN_MODEL_APIS = new Set([
   "openai-responses",
 ]);
 
+export function hasConfiguredModelProvider(params: {
+  provider: string;
+  config?: OpenClawConfig;
+}): boolean {
+  return (
+    findNormalizedProviderValue(params.config?.models?.providers, params.provider) !== undefined
+  );
+}
+
 /** Returns the plugin API id that owns a provider config when it is not core built-in. */
 export function resolveProviderConfigApiOwnerHint(params: {
   provider: string;

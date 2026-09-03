@@ -1,5 +1,4 @@
 // Runtime bridge for invoking provider hooks supplied by plugins.
-import { findNormalizedProviderValue } from "@openclaw/model-catalog-core/provider-id";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -17,6 +16,7 @@ import {
 import { resolvePluginControlPlaneFingerprint } from "./plugin-control-plane-context.js";
 import type { PluginMetadataRegistryView } from "./plugin-metadata-snapshot.types.js";
 import {
+  hasConfiguredModelProvider,
   resolveModelCatalogScope,
   resolveProviderConfigApiOwnerHint,
 } from "./provider-config-owner.js";
@@ -204,15 +204,6 @@ function findProviderRuntimePluginInRegistry(params: {
     return matchesProviderPluginRef(plugin, params.provider);
   });
   return entry ? Object.assign({}, entry.provider, { pluginId: entry.pluginId }) : undefined;
-}
-
-function hasConfiguredModelProvider(params: {
-  provider: string;
-  config?: OpenClawConfig;
-}): boolean {
-  return (
-    findNormalizedProviderValue(params.config?.models?.providers, params.provider) !== undefined
-  );
 }
 
 export function resolveLoadedProviderPluginsForHooks(params: {

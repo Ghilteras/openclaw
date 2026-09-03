@@ -1,8 +1,5 @@
 // Composes provider plugin runtime hooks with shared provider policy.
-import {
-  findNormalizedProviderValue,
-  normalizeProviderId,
-} from "@openclaw/model-catalog-core/provider-id";
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import type { AuthProfileCredential, OAuthCredential } from "../agents/auth-profiles/types.js";
@@ -28,6 +25,7 @@ import type {
   PluginMetadataRegistryView,
   PluginMetadataSnapshot,
 } from "./plugin-metadata-snapshot.types.js";
+import { hasConfiguredModelProvider } from "./provider-config-owner.js";
 import { resolvePluginDiscoveryProvidersRuntime } from "./provider-discovery.runtime.js";
 import {
   prepareProviderExtraParams,
@@ -131,15 +129,6 @@ function hasExplicitProviderRuntimePluginActivation(params: {
   const allow = new Set(params.config.plugins?.allow ?? []);
   const entries = params.config.plugins?.entries ?? {};
   return ownerPluginIds.some((pluginId) => allow.has(pluginId) || entries[pluginId] !== undefined);
-}
-
-function hasConfiguredModelProvider(params: {
-  provider: string;
-  config?: OpenClawConfig;
-}): boolean {
-  return (
-    findNormalizedProviderValue(params.config?.models?.providers, params.provider) !== undefined
-  );
 }
 
 export {
