@@ -122,6 +122,7 @@ describe("skill curator usage tracking", () => {
     const proposal = await proposeCreateSkill({
       workspaceDir: testState.workspaceDir,
       env: testState.env,
+      agentId: "main",
       name: "Daily Brief",
       description: "Prepare a daily briefing",
       content: "# Daily Brief\nPrepare the daily briefing.\n",
@@ -129,6 +130,7 @@ describe("skill curator usage tracking", () => {
     const applied = await applySkillProposal({
       workspaceDir: testState.workspaceDir,
       env: testState.env,
+      agentId: "main",
       proposalId: proposal.record.id,
       expectedRevisionHash: proposal.revisionHash,
     });
