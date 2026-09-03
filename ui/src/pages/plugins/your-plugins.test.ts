@@ -166,8 +166,10 @@ describe("renderYourPlugins", () => {
       "close search button",
     );
     closeSearch.click();
+    await Promise.resolve();
     expect(container.querySelector('input[type="search"]')).toBeNull();
     expect(visiblePluginIds(container)).toHaveLength(12);
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Search plugins");
 
     const showAll = expectDefined(
       [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
@@ -179,13 +181,13 @@ describe("renderYourPlugins", () => {
     expect(visiblePluginIds(container)).toHaveLength(16);
     expect(container.querySelector('input[type="search"]')).toBeNull();
 
-    const back = expectDefined(
+    const hide = expectDefined(
       [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-        button.textContent?.includes("Back"),
+        button.textContent?.includes("Hide"),
       ),
-      "back button",
+      "hide button",
     );
-    back.click();
+    hide.click();
     expect(container.querySelector('input[type="search"]')).toBeNull();
     expect(visiblePluginIds(container)).toHaveLength(12);
   });
@@ -198,6 +200,7 @@ describe("renderYourPlugins", () => {
       container.querySelector(".your-plugins-card.oc-card.oc-card-interactive"),
     ).not.toBeNull();
     expect(container.querySelector(".your-plugins__header p")).toBeNull();
+    expect(container.querySelector("#your-plugins-title")?.textContent).toBe("Installed plugins");
   });
 
   it("routes cards and the gear to settings without inline mutation controls or icon tooltips", () => {

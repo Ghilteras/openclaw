@@ -395,7 +395,7 @@ describeControlUiE2e("Control UI Plugins mocked Gateway E2E", () => {
     await server?.close();
   });
 
-  it("shows a prioritized Your plugins inventory with inline search and settings navigation", async () => {
+  it("shows a prioritized installed plugins inventory with inline search and settings navigation", async () => {
     const context = await newContext();
     const page = await context.newPage();
     const gateway = await installMockGateway(page, {
@@ -408,7 +408,7 @@ describeControlUiE2e("Control UI Plugins mocked Gateway E2E", () => {
 
     try {
       await page.goto(`${server.baseUrl}plugins`);
-      await page.getByRole("heading", { name: "Your plugins", exact: true }).waitFor();
+      await page.getByRole("heading", { name: "Installed plugins", exact: true }).waitFor();
       const cards = page.locator(".your-plugins-card");
       expect(await cards.count()).toBe(12);
       expect(
@@ -434,6 +434,15 @@ describeControlUiE2e("Control UI Plugins mocked Gateway E2E", () => {
       });
       expect(geometry.aspectRatio).toBeGreaterThan(1.5);
       expect(geometry.cursor).toBe("pointer");
+      const titleColor = await firstCard
+        .locator(".your-plugins-card__identity h3")
+        .evaluate((element) => getComputedStyle(element).color);
+      await firstCard.hover();
+      expect(
+        await firstCard
+          .locator(".your-plugins-card__identity h3")
+          .evaluate((element) => getComputedStyle(element).color),
+      ).toBe(titleColor);
       expect(await firstCard.locator("wa-switch").count()).toBe(0);
       const grid = page.locator(".your-plugins__grid");
       const columnCount = () =>
@@ -453,8 +462,13 @@ describeControlUiE2e("Control UI Plugins mocked Gateway E2E", () => {
         )
         .toBeLessThanOrEqual(1);
       await page.setViewportSize(desktopViewport);
+      await page.evaluate(
+        () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+      );
       await captureScreenshot(page, "12-your-plugins-desktop.png");
 
+      const settingsButton = page.getByRole("button", { name: "Plugin settings", exact: true });
+      const settingsBeforeSearch = await settingsButton.boundingBox();
       await page.getByRole("button", { name: "Search plugins", exact: true }).click();
       const search = page.getByRole("searchbox", { name: "Search plugins" });
       await expect
@@ -465,16 +479,32 @@ describeControlUiE2e("Control UI Plugins mocked Gateway E2E", () => {
           .locator("xpath=ancestor::*[contains(@class, 'your-plugins__actions')]")
           .count(),
       ).toBe(1);
+      const settingsDuringSearch = await settingsButton.boundingBox();
+      expect(
+        Math.abs((settingsDuringSearch?.x ?? 0) - (settingsBeforeSearch?.x ?? 0)),
+      ).toBeLessThan(1);
       await search.fill("Disabled 10");
       expect(await cards.count()).toBe(1);
       expect(await cards.first().getAttribute("data-plugin-id")).toBe("disabled-10");
       await page.getByRole("button", { name: "Close", exact: true }).click();
       expect(await search.count()).toBe(0);
       expect(await cards.count()).toBe(12);
+      await expect
+        .poll(() =>
+          page
+            .getByRole("button", { name: "Search plugins", exact: true })
+            .evaluate((element) => element === document.activeElement),
+        )
+        .toBe(true);
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+      const settingsAfterSearch = await settingsButton.boundingBox();
+      expect(Math.abs((settingsAfterSearch?.x ?? 0) - (settingsBeforeSearch?.x ?? 0))).toBeLessThan(
+        1,
+      );
 
       await page.getByRole("button", { name: "Show all 16", exact: true }).click();
       expect(await cards.count()).toBe(16);
-      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await page.getByRole("button", { name: "Hide", exact: true }).click();
       expect(await cards.count()).toBe(12);
 
       expect(await gateway.getRequests("plugins.setEnabled")).toEqual([]);

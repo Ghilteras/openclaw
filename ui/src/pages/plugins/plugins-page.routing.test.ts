@@ -56,6 +56,10 @@ describe("PluginsPage routing", () => {
     expect(page.querySelector("#plugins-tab-skills")).not.toBeNull();
     expect(page.querySelector("#plugins-tab-installed")).toBeNull();
     expect(page.querySelector("#plugins-tab-discover")).toBeNull();
+    const header = page.querySelector(".plugins-hub-header");
+    const tabs = page.querySelector(".plugins-tabs");
+    expect(tabs?.classList.contains("oc-segmented")).toBe(true);
+    expect(header?.firstElementChild?.classList.contains("hub-page-header__tabs")).toBe(true);
 
     clickHubTab(page, "plugins");
     expect(context.navigate).not.toHaveBeenCalled();

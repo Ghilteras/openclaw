@@ -15,10 +15,38 @@
 }
 
 .content-header.hub-page-header.plugins-hub-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "tabs tabs"
+    "title actions";
+  align-items: start;
+  row-gap: var(--space-4);
   width: 100%;
   max-width: 1120px;
+  max-height: none;
   margin-inline: auto;
   padding-inline: var(--settings-header-inline-padding, var(--space-4));
+}
+
+.content-header.plugins-hub-header .hub-page-header__tabs {
+  grid-area: tabs;
+  justify-self: center;
+}
+
+.content-header.plugins-hub-header .hub-page-header__title {
+  grid-area: title;
+}
+
+.content-header.plugins-hub-header .hub-page-header__actions {
+  grid-area: actions;
+}
+
+.plugins-tabs.oc-segmented {
+  width: max-content;
+  max-width: 100%;
+  align-self: start;
+  --track-color: transparent;
+  --indicator-color: transparent;
 }
 
 .plugins-hub-header + .settings-workspace {
@@ -94,8 +122,13 @@
   height: 16px;
 }
 
-.your-plugins__search-close {
+.settings-page.oc-app-surface .btn.your-plugins__search-close {
   right: 3px;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border-color: transparent;
+  background: transparent;
 }
 
 .your-plugins__grid {
@@ -183,11 +216,6 @@ a.your-plugins-card {
   font-size: var(--control-ui-text-md);
   font-weight: 600;
   white-space: nowrap;
-}
-
-.your-plugins-card:hover .your-plugins-card__identity h3,
-.your-plugins-card:focus-visible .your-plugins-card__identity h3 {
-  color: var(--accent);
 }
 
 .your-plugins-card__identity p {

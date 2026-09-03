@@ -167,7 +167,7 @@ suite.define(() => {
       expect(`${location.pathname}${location.search}${location.hash}`).toBe(
         "/plugins?query=calendar#featured",
       );
-      await page.getByRole("heading", { name: "Your plugins", exact: true }).waitFor();
+      await page.getByRole("heading", { name: "Installed plugins", exact: true }).waitFor();
     } finally {
       await context.close();
     }
@@ -202,7 +202,7 @@ suite.define(() => {
             "*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; }",
         });
         await waitForControlUiRoute(page, { pathname: "/plugins", routeId: "plugins" });
-        await page.getByRole("heading", { name: "Your plugins" }).waitFor();
+        await page.getByRole("heading", { name: "Installed plugins" }).waitFor();
         const pluginsHeader = await headerGeometry(page);
         expect(pluginsHeader.title).toBe("Plugins");
         await expectHeaderCopy(page, "plugins");
@@ -211,7 +211,12 @@ suite.define(() => {
           await page.getByRole("tab", { name: "Plugins", exact: true }).getAttribute("active"),
         ).not.toBeNull();
         expect(await page.getByRole("tab", { name: /Installed|Discover/u }).count()).toBe(0);
-        expect(await page.locator(".plugins-tabs.oc-segmented").count()).toBe(0);
+        expect(await page.locator(".plugins-tabs.oc-segmented").count()).toBe(1);
+        const tabBox = await page.locator(".plugins-tabs").boundingBox();
+        const titleBox = await page.locator(".plugins-hub-header .page-title").boundingBox();
+        expect(tabBox).not.toBeNull();
+        expect(titleBox).not.toBeNull();
+        expect((tabBox?.y ?? 0) + (tabBox?.height ?? 0)).toBeLessThanOrEqual(titleBox?.y ?? 0);
         await expectActivePanelLabel(page, "plugins-tab-plugins");
         await captureScreenshot(page, `${label}-01-your-plugins.png`);
 

@@ -29,14 +29,14 @@ export function renderPluginsHubHeader(props: PluginsHubHeaderProps): TemplateRe
     <section
       class="content-header content-header--settings content-header--page hub-page-header plugins-hub-header"
     >
+      <div class="hub-page-header__tabs">
+        ${renderPluginsHubTabs({ active: props.active, onSelect: props.onSelect })}
+      </div>
       <div class="hub-page-header__title">
         <h1 class="page-title">${titleForRoute(copy.route)}</h1>
         <div class="page-subtitle">
           ${subtitleForRoute(copy.route)} ${renderLearnMoreLink(copy.docsUrl)}
         </div>
-      </div>
-      <div class="hub-page-header__tabs">
-        ${renderPluginsHubTabs({ active: props.active, onSelect: props.onSelect })}
       </div>
       <div class="hub-page-header__actions">
         ${props.secondaryAction

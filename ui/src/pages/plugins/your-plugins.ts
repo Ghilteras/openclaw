@@ -165,6 +165,13 @@ export function renderYourPlugins(props: YourPluginsProps): TemplateResult {
       ? props.consent.intent.installIdentity
       : props.consent.intent.rowKey
     : null;
+  const closeSearch = (source: Element) => {
+    const actions = source.closest(".your-plugins__actions");
+    props.onSearchOpenChange(false);
+    queueMicrotask(() => {
+      actions?.querySelector<HTMLButtonElement>(".your-plugins__search-trigger")?.focus();
+    });
+  };
 
   return html`${renderSettingsPage(
     html`
@@ -188,7 +195,11 @@ export function renderYourPlugins(props: YourPluginsProps): TemplateResult {
                         element instanceof HTMLInputElement &&
                         document.activeElement !== element
                       ) {
-                        queueMicrotask(() => element.focus());
+                        queueMicrotask(() => {
+                          if (element.isConnected) {
+                            element.focus();
+                          }
+                        });
                       }
                     })}
                     @input=${(event: Event) => {
@@ -198,22 +209,23 @@ export function renderYourPlugins(props: YourPluginsProps): TemplateResult {
                     }}
                     @keydown=${(event: KeyboardEvent) => {
                       if (event.key === "Escape") {
-                        props.onSearchOpenChange(false);
+                        event.preventDefault();
+                        closeSearch(event.currentTarget as HTMLInputElement);
                       }
                     }}
                   />
                   <button
                     type="button"
-                    class="btn btn--sm btn--icon your-plugins__search-close oc-action oc-action-icon oc-action-ghost"
+                    class="btn btn--xs btn--icon your-plugins__search-close oc-action oc-action-icon oc-action-ghost"
                     aria-label=${t("common.close")}
-                    @click=${() => props.onSearchOpenChange(false)}
+                    @click=${(event: MouseEvent) => closeSearch(event.currentTarget as HTMLElement)}
                   >
                     ${icons.x}
                   </button>
                 </div>`
               : html`<button
                   type="button"
-                  class="btn btn--sm btn--icon oc-action oc-action-icon oc-action-ghost"
+                  class="btn btn--sm btn--icon your-plugins__search-trigger oc-action oc-action-icon oc-action-ghost"
                   aria-label=${t("pluginsPage.searchLabel")}
                   aria-expanded="false"
                   @click=${() => props.onSearchOpenChange(true)}
