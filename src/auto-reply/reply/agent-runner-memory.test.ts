@@ -3648,6 +3648,12 @@ describe("runMemoryFlushIfNeeded", () => {
       expectedCompaction: false,
     },
   ] as const)("$name", async ({ runtime, heartbeat, overCap, totalTokens, expectedCompaction }) => {
+    const flushPlanResolver = vi.fn<MemoryFlushPlanResolver>(() => {
+      throw new Error("heartbeat must not resolve the memory flush plan");
+    });
+    if (heartbeat) {
+      registerMemoryFlushPlanResolverForTest(flushPlanResolver);
+    }
     const storePath = path.join(rootDir, "sessions.json");
     const sessionKey = runtime === "codex" ? "agent:main:main" : "main";
     const scope = { agentId: "main", sessionId: "session", sessionKey, storePath };
@@ -3699,6 +3705,9 @@ describe("runMemoryFlushIfNeeded", () => {
       ...createCompactionLifecycle(replyOperation),
     });
 
+    if (heartbeat) {
+      expect(flushPlanResolver).not.toHaveBeenCalled();
+    }
     if (!expectedCompaction) {
       expect(entry).toBe(sessionEntry);
       expect(replyOperation.setPhase).not.toHaveBeenCalled();
