@@ -267,6 +267,7 @@ type AssistantMediaAvailability =
 type AssistantMediaTicketPayload = {
   scope: typeof CONTROL_UI_ASSISTANT_MEDIA_TICKET_SCOPE;
   source: string;
+  agentId?: string;
   exp: number;
 };
 
@@ -276,7 +277,7 @@ function signAssistantMediaTicketPayload(encodedPayload: string): string {
     .digest("base64url");
 }
 
-function createAssistantMediaTicket(source: string, nowMs = Date.now()) {
+function createAssistantMediaTicket(source: string, agentId?: string, nowMs = Date.now()) {
   const now = asDateTimestampMs(nowMs);
   if (now === undefined) {
     return {};
@@ -288,6 +289,7 @@ function createAssistantMediaTicket(source: string, nowMs = Date.now()) {
   const payload: AssistantMediaTicketPayload = {
     scope: CONTROL_UI_ASSISTANT_MEDIA_TICKET_SCOPE,
     source,
+    ...(agentId ? { agentId } : {}),
     exp,
   };
   const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -298,36 +300,49 @@ function createAssistantMediaTicket(source: string, nowMs = Date.now()) {
   };
 }
 
-function verifyAssistantMediaTicket(ticket: string | null, source: string, nowMs = Date.now()) {
+function verifyAssistantMediaTicket(
+  ticket: string | null,
+  source: string,
+  nowMs = Date.now(),
+): AssistantMediaTicketPayload | null {
   const now = asDateTimestampMs(nowMs);
   if (now === undefined) {
-    return false;
+    return null;
   }
   const parts = ticket?.split(".");
   if (!parts || parts.length !== 3 || parts[0] !== "v1") {
-    return false;
+    return null;
   }
   const [, encodedPayload, sig] = parts;
   if (!encodedPayload || !sig) {
-    return false;
+    return null;
   }
   const expectedSig = signAssistantMediaTicketPayload(encodedPayload);
   if (!safeEqualSecret(sig, expectedSig)) {
-    return false;
+    return null;
   }
   try {
     const payload = JSON.parse(
       Buffer.from(encodedPayload, "base64url").toString("utf8"),
     ) as Partial<AssistantMediaTicketPayload>;
-    return (
-      payload.scope === CONTROL_UI_ASSISTANT_MEDIA_TICKET_SCOPE &&
-      payload.source === source &&
-      typeof payload.exp === "number" &&
-      Number.isFinite(payload.exp) &&
-      payload.exp >= now
-    );
+    if (
+      payload.scope !== CONTROL_UI_ASSISTANT_MEDIA_TICKET_SCOPE ||
+      payload.source !== source ||
+      (payload.agentId !== undefined && typeof payload.agentId !== "string") ||
+      typeof payload.exp !== "number" ||
+      !Number.isFinite(payload.exp) ||
+      payload.exp < now
+    ) {
+      return null;
+    }
+    return {
+      scope: CONTROL_UI_ASSISTANT_MEDIA_TICKET_SCOPE,
+      source,
+      ...(payload.agentId ? { agentId: payload.agentId } : {}),
+      exp: payload.exp,
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -439,6 +454,22 @@ async function resolveAssistantMediaAvailability(
   }
 }
 
+async function resolveAssistantMediaCapability(
+  source: string,
+  localRoots: readonly string[],
+  agentId?: string,
+): Promise<AssistantMediaGetResult> {
+  const availability = await resolveAssistantMediaAvailability(source, localRoots);
+  if (!availability.available) {
+    return availability;
+  }
+  const ticket = createAssistantMediaTicket(source, agentId);
+  return {
+    ...availability,
+    ...(ticket.mediaTicket && ticket.mediaTicketExpiresAt ? ticket : {}),
+  };
+}
+
 /** Resolve one allowed local source and mint the capability used by its HTTP byte fetch. */
 export async function resolveControlUiAssistantMedia(
   source: string,
@@ -449,26 +480,19 @@ export async function resolveControlUiAssistantMedia(
   if (!normalizedSource) {
     return { available: false, code: "invalid-source", reason: "Invalid media source" };
   }
-  const availability = await resolveAssistantMediaAvailability(
+  const capability = await resolveAssistantMediaCapability(
     normalizedSource,
     getAgentScopedMediaLocalRoots(config, agentId),
+    agentId,
   );
-  if (!availability.available) {
-    return availability;
-  }
-  const ticket = createAssistantMediaTicket(normalizedSource);
-  if (!ticket.mediaTicket || !ticket.mediaTicketExpiresAt) {
+  if (capability.available && !capability.mediaTicket) {
     return {
       available: false,
       code: "attachment-unavailable",
       reason: "Attachment unavailable",
     };
   }
-  return {
-    ...availability,
-    mediaTicket: ticket.mediaTicket,
-    mediaTicketExpiresAt: ticket.mediaTicketExpiresAt,
-  };
+  return capability;
 }
 
 export async function handleControlUiAssistantMediaRequest(
@@ -500,10 +524,11 @@ export async function handleControlUiAssistantMediaRequest(
     return true;
   }
   const isMetaRequest = url.searchParams.get("meta") === "1";
-  const hasValidMediaTicket =
-    !isMetaRequest && verifyAssistantMediaTicket(url.searchParams.get("mediaTicket"), source);
+  const verifiedMediaTicket = isMetaRequest
+    ? null
+    : verifyAssistantMediaTicket(url.searchParams.get("mediaTicket"), source);
   if (
-    !hasValidMediaTicket &&
+    !verifiedMediaTicket &&
     !(await authorizeControlUiReadRequestOrReply({
       req,
       res,
@@ -516,19 +541,13 @@ export async function handleControlUiAssistantMediaRequest(
   ) {
     return true;
   }
+  const agentId = verifiedMediaTicket?.agentId ?? opts?.agentId;
   const localRoots = opts?.config
-    ? getAgentScopedMediaLocalRoots(opts.config, opts.agentId)
+    ? getAgentScopedMediaLocalRoots(opts.config, agentId)
     : getDefaultLocalRootsCore();
 
   if (isMetaRequest) {
-    const availability = await resolveAssistantMediaAvailability(source, localRoots);
-    sendJson(
-      res,
-      200,
-      availability.available
-        ? { ...availability, ...createAssistantMediaTicket(source) }
-        : availability,
-    );
+    sendJson(res, 200, await resolveAssistantMediaCapability(source, localRoots, agentId));
     return true;
   }
 

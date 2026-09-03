@@ -5,7 +5,12 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { connectGatewayClient, disconnectGatewayClient } from "./test-helpers.e2e.js";
-import { installGatewayTestHooks, testState, withGatewayServer } from "./test-helpers.js";
+import {
+  installGatewayTestHooks,
+  testState,
+  withGatewayServer,
+  writeSessionStore,
+} from "./test-helpers.js";
 
 installGatewayTestHooks({ scope: "suite" });
 
@@ -25,15 +30,30 @@ describe("Control UI assistant media e2e", () => {
     const filePath = path.join(mediaDir, "测试 ticketed (final).txt");
     await fs.writeFile(filePath, "ticketed control ui media\n", "utf8");
     const agentWorkspace = tempDirs.make("assistant-media-agent-");
+    const researchWorkspace = tempDirs.make("assistant-media-research-");
     const outsideRoot = tempDirs.make("assistant-media-outside-");
     const workspaceFile = path.join(agentWorkspace, "workspace-only.txt");
+    const researchFile = path.join(researchWorkspace, "research-only.txt");
     const outsideFile = path.join(outsideRoot, "outside.txt");
     await fs.writeFile(workspaceFile, "workspace media\n", "utf8");
+    await fs.writeFile(researchFile, "research media\n", "utf8");
     await fs.writeFile(outsideFile, "outside media\n", "utf8");
     testState.agentsConfig = {
       ownership: "explicit",
-      entries: { main: { workspace: agentWorkspace } },
+      entries: {
+        main: { workspace: agentWorkspace },
+        research: { workspace: researchWorkspace },
+      },
     };
+    testState.sessionStorePath = path.join(stateDir, "sessions.sqlite");
+    await writeSessionStore({
+      entries: {
+        "agent:research:main": {
+          sessionId: "assistant-media-research-session",
+          updatedAt: Date.now(),
+        },
+      },
+    });
 
     await withGatewayServer(
       async ({ port }) => {
@@ -63,6 +83,20 @@ describe("Control UI assistant media e2e", () => {
           code: "outside-allowed-folders",
           reason: "Outside allowed folders",
         });
+
+        const researchPayload = await client.request<{
+          available?: boolean;
+          mediaTicket?: string;
+        }>("assistant.media.get", {
+          source: researchFile,
+          sessionKey: "agent:research:main",
+        });
+        expect(researchPayload.available).toBe(true);
+        const researchTicketed = await fetch(
+          `${route}?source=${encodeURIComponent(researchFile)}&mediaTicket=${encodeURIComponent(researchPayload.mediaTicket ?? "")}`,
+        );
+        expect(researchTicketed.status).toBe(200);
+        expect(await researchTicketed.text()).toBe("research media\n");
 
         const withoutTicket = await fetch(`${route}?source=${sourceParam}`);
         expect(withoutTicket.status).toBe(401);
