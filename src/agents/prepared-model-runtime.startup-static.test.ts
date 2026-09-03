@@ -262,16 +262,14 @@ describe("prepared model runtime Gateway catalog mode", () => {
       ],
       entries: [],
     }));
-    mocks.resolveAmbientCredentials.mockImplementationOnce(
-      (args: {
-        syntheticAuthProviderRefs: string[];
+    mocks.resolveAmbientCredentials.mockImplementationOnce((...args: unknown[]) => {
+      const options = args[0] as {
         resolveSyntheticAuth: (provider: string) => { apiKey?: string } | undefined;
-      }) => {
-        const auth = args.resolveSyntheticAuth("openai");
-        const credentials = auth?.apiKey ? { openai: { type: "api_key", key: auth.apiKey } } : {};
-        return { credentials, providerAuth: {} };
-      },
-    );
+      };
+      const auth = options.resolveSyntheticAuth("openai");
+      const credentials = auth?.apiKey ? { openai: { type: "api_key", key: auth.apiKey } } : {};
+      return { credentials, providerAuth: {} };
+    });
 
     await prepareWorkspaceBuildGroup(
       [{ agentDir: "/tmp/native-auth-agent", config: {}, env: {}, loadRuntimePlugins: true }],

@@ -222,7 +222,7 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
         (this.routeData.agentId ?? "") === selectedAgentId &&
         this.gateway.isRouteDataCurrent(this.routeData)
       ) {
-        this.supplemental.adoptCoreData(this.routeData.client, this.routeData.data);
+        this.adoptLoadedData(this.routeData.client, this.routeData.data);
       } else {
         this.data = null;
         this.dataClient = null;

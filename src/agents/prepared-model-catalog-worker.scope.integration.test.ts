@@ -95,7 +95,6 @@ describe("prepared model catalog worker plugin scope", () => {
         ],
         new Map(),
         30_000,
-        "static",
       ).pending
     )[0];
     if (!prepared) {

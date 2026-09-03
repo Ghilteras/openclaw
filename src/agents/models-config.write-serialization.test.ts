@@ -211,7 +211,16 @@ describe("models-config write serialization", () => {
         baseUrl: "https://models.example/v1",
         api: "openai-completions" as const,
         apiKey: "configured-provider-key",
-        models: [{ id: "configured-model", name: "Configured model" }],
+        models: [
+          {
+            id: "configured-model",
+            name: "Configured model",
+            reasoning: false,
+            input: ["text" as const],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            maxTokens: 8_192,
+          },
+        ],
       };
       const existing = {
         providers: {
