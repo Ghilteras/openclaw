@@ -216,7 +216,7 @@ export function renderYourPlugins(props: YourPluginsProps): TemplateResult {
                   />
                   <button
                     type="button"
-                    class="btn btn--xs btn--icon your-plugins__search-close oc-action oc-action-icon oc-action-ghost"
+                    class="btn btn--xs btn--icon your-plugins__icon-action your-plugins__search-close oc-action oc-action-icon oc-action-ghost"
                     aria-label=${t("common.close")}
                     @click=${(event: MouseEvent) => closeSearch(event.currentTarget as HTMLElement)}
                   >
@@ -225,7 +225,7 @@ export function renderYourPlugins(props: YourPluginsProps): TemplateResult {
                 </div>`
               : html`<button
                   type="button"
-                  class="btn btn--sm btn--icon your-plugins__search-trigger oc-action oc-action-icon oc-action-ghost"
+                  class="btn btn--sm btn--icon your-plugins__icon-action your-plugins__search-trigger oc-action oc-action-icon oc-action-ghost"
                   aria-label=${t("pluginsPage.searchLabel")}
                   aria-expanded="false"
                   @click=${() => props.onSearchOpenChange(true)}
@@ -234,7 +234,7 @@ export function renderYourPlugins(props: YourPluginsProps): TemplateResult {
                 </button>`}
             <button
               type="button"
-              class="btn btn--sm btn--icon oc-action oc-action-icon oc-action-ghost"
+              class="btn btn--sm btn--icon your-plugins__icon-action oc-action oc-action-icon oc-action-ghost"
               aria-label=${t("pluginsPage.pluginSettings")}
               @click=${() => props.onOpenSettings()}
             >
@@ -279,7 +279,7 @@ export function renderYourPlugins(props: YourPluginsProps): TemplateResult {
           ? html`<div class="your-plugins__more">
               <button
                 type="button"
-                class="btn btn--sm oc-action oc-action-secondary"
+                class="btn btn--sm your-plugins__more-action oc-action oc-action-ghost"
                 @click=${() => props.onExpandedChange(!props.expanded)}
               >
                 ${props.expanded
