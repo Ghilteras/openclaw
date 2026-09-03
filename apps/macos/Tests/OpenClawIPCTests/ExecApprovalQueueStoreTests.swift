@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import OpenClawProtocol
 import Testing
 @testable import OpenClaw
@@ -20,11 +21,11 @@ private struct ApprovalFixtureRequest: Encodable, Sendable {
         id: String,
         sessionKey: String = "main",
         command: String = "echo safe",
+        nowMs: Int = Int(Date().timeIntervalSince1970 * 1000),
         createdOffsetMs: Int = 0,
         expiresOffsetMs: Int = 60000,
         allowedDecisions: [String]? = nil)
     {
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         self.id = id
         self.request = Command(command: command, sessionKey: sessionKey, allowedDecisions: allowedDecisions)
         self.createdAtMs = nowMs + createdOffsetMs
@@ -33,6 +34,38 @@ private struct ApprovalFixtureRequest: Encodable, Sendable {
 
     var json: String {
         String(decoding: try! JSONEncoder().encode(self), as: UTF8.self)
+    }
+}
+
+@MainActor
+private final class ApprovalExpiryClock {
+    var nowMs = 1_800_000_000_000
+    private var now = ContinuousClock.now
+    private let ticks = AsyncStream<Void>.makeStream()
+    private let sleeps = AsyncStream<Void>.makeStream()
+
+    var clock: ExecApprovalQueueStore.ExpiryClock {
+        .init(nowMs: { self.nowMs }, now: { self.now }, sleepUntil: { deadline in
+            self.sleeps.continuation.yield(())
+            if self.now >= deadline {
+                return
+            }
+            for await _ in self.ticks.stream where self.now >= deadline {
+                return
+            }
+            try Task.checkCancellation()
+        })
+    }
+
+    func waitForSleep() async {
+        var iterator = self.sleeps.stream.makeAsyncIterator()
+        _ = await iterator.next()
+    }
+
+    func advance(milliseconds: Int) {
+        self.nowMs += milliseconds
+        self.now += .milliseconds(milliseconds)
+        self.ticks.continuation.yield(())
     }
 }
 
@@ -127,10 +160,6 @@ private final class ApprovalGatewayFixture: @unchecked Sendable {
         let sequence = await self.requestLog.nextEventSequence()
         let event = #"{"type":"event","event":"\#(name)","seq":\#(sequence),"payload":\#(payload)}"#
         socket.emitReceiveSuccessOnce(.data(Data(event.utf8)))
-    }
-
-    func waitUntilReady() async throws {
-        _ = try await self.readySocket()
     }
 
     private func readySocket() async throws -> GatewayTestWebSocketTask {
@@ -244,45 +273,62 @@ struct ExecApprovalQueueStoreTests {
         try #require(await self.waitUntil { store.requests.isEmpty })
     }
 
-    @Test func `live requests disappear at expiry without a gateway resolution event`() async throws {
-        let fixture = ApprovalGatewayFixture()
-        let store = ExecApprovalQueueStore(gateway: fixture.gateway)
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func `requests disappear at expiry without a gateway resolution event`(fromEvent: Bool) async throws {
+        let clock = ApprovalExpiryClock()
+        let request = ApprovalFixtureRequest(id: "short-lived", nowMs: clock.nowMs, expiresOffsetMs: 500)
+        let fixture = ApprovalGatewayFixture(initialRequests: { fromEvent ? [] : [request] })
+        let store = ExecApprovalQueueStore(gateway: fixture.gateway, clock: clock.clock)
         defer { store.stop() }
         store.start()
         await store.refresh()
 
-        try await fixture.waitUntilReady()
-        let request = ApprovalFixtureRequest(id: "short-lived", expiresOffsetMs: 500)
-        try await fixture.sendEvent(name: "exec.approval.requested", payload: request.json)
-
-        try #require(await self.waitUntil { store.requests.map(\.id) == ["short-lived"] })
-        try #require(await self.waitUntil { store.requests.isEmpty })
+        if fromEvent {
+            try await fixture.sendEvent(name: "exec.approval.requested", payload: request.json)
+            try #require(await self.waitUntil { store.requests.map(\.id) == ["short-lived"] })
+        }
+        try #require(store.requests.map(\.id) == ["short-lived"])
+        await clock.waitForSleep()
+        clock.advance(milliseconds: 499)
+        #expect(store.requests.map(\.id) == ["short-lived"])
+        await self.waitForChange(in: store) {
+            clock.advance(milliseconds: 1)
+        }
+        #expect(store.requests.isEmpty)
         #expect(await fixture.requestLog.requests(method: "exec.approval.resolve").isEmpty)
     }
 
-    @Test func `expiry keeps its deadline when the main actor delays task startup`() async {
-        // The child owns the actor stall so parallel suites keep their own deadlines.
-        await #expect(processExitsWith: .success) {
-            try await ExecApprovalQueueStoreTests.checkDelayedExpiry()
-        }
-    }
-
-    private static func checkDelayedExpiry() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func `expiry keeps its deadline when the main actor delays task startup`() async throws {
+        let clock = ApprovalExpiryClock()
+        let nowMs = clock.nowMs
         let fixture = ApprovalGatewayFixture(initialRequests: {
-            [ApprovalFixtureRequest(id: "delayed-expiry-task", expiresOffsetMs: 3000)]
+            [ApprovalFixtureRequest(id: "delayed-expiry-task", nowMs: nowMs, expiresOffsetMs: 3000)]
         })
-        let store = ExecApprovalQueueStore(gateway: fixture.gateway)
+        let store = ExecApprovalQueueStore(gateway: fixture.gateway, clock: clock.clock)
         defer { store.stop() }
 
         await store.refresh()
-        let request = try #require(store.requests.first)
-        // Hold the actor past the published deadline before the queued expiry task can start.
-        Self.blockUntilExpiry(request.expiresAtMs)
-        try #require(await Self().waitUntil { store.requests.isEmpty })
+        try #require(store.requests.map(\.id) == ["delayed-expiry-task"])
+        // Advance before yielding MainActor to the queued expiry task.
+        await self.waitForChange(in: store) {
+            clock.advance(milliseconds: 3000)
+        }
+        #expect(store.requests.isEmpty)
     }
 
-    private static func blockUntilExpiry(_ expiresAtMs: Int) {
-        Thread.sleep(until: Date(timeIntervalSince1970: Double(expiresAtMs) / 1000))
+    private func waitForChange(in store: ExecApprovalQueueStore, perform action: () -> Void) async {
+        // Cancellation must end the wait if broken expiry never changes the queue.
+        let change = AsyncStream<Void>.makeStream()
+        withObservationTracking {
+            _ = store.requests
+        } onChange: {
+            change.continuation.yield(())
+            change.continuation.finish()
+        }
+        action()
+        var iterator = change.stream.makeAsyncIterator()
+        _ = await iterator.next()
     }
 
     @Test func `explicit decision policy excludes allow always and blocks unavailable decisions`() async {

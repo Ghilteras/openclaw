@@ -86,16 +86,26 @@ struct ExecApprovalQueueItem: Decodable, Identifiable {
 final class ExecApprovalQueueStore {
     static let shared = ExecApprovalQueueStore()
 
+    struct ExpiryClock {
+        var nowMs: () -> Int = { Int(Date().timeIntervalSince1970 * 1000) }
+        var now: () -> ContinuousClock.Instant = { ContinuousClock.now }
+        var sleepUntil: (ContinuousClock.Instant) async throws -> Void = {
+            try await Task.sleep(until: $0, clock: .continuous)
+        }
+    }
+
     private(set) var requests: [ExecApprovalQueueItem] = []
 
     @ObservationIgnored private let logger = Logger(subsystem: "ai.openclaw", category: "exec-approvals.queue")
     @ObservationIgnored private let gateway: GatewayConnection
+    @ObservationIgnored private let clock: ExpiryClock
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var expiryTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var refreshGeneration: UInt64 = 0
 
-    init(gateway: GatewayConnection = .shared) {
+    init(gateway: GatewayConnection = .shared, clock: ExpiryClock = .init()) {
         self.gateway = gateway
+        self.clock = clock
     }
 
     func start() {
@@ -127,7 +137,7 @@ final class ExecApprovalQueueStore {
             // A resolution received during the request owns newer state; an old
             // list must never resurrect its already-dismissed approval card.
             guard generation == self.refreshGeneration, !Task.isCancelled else { return }
-            let nowMs = Self.currentTimeMs()
+            let nowMs = self.clock.nowMs()
             let systemApprovals = self.requests.filter { $0.kind == .systemAgent && $0.expiresAtMs > nowMs }
             self.replaceRequests(listed.filter { $0.expiresAtMs > nowMs } + systemApprovals)
         } catch {
@@ -191,7 +201,7 @@ final class ExecApprovalQueueStore {
     }
 
     private func insertRequest(_ request: ExecApprovalQueueItem) {
-        guard request.expiresAtMs > Self.currentTimeMs() else { return }
+        guard request.expiresAtMs > self.clock.nowMs() else { return }
         self.refreshGeneration &+= 1
         self.requests.removeAll { $0.id == request.id }
         self.requests.append(request)
@@ -218,22 +228,18 @@ final class ExecApprovalQueueStore {
 
     private func scheduleExpiry(for request: ExecApprovalQueueItem) {
         self.expiryTasks.removeValue(forKey: request.id)?.cancel()
-        let (remainingMs, overflow) = request.expiresAtMs.subtractingReportingOverflow(Self.currentTimeMs())
+        let (remainingMs, overflow) = request.expiresAtMs.subtractingReportingOverflow(self.clock.nowMs())
         guard !overflow, remainingMs > 0 else {
             self.removeRequest(id: request.id)
             return
         }
         // Task startup may be delayed; keep the Gateway's expiry deadline.
-        let deadline = ContinuousClock.now + .milliseconds(remainingMs)
-        self.expiryTasks[request.id] = Task { [weak self] in
-            try? await Task.sleep(until: deadline, clock: .continuous)
+        let deadline = self.clock.now() + .milliseconds(remainingMs)
+        self.expiryTasks[request.id] = Task { [weak self, clock] in
+            try? await clock.sleepUntil(deadline)
             guard !Task.isCancelled else { return }
             self?.removeRequest(id: request.id)
         }
-    }
-
-    private static func currentTimeMs() -> Int {
-        Int(Date().timeIntervalSince1970 * 1000)
     }
 
     private struct ResolvedApproval: Decodable {
