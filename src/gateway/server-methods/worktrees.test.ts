@@ -148,6 +148,7 @@ describe("worktrees gateway methods", () => {
     expect(statusResponse?.[0]).toBe(true);
     expect(service.listRepositoryBranches).toHaveBeenCalledWith("/anywhere", {
       includeRepositoryStatus: true,
+      runSetupScript: true,
     });
 
     await call(
@@ -159,6 +160,7 @@ describe("worktrees gateway methods", () => {
     expect(service.listRepositoryBranches).toHaveBeenLastCalledWith("/anywhere", {
       includeRepositoryStatus: true,
       baseRef: "release",
+      runSetupScript: true,
     });
 
     // Write scope cannot probe arbitrary host paths for branch names.
@@ -199,6 +201,24 @@ describe("worktrees gateway methods", () => {
       );
       expect(response?.[0]).toBe(true);
       expect(service.listRepositoryBranches).toHaveBeenCalledWith(repoRoot);
+
+      await call(
+        handlers,
+        "worktrees.branches",
+        { repoRoot, includeRepositoryStatus: true },
+        {
+          client: writeClient,
+          context: {
+            getRuntimeConfig: () => ({
+              agents: { list: [{ id: "main", default: true, workspace }] },
+            }),
+          },
+        },
+      );
+      expect(service.listRepositoryBranches).toHaveBeenLastCalledWith(repoRoot, {
+        includeRepositoryStatus: true,
+        runSetupScript: false,
+      });
     } finally {
       await fs.rm(workspace, { recursive: true, force: true });
     }

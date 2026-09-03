@@ -115,6 +115,26 @@ describe("ManagedWorktreeService capacity", () => {
     expect(service.listRegistryRecords()).toEqual([]);
   });
 
+  it("matches allocation status to the caller's setup-script authority", async () => {
+    const script = path.join(repo, ".openclaw", "worktree-setup.sh");
+    await fs.mkdir(path.dirname(script));
+    await fs.writeFile(script, "#!/bin/sh\n", { mode: 0o755 });
+    availableBytes = 18 * GiB;
+
+    await expect(
+      service.listRepositoryBranches(repo, {
+        includeRepositoryStatus: true,
+        runSetupScript: false,
+      }),
+    ).resolves.toMatchObject({ allocationStatus: "available" });
+    await expect(
+      service.listRepositoryBranches(repo, {
+        includeRepositoryStatus: true,
+        runSetupScript: true,
+      }),
+    ).resolves.toMatchObject({ allocationStatus: "insufficient-space" });
+  });
+
   it("requires a readable capacity sample before creating a checkout", async () => {
     vi.mocked(fsSync.statfsSync).mockImplementation(() => {
       throw new Error("volume unavailable");

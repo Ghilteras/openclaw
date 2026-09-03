@@ -26,7 +26,12 @@ export function createDraftTitleFixture(
       method === "sessions.title.prepare"
         ? request(method)
         : method === "worktrees.branches"
-          ? { repositoryStatus: "git", branches: [], defaultBranch: "main" }
+          ? {
+              repositoryStatus: "git",
+              branches: [],
+              defaultBranch: "main",
+              allocationStatus: "available",
+            }
           : {},
     takePreparedTitle: () => titles.takePreparedTitle(),
   });

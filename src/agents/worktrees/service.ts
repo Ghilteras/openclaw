@@ -870,6 +870,7 @@ export class ManagedWorktreeService {
   private async allocationStatus(
     repository: ResolvedRepository,
     baseRef?: string,
+    runSetup = true,
   ): Promise<ManagedWorktreeAllocationStatus> {
     const target = path.join(this.worktreesRootPath(), repository.fingerprint);
     try {
@@ -881,7 +882,7 @@ export class ManagedWorktreeService {
         repository,
         base.gitOperand,
         base.remote ? "HEAD" : undefined,
-        true,
+        runSetup,
       );
       this.requireAllocationSpace(target, repository, estimate.requiredBytes);
       return "available";
@@ -1103,7 +1104,11 @@ export class ManagedWorktreeService {
    */
   async listRepositoryBranches(
     repoRoot: string,
-    options: { includeRepositoryStatus?: boolean; baseRef?: string } = {},
+    options: {
+      includeRepositoryStatus?: boolean;
+      baseRef?: string;
+      runSetupScript?: boolean;
+    } = {},
   ): Promise<ManagedWorktreeBranchesResult> {
     let repository: ResolvedRepository;
     if (options.includeRepositoryStatus) {
@@ -1187,7 +1192,7 @@ export class ManagedWorktreeService {
       )
       .map(([, branch]) => branch);
     const allocationStatus = options.includeRepositoryStatus
-      ? await this.allocationStatus(repository, options.baseRef)
+      ? await this.allocationStatus(repository, options.baseRef, options.runSetupScript !== false)
       : undefined;
     return {
       branches: sorted,
