@@ -109,6 +109,17 @@ it.concurrent.each([
           path.join(root, "checkout.sh"),
           setupFailure ? "printf 'unexpected workflow invocation\\n' >&2\nexit 99\n" : accelerated,
         );
+        if (process.platform === "win32" && scenario === "early-leader-exit") {
+          const preload = path.join(root, "reject-python-spawn-sync.cjs");
+          writeFileSync(
+            preload,
+            `const cp=require("node:child_process"), original=cp.spawnSync;
+cp.spawnSync=(command,...args)=>{if(/python/i.test(require("node:path").basename(command))){const error=new Error("legacy census timed out");error.code="ETIMEDOUT";throw error}return original(command,...args)};
+require("node:module").syncBuiltinESMExports();`,
+          );
+          return { NODE_OPTIONS: `--require=${preload}` };
+        }
+        return undefined;
       },
       (report, result, stderr, root) => {
         const workspace = path.join(root, "workspace");
@@ -130,6 +141,13 @@ it.concurrent.each([
         expect(result, stderr).toEqual({ code: 0, signal: null });
         expect(report.error, stderr).toBeUndefined();
         expectCiCheckoutCleanup(report);
+        if (process.platform === "win32") {
+          expect(report.processDiagnostics.censusService).toMatchObject({
+            code: 0,
+            signal: null,
+            stderr: "",
+          });
+        }
         expect(report.code).toBe(code);
         expect(readFileSync(path.join(workspace, ".git/preexisting.lock"), "utf8")).toBe(
           "not invocation-owned\n",
@@ -788,6 +806,111 @@ it.skipIf(process.platform === "win32")(
   55_000,
 );
 
+it.skipIf(process.platform !== "win32")(
+  "keeps the persistent census protocol bounded and joins authenticated shutdown",
+  () => {
+    const result = spawnSync(
+      "python",
+      [
+        "-I",
+        "-S",
+        "-c",
+        String.raw`
+import json, os, socket, subprocess, sys, uuid
+token = uuid.uuid4().hex
+env = dict(os.environ, OPENCLAW_CI_CENSUS_TOKEN=token, OPENCLAW_CI_CENSUS_PARENT_PID=str(os.getpid()))
+service = subprocess.Popen([sys.executable, "-I", "-S", sys.argv[1]], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+ready = json.loads(service.stdout.readline()); assert list(ready) == ["v", "port"] and ready["v"] == 1
+def exchange(payload):
+    with socket.create_connection(("127.0.0.1", ready["port"]), timeout=5) as connection:
+        connection.sendall(payload); connection.shutdown(socket.SHUT_WR)
+        return json.loads(connection.makefile("rb").readline())
+base = dict(v=1, token=token); shutdown = json.dumps(dict(base, op="shutdown")).encode() + b"\n"
+try:
+    requests = [dict(base, token="wrong", op="census", pids=[]), dict(base, op="census", pids=[], extra=True), dict(base, op="census", pids=[1, 1]), dict(base, op="census", pids=[True]), dict(base, v=True, op="census", pids=[])]
+    invalid = [b"{\n", *(json.dumps(item).encode() + b"\n" for item in requests), b"{" + b"x" * (16 * 1024) + b"}\n"]
+    for payload in invalid: response = exchange(payload); assert response["v"] == 1 and response.get("error")
+    connection = socket.create_connection(("127.0.0.1", ready["port"]), timeout=5); connection.sendall(json.dumps(dict(base, op="census", pids=[])).encode() + b"\n"); connection.close()
+    response = exchange(json.dumps(dict(base, op="census", pids=[os.getpid()])).encode() + b"\n")
+    assert list(response["observations"][0]) == ["pid", "alive", "creationTime"] and response["observations"][0]["alive"]
+    assert exchange(shutdown) == {"v": 1, "ok": True}; assert service.wait(timeout=5) == 0 and service.stderr.read() == ""
+finally:
+    if service.poll() is None:
+        try:
+            exchange(shutdown)
+        except Exception: service.kill()
+        service.wait(timeout=5)
+print("persistent census protocol passed")
+`,
+        fileURLToPath(new URL("./fixtures/ci-windows-process-census.py", import.meta.url)),
+      ],
+      { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("persistent census protocol passed");
+  },
+  20_000,
+);
+
+it.skipIf(process.platform !== "win32")(
+  "fails census startup before spawning actors",
+  async () => {
+    await withCiCheckoutFixture(
+      "census-startup-failure",
+      (root) => writeFileSync(path.join(root, "checkout.sh"), "exit 0\n"),
+      (report, result, stderr) => {
+        expect(result, stderr).toEqual({ code: 1, signal: null });
+        expect(report.code).toBeNull();
+        expect(report.ownedProcesses).toEqual([]);
+        expect(report.processDiagnostics.sentinel).toBeNull();
+        const diagnostic = report.processDiagnostics.censusService;
+        expect(diagnostic).toMatchObject({
+          command: "fixture-missing-python -I -S census-service",
+          code: expect.any(Number),
+          signal: null,
+        });
+        expect(diagnostic?.stderr).toContain("ENOENT");
+        expect(Buffer.byteLength(diagnostic?.stderr ?? "")).toBeLessThanOrEqual(4_096);
+      },
+    );
+  },
+  55_000,
+);
+
+it.skipIf(process.platform !== "win32")(
+  "retains the namespace after unexpected census service death",
+  async () => {
+    let root = "";
+    let errors = "";
+    const log = vi.spyOn(console, "error").mockImplementation((value) => (errors += String(value)));
+    try {
+      await expect(
+        withCiCheckoutFixture(
+          "census-service-exit",
+          (directory) => {
+            root = directory;
+            writeFileSync(path.join(root, "checkout.sh"), "exit 0\n");
+          },
+          () => undefined,
+        ),
+      ).rejects.toThrow();
+      expect(existsSync(root)).toBe(true);
+      expect(existsSync(path.join(root, "report.json"))).toBe(false);
+      for (const text of [
+        "Windows process census service exited",
+        "group extinction: true",
+        '"signal":"SIGKILL"',
+      ]) {
+        expect(errors).toContain(text);
+      }
+    } finally {
+      log.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  55_000,
+);
+
 it("does not revive a terminated fixture instance when its PID is reused", () => {
   const result = spawnSync(
     process.platform === "win32" ? "python" : "python3",
@@ -796,7 +919,7 @@ it("does not revive a terminated fixture instance when its PID is reused", () =>
       "-S",
       "-c",
       String.raw`
-import json, os, pathlib, runpy, subprocess, sys, tempfile
+import json, os, pathlib, runpy, socket, subprocess, sys, tempfile
 
 with tempfile.TemporaryDirectory(prefix="checkout-pid-reuse-") as directory:
     root = pathlib.Path(directory).resolve()
@@ -832,41 +955,58 @@ cp.spawnSync = (command, args, options) => {
 };
 require("node:module").syncBuiltinESMExports();
 ''')
-    with subprocess.Popen([sys.executable, "-I", "-S", "-c", "import sys; sys.stdin.read()"],
-                          stdin=subprocess.PIPE) as child:
-        retired = dict(pid=child.pid, role="grandchild", attempt=1, instance="retired")
-        current = dict(pid=os.getpid(), role="grandchild", attempt=2, instance="current")
-        if os.name == "nt":
-            read_processes = runpy.run_path(sys.argv[3])["read_processes"]
-            identities = read_processes([child.pid, os.getpid()])
-            assert all(identity["alive"] for identity in identities)
-            retired["creationTime"], current["creationTime"] = (
-                identity["creationTime"] for identity in identities)
-        child.communicate(timeout=10)
-        (records / "retired.json").write_text(json.dumps(retired))
-        (records / "current.json").write_text(json.dumps(current))
-        (records / "sentinel.json").write_text(json.dumps(
-            dict(current, role="sentinel", attempt=0, instance="sentinel")))
+    child_env = os.environ.copy()
+    census = None
+    if os.name == "nt":
+        token = os.urandom(16).hex()
+        census_env = dict(child_env, OPENCLAW_CI_CENSUS_TOKEN=token, OPENCLAW_CI_CENSUS_PARENT_PID=str(os.getpid()))
+        census = subprocess.Popen([sys.executable, "-I", "-S", sys.argv[3]], env=census_env, stdout=subprocess.PIPE, text=True)
+        ready = json.loads(census.stdout.readline())
+        child_env.update(OPENCLAW_CI_CENSUS_TOKEN=token, OPENCLAW_CI_CENSUS_PORT=str(ready["port"]), OPENCLAW_CI_CENSUS_DEADLINE_MS="9999999999999")
+    try:
+        with subprocess.Popen([sys.executable, "-I", "-S", "-c", "import sys; sys.stdin.read()"],
+                              stdin=subprocess.PIPE) as child:
+            retired = dict(pid=child.pid, role="grandchild", attempt=1, instance="retired")
+            current = dict(pid=os.getpid(), role="grandchild", attempt=2, instance="current")
+            if os.name == "nt":
+                read_processes = runpy.run_path(sys.argv[3])["read_processes"]
+                identities = read_processes([child.pid, os.getpid()])
+                assert all(identity["alive"] for identity in identities)
+                retired["creationTime"], current["creationTime"] = (
+                    identity["creationTime"] for identity in identities)
+            child.communicate(timeout=10)
+            (records / "retired.json").write_text(json.dumps(retired))
+            (records / "current.json").write_text(json.dumps(current))
+            (records / "sentinel.json").write_text(json.dumps(
+                dict(current, role="sentinel", attempt=0, instance="sentinel")))
 
-        def observe():
-            subprocess.run([sys.argv[1], "--require", str(guard), sys.argv[2], "git", str(root), "early-leader-exit",
-                            "-C", str(workspace), "checkout"], cwd=workspace, check=True)
-            observed = json.loads((root / "events.jsonl").read_text().splitlines()[-1])
-            assert observed["sentinelAlive"], "unrelated live sentinel was lost"
-            return observed["alive"]
+            def observe():
+                subprocess.run([sys.argv[1], "--require", str(guard), sys.argv[2], "git", str(root), "early-leader-exit",
+                                "-C", str(workspace), "checkout"], cwd=workspace, env=child_env, check=True)
+                observed = json.loads((root / "events.jsonl").read_text().splitlines()[-1])
+                assert observed["sentinelAlive"], "unrelated live sentinel was lost"
+                return observed["alive"]
 
-        assert observe() == [current], "first boundary must observe real child termination"
-        # Fault-inject PID reuse only after actual death was observed. The fresh
-        # instance at that live PID must remain visible, never hidden by retirement.
-        retired["pid"] = current["pid"]
-        (records / "retired.json").write_text(json.dumps(retired))
-        assert observe() == [current], "a retired instance was revived by a reused PID"
-        if os.name == "nt":
-            # No death receipt exists for this instance: birth identity must
-            # reject reuse even when no census observed the PID between lives.
-            (records / "unobserved.json").write_text(json.dumps(
-                dict(retired, instance="unobserved")))
-            assert observe() == [current], "an unobserved retired birth was revived by PID reuse"
+            assert observe() == [current], "first boundary must observe real child termination"
+            # Fault-inject PID reuse only after actual death was observed. The fresh
+            # instance at that live PID must remain visible, never hidden by retirement.
+            retired["pid"] = current["pid"]
+            (records / "retired.json").write_text(json.dumps(retired))
+            assert observe() == [current], "a retired instance was revived by a reused PID"
+            if os.name == "nt":
+                # Birth identity rejects reuse even without an intervening dead census.
+                (records / "unobserved.json").write_text(json.dumps(
+                    dict(retired, instance="unobserved")))
+                assert observe() == [current], "an unobserved retired birth was revived by PID reuse"
+    finally:
+        if census and census.poll() is None:
+            try:
+                with socket.create_connection(("127.0.0.1", ready["port"])) as connection:
+                    request = dict(v=1, token=token, op="shutdown")
+                    connection.sendall(json.dumps(request).encode() + b"\n"); connection.shutdown(socket.SHUT_WR); assert json.loads(connection.makefile("rb").readline())["ok"]
+            except Exception:
+                census.kill()
+            assert census.wait(timeout=5) == 0
 print("fixture lifetime contract passed")
 `,
       process.execPath,

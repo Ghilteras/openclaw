@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -72,6 +73,40 @@ function publish(name, value) {
   fs.renameSync(`${target}.${process.pid}.tmp`, target);
 }
 
+function captureProcessDiagnostic(child, command) {
+  const diagnostic = { command, code: null, signal: null, stderr: "" };
+  const capture = (data) => {
+    const stderr = Buffer.from(`${diagnostic.stderr}${String(data)}`).subarray(-4_096);
+    diagnostic.stderr = stderr.toString().replace(/^\uFFFD+/u, "");
+  };
+  child.stderr?.on("data", capture);
+  child.once("error", capture);
+  child.once("close", (code, signal) => Object.assign(diagnostic, { code, signal }));
+  return diagnostic;
+}
+
+async function readCensusReady(child, deadline) {
+  let data = "";
+  try {
+    await Promise.race([
+      (async () => {
+        for await (const chunk of child.stdout.iterator({ destroyOnReturn: false })) {
+          data += chunk;
+          if (Buffer.byteLength(data) > 4_096) throw new Error("oversized");
+          if (data.includes("\n")) return;
+        }
+        throw new Error(`process exited (${child.exitCode ?? child.signalCode})`);
+      })(),
+      delay(Math.max(1, deadline - Date.now()), undefined, { ref: false }).then(() => {
+        throw new Error("timed out");
+      }),
+    ]);
+    return JSON.parse(data.slice(0, data.indexOf("\n")));
+  } catch (error) {
+    throw new Error(`Windows process census service readiness was invalid: ${error.message}`);
+  }
+}
+
 function stall(attempt) {
   // Expire only a ready, deliberately stalled tree. Ordinary cancel-* cases
   // wait for their signal; cancelDuringCleanup needs a tick to enter real drain.
@@ -80,21 +115,38 @@ function stall(attempt) {
   }
 }
 
-function readWindowsProcessCensus(pids) {
-  const result = spawnSync(
-    "python",
-    ["-I", "-S", fileURLToPath(new URL("./ci-windows-process-census.py", import.meta.url))],
-    { input: JSON.stringify(pids), encoding: "utf8", timeout: 1_000, killSignal: "SIGKILL" },
-  );
-  if (result.error || result.status !== 0 || result.stderr !== "") {
-    throw new Error(
-      "Fixture Windows process census failed (" +
-        (result.error?.code ?? result.status) +
-        "): " +
-        result.stderr,
-    );
+async function requestWindowsCensus(request, deadline) {
+  deadline ??= Number(process.env.OPENCLAW_CI_CENSUS_DEADLINE_MS);
+  const port = Number(process.env.OPENCLAW_CI_CENSUS_PORT);
+  const token = process.env.OPENCLAW_CI_CENSUS_TOKEN;
+  if (!port || !token || !deadline) {
+    throw new Error("Fixture Windows process census service is unavailable");
   }
-  const observations = JSON.parse(result.stdout);
+  const socket = net.createConnection({ host: "127.0.0.1", port });
+  socket.setEncoding("utf8");
+  socket.setTimeout(Math.max(1, deadline - Date.now()), () =>
+    socket.destroy(new Error("Fixture Windows process census timed out")),
+  );
+  socket.end(`${JSON.stringify({ v: 1, token, ...request })}\n`);
+  let data = "";
+  try {
+    for await (const chunk of socket) {
+      data += chunk;
+      if (Buffer.byteLength(data) > 16_384) throw new Error("response is oversized");
+    }
+    const [line, tail, extra] = data.split("\n");
+    if (!line || tail !== "" || extra !== undefined) throw new Error("invalid response frame");
+    const response = JSON.parse(line);
+    if (response?.v !== 1 || response.error) throw new Error(response?.error || "invalid response");
+    return response;
+  } catch (error) {
+    socket.destroy();
+    throw new Error(`Fixture Windows process census failed: ${error.message}`);
+  }
+}
+
+async function readWindowsProcessCensus(pids) {
+  const observations = (await requestWindowsCensus({ op: "census", pids })).observations;
   if (
     !Array.isArray(observations) ||
     observations.length !== pids.length ||
@@ -111,22 +163,23 @@ function readWindowsProcessCensus(pids) {
   return new Map(observations.map((entry) => [entry.pid, entry]));
 }
 
-function record(pid, role, attempt = 0) {
-  if (process.platform === "win32" && pid === process.pid && !ownWindowsCreationTime) {
-    const identity = readWindowsProcessCensus([pid]).get(pid);
-    if (!identity.alive || !identity.creationTime) {
-      throw new Error("Fixture actor could not capture its own Windows birth");
+async function record(pid, role, attempt = 0) {
+  let creationTime = pid === process.pid ? ownWindowsCreationTime : undefined;
+  if (process.platform === "win32") {
+    if (!creationTime) {
+      const identity = (await readWindowsProcessCensus([pid])).get(pid);
+      if (!identity.alive || !identity.creationTime)
+        throw new Error("Fixture actor could not capture its Windows birth");
+      creationTime = identity.creationTime;
+      if (pid === process.pid) ownWindowsCreationTime = creationTime;
     }
-    ownWindowsCreationTime = identity.creationTime;
   }
   publish(`pids/${pid}.json`, {
     pid,
     role,
     attempt,
     instance: `${instance}-${pid}`,
-    ...(process.platform === "win32" && pid === process.pid
-      ? { creationTime: ownWindowsCreationTime }
-      : {}),
+    ...(creationTime ? { creationTime } : {}),
   });
 }
 
@@ -139,7 +192,7 @@ function records() {
     .map((file) => JSON.parse(fs.readFileSync(path.join(recordsDir, file), "utf8")));
 }
 
-function liveRecords() {
+async function liveRecords() {
   const owned = records().filter(
     (entry) =>
       !fs.existsSync(path.join(recordsDir, `${entry.instance}.dead`)) &&
@@ -152,7 +205,7 @@ function liveRecords() {
   const alive = new Set();
   const pids = new Set(owned.map((entry) => entry.pid));
   const windowsCensus =
-    process.platform === "win32" ? readWindowsProcessCensus([...pids]) : undefined;
+    process.platform === "win32" ? await readWindowsProcessCensus([...pids]) : undefined;
   if (windowsCensus) {
     for (const entry of owned) {
       if (typeof entry.creationTime !== "string" || !/^\d+$/.test(entry.creationTime)) {
@@ -239,8 +292,8 @@ function isWorkflowDescendant(pid, shellPid) {
   return false;
 }
 
-function boundary(name) {
-  const alive = liveRecords();
+async function boundary(name) {
+  const alive = await liveRecords();
   fs.appendFileSync(
     eventsFile,
     `${JSON.stringify({
@@ -253,7 +306,7 @@ function boundary(name) {
 
 async function until(predicate, label, timeout = 4_000) {
   const deadline = Date.now() + timeout;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() >= deadline) {
       throw new Error(`Timed out waiting for ${label}`);
     }
@@ -265,7 +318,7 @@ async function waitForReady(predicate, child, stopped = () => !fs.existsSync(lea
   // Readiness belongs to the owned child's lifetime. The supervisor's existing
   // watchdog bounds startup; an independent short timer can preempt legal Git work.
   while (!stopped() && child.exitCode === null && child.signalCode === null) {
-    if (predicate()) {
+    if (await predicate()) {
       return true;
     }
     await delay(10);
@@ -322,16 +375,20 @@ function writeConsumer(target, tool) {
 
 async function command() {
   holdLease();
-  if (!options.performance || mode !== "observe") record(process.pid, mode);
+  if (
+    (!options.performance || mode !== "observe") &&
+    !(process.platform === "win32" && mode === "sentinel")
+  )
+    await record(process.pid, mode);
   if (mode === "sentinel") {
     return;
   }
   if (mode === "observe") {
-    boundary(args[0]);
+    await boundary(args[0]);
     process.exit(0);
   }
   if (options.performance && ["curl", "tar", "sha256sum", "npm"].includes(mode)) {
-    boundary(`consumer:${mode}`);
+    await boundary(`consumer:${mode}`);
     recordCommand(mode, process.cwd(), args);
     if (mode === "tar") {
       const directory = insideOwnedPath(args[args.indexOf("-C") + 1]);
@@ -346,14 +403,14 @@ async function command() {
   if (mode === "find") {
     insideOwnedPath(args[0]);
     // Observe before the real deletion, while prior Git children can still write.
-    boundary("delete");
+    await boundary("delete");
     const result = spawnSync("/usr/bin/find", args, { stdio: "inherit" });
     process.exit(result.status ?? 1);
   }
   if (mode === "rm") {
     const target = insideOwnedPath(args.at(-1));
     if (target === path.join(workspace, "publish")) {
-      boundary("delete");
+      await boundary("delete");
     }
     recordCommand(mode, process.cwd(), args);
     const result = spawnSync("/bin/rm", args, { stdio: "inherit" });
@@ -373,7 +430,7 @@ async function command() {
         process.exit(0);
       }
     });
-    record(process.pid, mode, attempt);
+    await record(process.pid, mode, attempt);
     if (mode === "child") {
       // Startup faults belong to the caller, not every consumer of this shared fixture.
       const startDelay = path.join(root, `tree-start-delay-${attempt}.json`);
@@ -390,7 +447,7 @@ async function command() {
     const cwd = insideOwnedPath(process.cwd());
     recordCommand(mode, cwd, args);
     if (options.performance && mode === "node") {
-      boundary("consumer:node");
+      await boundary("consumer:node");
       const allowed = [
         options.env.PERFORMANCE_REPORT_SELECTOR,
         options.env.PERFORMANCE_PUBLISHER_HELPER,
@@ -411,7 +468,7 @@ async function command() {
       // The workflow's package-script capability probe; never evaluate candidate code.
       process.exit(0);
     }
-    boundary(`consumer:${mode}`);
+    await boundary(`consumer:${mode}`);
     if (mode === "go") {
       const [build, changeDirectory, source, outputFlag, output, target] = args;
       if (
@@ -484,7 +541,7 @@ async function command() {
   }
   const operation = args.shift();
   if (operation === "init" && !localGit) {
-    boundary("init");
+    await boundary("init");
     const config = path.join(root, "fixture-config.json");
     if (fs.existsSync(config)) {
       await delay(JSON.parse(fs.readFileSync(config, "utf8")).initDelayMs);
@@ -544,9 +601,9 @@ async function command() {
     const attempt = fs.existsSync(treeCounter)
       ? JSON.parse(fs.readFileSync(treeCounter, "utf8")) + 1
       : 1;
-    boundary(`${operation}:${resultAttempt}`);
+    await boundary(`${operation}:${resultAttempt}`);
     publish("tree-attempt.json", attempt);
-    record(process.pid, "parent", attempt);
+    await record(process.pid, "parent", attempt);
     if (operation === "clone" || operation === "worktree") {
       const directory = insideOwnedPath(operation === "clone" ? args.at(-1) : args.at(-2));
       if (operation === "clone" && options.docsPublish && fs.existsSync(directory)) {
@@ -582,7 +639,7 @@ async function command() {
     if (options.cancelDuringCleanup) {
       const pid = process.ppid;
       publish("owner.json", { pid, startTime: getFileLockProcessStartTime(pid) });
-      record(pid, "owner");
+      await record(pid, "owner");
       if (
         options.cleanupCancelMatch &&
         new RegExp(options.cleanupCancelMatch).test([operation, ...args].join(" "))
@@ -599,7 +656,7 @@ async function command() {
       );
     }
     if (scenario.startsWith("cancel-") || commandResult?.code === "cancel") {
-      const owned = liveRecords();
+      const owned = await liveRecords();
       const alive = owned.filter((entry) => entry.attempt === attempt);
       if (
         !["parent", "child", "grandchild"].every((role) =>
@@ -801,7 +858,7 @@ async function command() {
     stall(attempt);
     return;
   } else if (operation === "checkout") {
-    boundary(cwd === path.join(workspace, ".ci-harness") ? "harness-checkout" : "checkout");
+    await boundary(cwd === path.join(workspace, ".ci-harness") ? "harness-checkout" : "checkout");
     if (scenario === "checkout-failure") {
       process.exit(23);
     }
@@ -829,20 +886,20 @@ async function command() {
       (options.docsAgent && args.join(" ") === "--quiet") ||
       options.maturity)
   ) {
-    boundary("diff");
+    await boundary("diff");
     process.exit(options.diffResult ?? (options.maturity ? 0 : 1));
   } else if (
     ["add", "commit"].includes(operation) ||
     (operation === "config" && (options.docsPublish || options.docsAgent)) ||
     (operation === "rebase" && args[0] === "--abort")
   ) {
-    boundary(operation === "rebase" ? "rebase-abort" : operation);
+    await boundary(operation === "rebase" ? "rebase-abort" : operation);
     // An abort without an active rebase is an ordinary ignored Git failure.
     process.exit(operation === "rebase" ? 128 : 0);
   } else if (options.docsAgent && ["ls-files", "diff"].includes(operation)) {
-    boundary(operation);
+    await boundary(operation);
   } else if (operation === "cat-file" || (operation === "show" && options.objects)) {
-    boundary(`${operation}:${args.at(-1)}`);
+    await boundary(`${operation}:${args.at(-1)}`);
     const spec = args.at(-1);
     if (spec.endsWith("^{commit}")) {
       process.exit(options.baseAvailableAfter === 0 ? 0 : 1);
@@ -853,7 +910,7 @@ async function command() {
     }
     process.exit(object ? ((operation === "cat-file" ? object.probe : object.code) ?? 0) : 1);
   } else if (operation === "rev-parse") {
-    boundary("rev-parse");
+    await boundary("rev-parse");
     if (args[0] === "--verify") {
       fs.writeSync(1, "fixture quiet probe stdout\n");
       fs.writeSync(2, "fixture quiet probe stderr\n");
@@ -865,22 +922,22 @@ async function command() {
     }
     fs.writeSync(1, `${args.map((ref) => resolveRef(cwd, ref)).join("\n")}\n`);
   } else if (operation === "tag" && args[0] === "--points-at") {
-    boundary("tag");
+    await boundary("tag");
   } else if (operation === "merge-base" && options.mergeBase) {
-    boundary("merge-base");
+    await boundary("merge-base");
     if (args[0] === "--is-ancestor") {
       process.exit(options.mergeBase.ancestor ? 0 : 1);
     }
     fs.writeSync(1, `${options.mergeBase.revision}\n`);
   } else if (operation === "check-ref-format") {
-    boundary("check-ref-format");
+    await boundary("check-ref-format");
     fs.writeSync(1, "fixture quiet probe stdout\n");
     fs.writeSync(2, "fixture quiet probe stderr\n");
     process.exit(options.invalidRef ? 1 : 0);
   } else if (operation === "remote" && args[0] === "get-url") {
     fs.writeSync(1, "https://example.invalid/fixture.git\n");
   } else if (operation === "show" && args.join(" ").startsWith("-s --format=%P ")) {
-    boundary("show-parents");
+    await boundary("show-parents");
     const snapshot = options.mergeSnapshots?.find((entry) => entry.sha === args.at(-1));
     const head = snapshot?.head ?? "a".repeat(40);
     fs.writeSync(1, `${"c".repeat(40)} ${head}\n`);
@@ -950,6 +1007,7 @@ async function supervise() {
   let sentinel;
   let shell;
   let stopping;
+  let censusService, censusServiceClosed;
   const pendingChildren = new Set();
   const track = (child) => {
     pendingChildren.add(child);
@@ -972,6 +1030,7 @@ async function supervise() {
     ownedProcesses: [],
     commands: [],
     output: "",
+    processDiagnostics: { censusService: null, sentinel: null },
   };
   const stop = (error) => {
     stopping ??= Promise.resolve().then(async () => {
@@ -1008,17 +1067,38 @@ async function supervise() {
           Math.max(0, deadline - Date.now()),
         );
         await until(
-          () => {
-            report.cleanupRemaining = liveRecords();
+          async () => {
+            report.cleanupRemaining = await liveRecords();
             return report.cleanupRemaining.length === 0;
           },
           "fixture cleanup",
           Math.max(0, deadline - Date.now()),
         );
+        if (censusService) {
+          let acknowledged = false;
+          if (sentinel) {
+            acknowledged = (await requestWindowsCensus({ op: "shutdown" }, deadline)).ok === true;
+          } else if (censusService.exitCode === null && censusService.signalCode === null) {
+            censusService.kill("SIGKILL");
+          }
+          const timeout = delay(Math.max(1, deadline - Date.now()), undefined, { ref: false });
+          const exit = await Promise.race([
+            censusServiceClosed,
+            timeout.then(() => Promise.reject(new Error("Census service did not close"))),
+          ]);
+          if (sentinel && (!acknowledged || exit.code !== 0 || exit.signal)) {
+            throw new Error("Fixture Windows process census shutdown was not joined");
+          }
+        }
       } catch (err) {
         // Only the completed report releases the namespace; exit alone does not.
         const detail = err instanceof Error ? err.message : String(err);
-        console.error(`Fixture cleanup unverified; retaining ${root}: ${detail}`);
+        const token = process.env.OPENCLAW_CI_CENSUS_TOKEN ?? "\u0000";
+        const diagnostics = JSON.stringify(report.processDiagnostics).replaceAll(
+          token,
+          "[redacted]",
+        );
+        console.error(`Fixture cleanup unverified; retaining ${root}: ${detail}\n${diagnostics}`);
         fs.closeSync(output);
         process.exit(1);
       }
@@ -1093,6 +1173,51 @@ async function supervise() {
         throw new Error(`Fixture setup: mock command resolution failed: ${detail}`);
       }
     }
+    const actorEnv = process.env.NODE_OPTIONS ? { NODE_OPTIONS: process.env.NODE_OPTIONS } : {};
+    if (process.platform === "win32") {
+      const token = randomUUID();
+      const deadline = Date.now() + 45_000;
+      const censusCommand =
+        scenario === "census-startup-failure" ? "fixture-missing-python" : "python";
+      const censusScript = path.join(path.dirname(fixture), "ci-windows-process-census.py");
+      const censusArgs = ["-I", "-S", censusScript];
+      censusService = spawn(censusCommand, censusArgs, {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          OPENCLAW_CI_CENSUS_TOKEN: token,
+          OPENCLAW_CI_CENSUS_PARENT_PID: String(process.pid),
+        },
+      });
+      report.processDiagnostics.censusService = captureProcessDiagnostic(
+        censusService,
+        `${censusCommand} -I -S census-service`,
+      );
+      censusServiceClosed = new Promise((resolve) => {
+        censusService.once("close", (code, signal) => {
+          if (sentinel && !stopping) {
+            void stop(`Windows process census service exited (${code ?? signal})`);
+          }
+          resolve({ code, signal });
+        });
+      });
+      const ready = await readCensusReady(censusService, deadline);
+      if (
+        ready?.v !== 1 ||
+        !Number.isInteger(ready.port) ||
+        ready.port < 1 ||
+        ready.port > 65_535 ||
+        Object.keys(ready).toSorted().join(",") !== "port,v"
+      ) {
+        throw new Error("Windows process census service readiness was invalid");
+      }
+      Object.assign(actorEnv, {
+        OPENCLAW_CI_CENSUS_TOKEN: token,
+        OPENCLAW_CI_CENSUS_PORT: String(ready.port),
+        OPENCLAW_CI_CENSUS_DEADLINE_MS: String(deadline),
+      });
+      Object.assign(process.env, actorEnv);
+    }
     if (["git", "python"].includes(options.setupFailure)) {
       fs.writeFileSync(
         path.join(bin, options.setupFailure === "git" ? "git" : "python3"),
@@ -1102,15 +1227,24 @@ async function supervise() {
     }
     sentinel = spawn(process.execPath, [fixture, "sentinel", root, policyScenario], {
       // Parent teardown owns this group even before sentinel self-registration.
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
+      env: { ...process.env, ...actorEnv },
     });
+    report.processDiagnostics.sentinel = captureProcessDiagnostic(
+      sentinel,
+      "node ci-platform-checkout.mjs sentinel",
+    );
     // stop() joins the sentinel's actual close through pendingChildren before reporting.
     void track(sentinel);
-    const sentinelReady = await waitForReady(
-      () => records().some((entry) => entry.role === "sentinel"),
-      sentinel,
-      () => Boolean(stopping),
-    );
+    const sentinelReady =
+      process.platform === "win32"
+        ? (await record(sentinel.pid, "sentinel"), true)
+        : await waitForReady(
+            () => records().some((entry) => entry.role === "sentinel"),
+            sentinel,
+            () => Boolean(stopping),
+          );
+    if (scenario === "census-service-exit") censusService.kill("SIGKILL");
     if (stopping) {
       return;
     }
@@ -1151,6 +1285,7 @@ async function supervise() {
         GITHUB_PATH: path.join(root, "github-path"),
         RUNNER_OS: linux ? "Linux" : process.platform === "win32" ? "Windows" : "macOS",
         PATHEXT: process.env.PATHEXT,
+        ...actorEnv,
         CHECKOUT_REPO: "fixture/checkout",
         CHECKOUT_SHA: "a".repeat(40),
         CHECKOUT_BASE_SHA: linux && scenario === "early-leader-exit" ? "c".repeat(40) : "",
@@ -1160,7 +1295,7 @@ async function supervise() {
     });
     const closed = track(shell);
     if (shell.pid) {
-      record(shell.pid, "shell");
+      await record(shell.pid, "shell");
     }
     const ready = (name) =>
       waitForReady(
@@ -1203,7 +1338,7 @@ async function supervise() {
         () => Boolean(stopping),
       ))
     ) {
-      boundary("backoff-cancel");
+      await boundary("backoff-cancel");
       shell.kill("SIGTERM");
     }
     const code = await closed;
@@ -1215,14 +1350,14 @@ async function supervise() {
     }
     report.code = code;
     if (options.docsAgent && fs.readFileSync(path.join(root, "github-output"), "utf8")) {
-      boundary("output");
+      await boundary("output");
     }
     if (
       options.objects &&
       fs.existsSync(path.join(root, "github-env")) &&
       fs.readFileSync(path.join(root, "github-env"), "utf8").includes("PRE_COMMIT_CONFIG_PATH=")
     ) {
-      boundary("config-publication");
+      await boundary("config-publication");
     }
     for (const [name, file] of options.publisher || options.maturity || options.performance
       ? [
@@ -1231,9 +1366,9 @@ async function supervise() {
         ]
       : []) {
       if (fs.existsSync(path.join(root, file)) && fs.readFileSync(path.join(root, file), "utf8"))
-        boundary(name);
+        await boundary(name);
     }
-    boundary("exit");
+    await boundary("exit");
     await stop();
   } catch (error) {
     await stop(error);

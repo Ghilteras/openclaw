@@ -19,6 +19,12 @@ const processRecord = z.object({
   instance: z.string(),
   creationTime: z.string().regex(/^\d+$/u).optional(),
 });
+const processDiagnostic = z.object({
+  command: z.string(),
+  code: z.number().nullable(),
+  signal: z.string().nullable(),
+  stderr: z.string().max(4_096),
+});
 const reportSchema = z.object({
   code: z.number().nullable(),
   cancelledDuringCleanup: z.boolean(),
@@ -39,6 +45,7 @@ const reportSchema = z.object({
     }),
   ),
   output: z.string(),
+  processDiagnostics: z.record(z.enum(["censusService", "sentinel"]), processDiagnostic.nullable()),
 });
 type Report = z.infer<typeof reportSchema>;
 type CloseResult = { code: number | null; signal: NodeJS.Signals | null };
