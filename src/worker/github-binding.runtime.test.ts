@@ -6,7 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as exec from "../process/exec.js";
 import { prepareWorkerGitHubEnvironment } from "./github-binding.runtime.js";
 
-const { warn } = vi.hoisted(() => ({ warn: vi.fn() }));
+const { warn, inspectPathPermissions } = vi.hoisted(() => ({
+  warn: vi.fn(),
+  inspectPathPermissions: vi.fn(),
+}));
+vi.mock("../infra/permissions.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../infra/permissions.js")>();
+  inspectPathPermissions.mockImplementation(actual.inspectPathPermissions);
+  return { ...actual, inspectPathPermissions };
+});
 vi.mock("../logging/subsystem.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../logging/subsystem.js")>();
   return {
@@ -141,6 +149,49 @@ describe("prepareWorkerGitHubEnvironment", () => {
     expect(warn).toHaveBeenCalledExactlyOnceWith(expect.stringContaining(binding.branch));
     expect(warn.mock.lastCall?.[0]).toContain(localHead.slice(0, 7));
     expect(warn.mock.lastCall?.[0]).toContain(remoteHead.slice(0, 7));
+  });
+
+  it("never starts the credentialed fetch for a fenced turn", async () => {
+    const remoteHead = await publishEarlierTurn();
+    const controller = new AbortController();
+    controller.abort(new Error("worker fenced: owner-epoch-mismatch"));
+
+    await prepareWorkerGitHubEnvironment({
+      binding,
+      stateDir: path.join(root, "state"),
+      runId: "turn",
+      cwd,
+      signal: controller.signal,
+    });
+
+    expect((await git(cwd, "rev-parse", "HEAD")).trim()).toBe(initialHead);
+    expect(remoteHead).not.toBe(initialHead);
+    await expect(git(cwd, "rev-parse", "--verify", "FETCH_HEAD")).rejects.toThrow();
+  });
+
+  it("disables the binding before any token use when a Windows profile is not owner-only", async () => {
+    const remoteHead = await publishEarlierTurn();
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    inspectPathPermissions.mockResolvedValueOnce({
+      ok: true,
+      source: "windows-acl",
+      ownerTrusted: false,
+      groupReadable: true,
+      worldReadable: false,
+      groupWritable: false,
+      worldWritable: false,
+    } as never);
+    try {
+      await expect(prepare()).resolves.toBeUndefined();
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+
+    expect((await git(cwd, "rev-parse", "HEAD")).trim()).toBe(initialHead);
+    expect(remoteHead).not.toBe(initialHead);
+    await expect(git(cwd, "rev-parse", "--verify", "FETCH_HEAD")).rejects.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("profile is not owner-only"));
   });
 
   it("never fetches or fast-forwards without a verified GitHub origin", async () => {

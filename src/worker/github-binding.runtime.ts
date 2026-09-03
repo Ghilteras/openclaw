@@ -18,12 +18,14 @@ async function bindWorkerGitHubCheckout(
   cwd: string,
   binding: WorkerGitHubLaunchBinding,
   baseEnv: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
 ) {
   const git = (args: string[], timeoutMs = 5_000) =>
     runCommandWithTimeout(["git", "-C", cwd, ...args], {
       baseEnv,
       timeoutMs,
       maxOutputBytes: { stdout: 1_048_576, stderr: 2_048 },
+      ...(signal ? { signal } : {}),
     });
   const requireGit = async (args: string[]) => {
     const result = await git(args);
@@ -54,7 +56,8 @@ async function bindWorkerGitHubCheckout(
     // A fast-forward only adds session commits while preserving reconciled working-tree bytes.
     // Leave divergence for the agent to resolve. Only the verified GitHub origin the Gateway
     // named may receive the token-bound fetch; a binding without one keeps its checkout as is.
-    if (!binding.remoteUrl) {
+    // A fenced turn has lost its authority: never start the credentialed fetch for it.
+    if (!binding.remoteUrl || signal?.aborted) {
       return;
     }
     const fetched = await git(["fetch", "--quiet", "origin", binding.branch], 60_000);
@@ -94,8 +97,9 @@ export async function prepareWorkerGitHubEnvironment(params: {
   stateDir: string;
   runId: string;
   cwd: string;
+  signal?: AbortSignal;
 }): Promise<PreparedGitHubToolEnvironment | undefined> {
-  const { binding, stateDir, runId, cwd } = params;
+  const { binding, stateDir, runId, cwd, signal } = params;
   registerSecretValueForRedaction(binding.token);
   const profilesRoot = path.join(stateDir, "github-profiles");
   const profileDir = path.join(profilesRoot, sha256HexPrefixCore(runId, 16));
@@ -120,12 +124,6 @@ export async function prepareWorkerGitHubEnvironment(params: {
       ["credential.helper", "!gh auth git-credential"],
     ],
   });
-  await bindWorkerGitHubCheckout(cwd, binding, {
-    ...process.env,
-    ...localIdentityEnv,
-    GH_TOKEN: binding.token,
-    GITHUB_TOKEN: "",
-  });
   if (process.platform === "win32") {
     const permissions = await inspectPathPermissions(profileDir);
     if (
@@ -137,10 +135,21 @@ export async function prepareWorkerGitHubEnvironment(params: {
       permissions.groupWritable ||
       permissions.worldWritable
     ) {
-      log.warn(`GitHub exec binding skipped: profile is not owner-only: ${profileDir}`);
+      log.warn(`GitHub binding skipped: profile is not owner-only: ${profileDir}`);
       return undefined;
     }
   }
+  await bindWorkerGitHubCheckout(
+    cwd,
+    binding,
+    {
+      ...process.env,
+      ...localIdentityEnv,
+      GH_TOKEN: binding.token,
+      GITHUB_TOKEN: "",
+    },
+    signal,
+  );
   return {
     managedLocalIdentity: true,
     excludedStoreNames: [],
