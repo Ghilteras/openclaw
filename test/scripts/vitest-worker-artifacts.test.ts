@@ -784,6 +784,8 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
     { args: ["bench", "--run"], metadata: false },
     { args: ["related", "--run"], metadata: false },
     { args: ["list"], metadata: true },
+    { args: ["doctor"], metadata: true },
+    { args: ["--fsModuleCachePath", "doctor", "run", "fixture.test.ts"], metadata: false },
     { args: ["--browser.headless", "run", "--version"], metadata: false },
     { args: ["--browser.headless", "--version"], metadata: true },
   ])("classifies native execution requests for $args", ({ args, metadata }) => {

@@ -140,6 +140,8 @@ export function createUiE2eVitestConfig(
       projects: [
         {
           ...base,
+          // Each resource owner supplies its complete inventory and setup.
+          extends: false,
           cacheDir: ".artifacts/vite-ui-e2e-bundled",
           test: {
             ...projectTest,
@@ -152,6 +154,7 @@ export function createUiE2eVitestConfig(
         },
         {
           ...base,
+          extends: false,
           cacheDir: ".artifacts/vite-ui-e2e-standalone",
           test: {
             ...projectTest,
@@ -163,6 +166,7 @@ export function createUiE2eVitestConfig(
         },
         {
           ...base,
+          extends: false,
           cacheDir: ".artifacts/vite-ui-e2e-serial",
           test: {
             ...projectTest,
@@ -175,6 +179,7 @@ export function createUiE2eVitestConfig(
         },
         {
           ...base,
+          extends: false,
           cacheDir: ".artifacts/vite-ui-e2e-serial-standalone",
           test: {
             ...projectTest,

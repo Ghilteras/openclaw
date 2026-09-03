@@ -11,7 +11,7 @@ import {
   loadPatternListFromEnv,
   relativizeScopedPatterns,
 } from "../test/vitest/vitest.pattern-file.ts";
-import { loadVitestExperimentalConfig } from "../test/vitest/vitest.performance-config.ts";
+import { loadVitestPerformanceConfig } from "../test/vitest/vitest.performance-config.ts";
 import {
   jsdomOptimizedDeps,
   nonIsolatedRunnerPath,
@@ -107,7 +107,7 @@ function includeUiTests(patterns: string[], env = process.env): string[] {
 }
 
 const sharedUiTestConfig = {
-  ...loadVitestExperimentalConfig(process.env, process.platform, here),
+  ...loadVitestPerformanceConfig(process.env, process.platform, here),
   isolate: false,
   pool: resolveDefaultVitestPool(),
   // Real-Chromium layout tests exceed Vitest's 5s default on 4vcpu CI runners;
@@ -206,9 +206,6 @@ export default defineConfig({
     projects: [
       defineProject({
         plugins: [controlUiLocaleModulesPlugin()],
-        resolve: {
-          alias: workspaceSourceAliases,
-        },
         test: {
           ...sharedUiTestConfig,
           deps: jsdomOptimizedDeps,
@@ -232,9 +229,6 @@ export default defineConfig({
       }),
       defineProject({
         plugins: [controlUiLocaleModulesPlugin()],
-        resolve: {
-          alias: workspaceSourceAliases,
-        },
         test: {
           ...sharedUiTestConfig,
           // Reuse the canonical singleton-sensitive list so the package and
@@ -249,9 +243,6 @@ export default defineConfig({
       }),
       defineProject({
         plugins: [controlUiLocaleModulesPlugin()],
-        resolve: {
-          alias: workspaceSourceAliases,
-        },
         test: {
           ...sharedUiTestConfig,
           deps: jsdomOptimizedDeps,
@@ -264,7 +255,8 @@ export default defineConfig({
           setupFiles: ["./src/test-helpers/lit-warnings.setup.ts"],
         },
       }),
-      createUiBrowserVitestConfig(),
+      // The browser factory also serves a standalone config and owns its aliases.
+      { ...createUiBrowserVitestConfig(), extends: false },
     ],
   },
 });

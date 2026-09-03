@@ -56,7 +56,7 @@ describe("Vitest reporter contracts", () => {
             const normal = await resolveConfig(options);
             const cli = parseCLI(["vitest", "--reporter=json"]).options;
             const override = await resolveConfig({ ...cli, ...options });
-            defaults.push({ config, reporters: normal.vitestConfig.reporters, cli: override.vitestConfig.reporters });
+            defaults.push({ config, reporters: normal.test.reporters, cli: override.test.reporters });
           }
           const customConfig = {
             ...sharedVitestConfig,
@@ -75,9 +75,9 @@ describe("Vitest reporter contracts", () => {
           }));
           console.log("REPORTER_RESOLUTION " + JSON.stringify({
             defaults,
-            custom: custom.vitestConfig.reporters,
-            customCli: customCli.vitestConfig.reporters,
-            injectedPty: injectedPty.vitestConfig.reporters,
+            custom: custom.test.reporters,
+            customCli: customCli.test.reporters,
+            injectedPty: injectedPty.test.reporters,
           }));
         `,
         {

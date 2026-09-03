@@ -7,11 +7,10 @@ import uiConfig from "../ui/vitest.config.ts";
 import uiNodeConfig from "../ui/vitest.node.config.ts";
 import { useAutoCleanupTempDirTracker } from "./helpers/temp-dir.js";
 import { normalizeConfigPath } from "./helpers/vitest-config-paths.js";
-import { loadVitestExperimentalConfig } from "./vitest/vitest.performance-config.ts";
+import { loadVitestPerformanceConfig } from "./vitest/vitest.performance-config.ts";
 import { createUiVitestConfig } from "./vitest/vitest.ui.config.ts";
 
-type ExpectedTestConfig = {
-  experimental?: ReturnType<typeof loadVitestExperimentalConfig>["experimental"];
+type ExpectedTestConfig = ReturnType<typeof loadVitestPerformanceConfig> & {
   include?: string[];
   exclude?: string[];
   browser?: { enabled?: boolean };
@@ -188,14 +187,18 @@ describe("ui package vitest config", () => {
 
   it("uses the repository transform-cache policy at the root and in every UI project", () => {
     const root = requireTestConfig(uiConfig);
-    const expected = loadVitestExperimentalConfig(
+    const expected = loadVitestPerformanceConfig(
       process.env,
       process.platform,
       path.join(process.cwd(), "ui"),
-    ).experimental;
+    );
     const configs = [root, ...(root.projects ?? []).map(requireTestConfig)];
 
-    expect(configs.map((config) => config.experimental)).toEqual(configs.map(() => expected));
+    for (const config of configs) {
+      expect(config.fsModuleCache).toEqual(expected.fsModuleCache);
+      expect(config.fsModuleCachePath).toEqual(expected.fsModuleCachePath);
+      expect(config.experimental).toEqual(expected.experimental);
+    }
   });
 
   it("keeps the standalone ui node config on thread workers without isolation", () => {

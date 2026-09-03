@@ -195,6 +195,22 @@ reconcile dependencies before the remote wrapper starts.
 
 ## Core commands
 
+The test toolchain pins Vitest `5.0.0-rc.4`, including its browser and coverage
+packages. Use `describe(name, { concurrent: false }, callback)` for ordered
+suites. Await asynchronous assertions, keep `vi.mock`/`vi.hoisted` at module
+scope, and perform actions whose mock calls you assert inside the test:
+Vitest clears mock history before each test, including calls from `beforeAll`.
+Name patterns spanning suites use `suite > test`; native JSON retains its
+space-joined `fullName`, so evidence readers match `ancestorTitles` plus `title`.
+
+Filesystem transform caching uses `test.fsModuleCache` and
+`test.fsModuleCachePath`; the existing `OPENCLAW_VITEST_FS_MODULE_CACHE` and
+`OPENCLAW_VITEST_FS_MODULE_CACHE_PATH` controls retain their ownership and
+disable behavior. Cache-key plugins use `defineCacheKeyGenerator`.
+Inline projects inherit root configuration in Vitest 5, including concatenated
+setup and include arrays. The four UI E2E resource projects declare
+`extends: false` because each supplies its complete inventory and setup.
+
 Maintained JavaScript tooling wrappers and root package commands load TypeScript
 through `scripts/tsx.mjs`, using tsx's ESM entry. This preserves native loading of
 compiled ESM plugins and their import-only dependencies, including when loaded

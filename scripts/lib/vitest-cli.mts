@@ -55,6 +55,7 @@ export function parseVitestExecutionArgs(
     if (
       command === "list" ||
       command === "init" ||
+      command === "doctor" ||
       (!namedCommand && "version" in probe.options && probe.options.version)
     ) {
       return null;

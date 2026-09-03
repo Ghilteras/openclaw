@@ -1,5 +1,5 @@
 // Shared CLI classification for the test launcher and config execution hooks.
-const NON_RUN_VITEST_SUBCOMMANDS = new Set(["bench", "list", "related"]);
+const NON_RUN_VITEST_SUBCOMMANDS = new Set(["bench", "doctor", "list", "related"]);
 const VITEST_OPTIONS_WITH_VALUE = new Set([
   "--attachmentsDir",
   "--bail",
@@ -13,6 +13,7 @@ const VITEST_OPTIONS_WITH_VALUE = new Set([
   "--environment",
   "--exclude",
   "--execArgv",
+  "--fsModuleCachePath",
   "--hookTimeout",
   "--inspect",
   "--inspectBrk",
@@ -89,6 +90,7 @@ export const VITEST_SUBCOMMANDS = new Set([
   "list",
   "related",
   "init",
+  "doctor",
 ]);
 
 function* vitestPositionals(argv: string[]) {
