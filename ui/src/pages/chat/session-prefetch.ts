@@ -205,8 +205,12 @@ class SessionPrefetcher {
       this.schedule(selection.deferMs);
     }
     // One transcript at a time: warming is background work, and a burst of full
-    // histories would starve the user's next click on the same socket.
+    // histories would starve the user's next click on the same socket. A pane
+    // that starts loading mid-cycle wins too; its committed event resumes the rest.
     for (const candidate of selection.candidates) {
+      if (!this.snapshot?.presentedTranscriptsReady) {
+        return;
+      }
       await this.prefetchCandidate(snapshot, client, candidate);
     }
   }

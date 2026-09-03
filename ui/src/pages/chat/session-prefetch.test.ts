@@ -343,6 +343,48 @@ describe("recent session prefetch", () => {
     expect(request.mock.calls.map(sessionKeyFromCall)).toEqual(["agent:main:recent"]);
   });
 
+  it("stops the queued warming when a presented transcript starts loading mid-cycle", async () => {
+    const pending: Array<{
+      resolve: (value: ReturnType<typeof historyResult>) => void;
+      sessionKey: string;
+    }> = [];
+    const request = vi.fn((_method: string, params: unknown) => {
+      const sessionKey = (params as { sessionKey: string }).sessionKey;
+      return new Promise<ReturnType<typeof historyResult>>((resolve) => {
+        pending.push({ resolve, sessionKey });
+      });
+    });
+    const state: SessionPrefetchUpdate = {
+      client: { request } as unknown as GatewayBrowserClient,
+      listRevision: 1,
+      openSessionKeys: ["agent:main:main"],
+      rows: [
+        row("agent:main:main", NOW - 1),
+        row("agent:main:recent-1", NOW - 2),
+        row("agent:main:recent-2", NOW - 3),
+      ],
+    };
+    updatePrefetch(state);
+    await vi.advanceTimersByTimeAsync(300);
+    await settlePromises();
+    expect(request.mock.calls.map(sessionKeyFromCall)).toEqual(["agent:main:recent-1"]);
+
+    // The user opens another session while the first warm-up is in flight.
+    updatePrefetch({ ...state, loadingSessionKeys: ["agent:main:main"] });
+    pending.shift()?.resolve(historyResult("agent:main:recent-1"));
+    await settlePromises();
+    expect(request.mock.calls.map(sessionKeyFromCall)).toEqual(["agent:main:recent-1"]);
+
+    updatePrefetch({ ...state, loadingSessionKeys: [] });
+    host.dispatchEvent(new CustomEvent("openclaw-chat-transcript-committed", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(300);
+    await settlePromises();
+    expect(request.mock.calls.map(sessionKeyFromCall)).toEqual([
+      "agent:main:recent-1",
+      "agent:main:recent-2",
+    ]);
+  });
+
   it("keeps repeated roster refreshes within the bounded recent-session snapshot window", async () => {
     const request = vi.fn(async (_method: string, params: unknown) =>
       historyResult((params as { sessionKey: string }).sessionKey),
