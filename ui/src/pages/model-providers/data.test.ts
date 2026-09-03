@@ -209,7 +209,10 @@ describe("buildModelProviderCards", () => {
       ...EMPTY_INPUT,
       configProviderIds: ["github-copilot"],
       models: [catalogEntry({ provider: "github-copilot", available: true })],
-      authStatus: authStatus([], [{ provider: "github-copilot", apiKeySupported: false }]),
+      authStatus: authStatus(
+        [],
+        [{ provider: "github-copilot", apiKeySupported: false, quickApiKeySetup: false }],
+      ),
     });
     expect(firstCard(cards).apiKeySupported).toBe(false);
   });
@@ -218,6 +221,7 @@ describe("buildModelProviderCards", () => {
     const capability = {
       provider: "xai",
       apiKeySupported: true,
+      quickApiKeySetup: false,
       accessOptions: [{ id: "xai-oauth", label: "xAI OAuth", mode: "login" as const }],
     };
     expect(
@@ -272,6 +276,7 @@ describe("buildModelProviderCards", () => {
           {
             provider: "anthropic",
             apiKeySupported: true,
+            quickApiKeySetup: false,
             accessOptions: [{ id: "apiKey", label: "Anthropic API key", mode: "login" }],
           },
         ],

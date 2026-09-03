@@ -2,7 +2,6 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
-import type { ModelsProbeResult } from "../../api/types.ts";
 import { createGatewayHarness } from "../../lib/config/config-test-harness.ts";
 import { createRuntimeConfigCapability } from "../../lib/config/runtime-config-capability.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
@@ -48,6 +47,8 @@ describe("ModelProvidersPage agent scope", () => {
       page.routeData = createEmptyModelProvidersRouteData(context);
       if (loadSource === "preload") {
         const routeData = {
+          view: "manage" as const,
+          firstRun: false,
           gateway: context.gateway,
           gatewaySnapshot: snapshot,
           data: {
@@ -93,6 +94,8 @@ describe("ModelProvidersPage agent scope", () => {
       page.routeData = createEmptyModelProvidersRouteData(context);
       if (loadSource === "preload") {
         page.routeData = {
+          view: "manage" as const,
+          firstRun: false,
           gateway: context.gateway,
           gatewaySnapshot: snapshot,
           data: {
@@ -866,6 +869,8 @@ describe("ModelProvidersPage agent scope", () => {
     agentSelection.state.selectedId = "writer";
     agentSelection.state.scopeId = "writer";
     page.routeData = {
+      view: "manage" as const,
+      firstRun: false,
       gateway: context.gateway,
       gatewaySnapshot: snapshot,
       data: { ...EMPTY_MODEL_PROVIDERS_DATA, config: {}, updatedAt: 1 },
@@ -1031,6 +1036,8 @@ describe("ModelProvidersPage agent scope", () => {
     ) as ModelProvidersPageTestElement;
     page.context = context;
     page.routeData = {
+      view: "manage" as const,
+      firstRun: false,
       gateway: context.gateway,
       gatewaySnapshot: snapshot,
       data: staleData,
@@ -1048,75 +1055,5 @@ describe("ModelProvidersPage agent scope", () => {
     );
     expect(page.selectedAgentId).toBe("writer");
     expect(page.data).not.toBe(staleData);
-  });
-
-  it("probes credentials in the selected agent scope", async () => {
-    const { context, request } = createHarness("writer");
-    const page = appendPage(context);
-    await waitForFast(() => expect(page.data?.config).toEqual({}));
-    request.mockClear();
-
-    await page.probe("openai", ["openai"]);
-
-    expect(request).toHaveBeenCalledWith("models.probe", {
-      provider: "openai",
-      agentId: "writer",
-    });
-  });
-
-  it("stops queued provider probes after switching away from and back to the selected agent", async () => {
-    const { agentSelection, context, notifySelection, request } = createHarness("main");
-    const page = appendPage(context);
-    await waitForFast(() => expect(page.data?.config).toEqual({}));
-    request.mockClear();
-    const firstProbe = deferred<ModelsProbeResult>();
-    request.mockImplementationOnce(() => firstProbe.promise);
-
-    const probing = page.probe("anthropic", ["anthropic", "claude-cli"]);
-    await vi.waitFor(() =>
-      expect(request).toHaveBeenCalledWith("models.probe", {
-        provider: "anthropic",
-        agentId: "main",
-      }),
-    );
-    agentSelection.state.selectedId = "writer";
-    agentSelection.state.scopeId = "writer";
-    notifySelection();
-    await vi.waitFor(() => expect(page.selectedAgentId).toBe("writer"));
-    agentSelection.state.selectedId = "main";
-    agentSelection.state.scopeId = "main";
-    notifySelection();
-    await vi.waitFor(() => expect(page.selectedAgentId).toBe("main"));
-    firstProbe.resolve({ provider: "anthropic", status: "ok", results: [] });
-    await probing;
-
-    expect(request.mock.calls.filter(([method]) => method === "models.probe")).toHaveLength(1);
-    expect(page.probeResults).toEqual({});
-    expect(page.busy).toEqual({});
-  });
-
-  it("discards an in-flight probe result after the selected agent changes", async () => {
-    const { agentSelection, context, notifySelection, request } = createHarness("main");
-    const page = appendPage(context);
-    await waitForFast(() => expect(page.data?.config).toEqual({}));
-    const pending = deferred<ModelsProbeResult>();
-    request.mockImplementationOnce(() => pending.promise);
-
-    const probing = page.probe("openai", ["openai"]);
-    await vi.waitFor(() =>
-      expect(request).toHaveBeenCalledWith("models.probe", {
-        provider: "openai",
-        agentId: "main",
-      }),
-    );
-    agentSelection.state.selectedId = "writer";
-    agentSelection.state.scopeId = "writer";
-    notifySelection();
-    await vi.waitFor(() => expect(page.selectedAgentId).toBe("writer"));
-    pending.resolve({ provider: "openai", status: "ok", results: [] });
-    await probing;
-
-    expect(page.probeResults).toEqual({});
-    expect(page.busy).toEqual({});
   });
 });

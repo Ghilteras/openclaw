@@ -35,6 +35,8 @@ describe("ModelProvidersPage usage convergence", () => {
     expect(harness.request).not.toHaveBeenCalled();
 
     page.routeData = {
+      view: "manage" as const,
+      firstRun: false,
       gateway: harness.context.gateway,
       gatewaySnapshot: harness.context.gateway.snapshot,
       client: harness.context.gateway.snapshot.client,
@@ -168,6 +170,8 @@ describe("ModelProvidersPage usage convergence", () => {
     // "nothing loaded yet" reason. Treating that as unresolved would count down
     // the budget and warn about a stall that never happened.
     page.routeData = {
+      view: "manage" as const,
+      firstRun: false,
       gateway: harness.context.gateway,
       gatewaySnapshot: harness.context.gateway.snapshot,
       data: EMPTY_MODEL_PROVIDERS_DATA,

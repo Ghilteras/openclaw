@@ -34,6 +34,7 @@ function mount(overrides: Partial<ModelSetupViewProps> = {}): HTMLDivElement {
     canPrepare: true,
     gatewayTooOld: false,
     refreshWarning: null,
+    prepareMessage: null,
     actionsDisabled: false,
     manualProviderId: "",
     manualApiKey: "",

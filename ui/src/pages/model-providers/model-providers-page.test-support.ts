@@ -55,35 +55,41 @@ export function createHarness(initialScopeId: string) {
   };
   let usageStatus: unknown = { updatedAt: 1, providers: [] };
   let usageStatusRejects = false;
-  const request = vi.fn(async (method: string, _params?: unknown): Promise<unknown> => {
-    switch (method) {
-      case "models.authStatus": {
-        if (pendingAuthStatus) {
-          const gate = pendingAuthStatus;
-          pendingAuthStatus = null;
-          await gate;
+  const request = vi.fn(
+    async (
+      method: string,
+      _params?: Record<string, unknown>,
+      _options?: { signal?: AbortSignal },
+    ): Promise<unknown> => {
+      switch (method) {
+        case "models.authStatus": {
+          if (pendingAuthStatus) {
+            const gate = pendingAuthStatus;
+            pendingAuthStatus = null;
+            await gate;
+          }
+          return {
+            ts: 1,
+            providers: [],
+            providerCapabilities: [{ provider: "anthropic", apiKeySupported: true }],
+          };
         }
-        return {
-          ts: 1,
-          providers: [],
-          providerCapabilities: [{ provider: "anthropic", apiKeySupported: true }],
-        };
+        case "models.list":
+          return { models: [] };
+        case "config.get":
+          return { config: {}, hash: "hash" };
+        case "usage.status":
+          if (usageStatusRejects) {
+            throw new Error("usage.status unavailable");
+          }
+          return usageStatus;
+        case "sessions.usage":
+          return { aggregates: { byProvider: [] } };
+        default:
+          return {};
       }
-      case "models.list":
-        return { models: [] };
-      case "config.get":
-        return { config: {}, hash: "hash" };
-      case "usage.status":
-        if (usageStatusRejects) {
-          throw new Error("usage.status unavailable");
-        }
-        return usageStatus;
-      case "sessions.usage":
-        return { aggregates: { byProvider: [] } };
-      default:
-        return {};
-    }
-  });
+    },
+  );
   const client = { request } as unknown as GatewayBrowserClient;
   const snapshot: ApplicationGatewaySnapshot = {
     client,

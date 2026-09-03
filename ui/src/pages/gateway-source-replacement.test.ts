@@ -523,6 +523,8 @@ describe("gateway source replacement across reconnect with a reused client", () 
       data: ModelProvidersData | null;
     };
     page.routeData = {
+      view: "manage" as const,
+      firstRun: false,
       gateway: context.gateway,
       gatewaySnapshot: { ...context.gateway.snapshot },
       data: staleData,
