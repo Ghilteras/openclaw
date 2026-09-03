@@ -1,4 +1,3 @@
-import path from "node:path";
 import {
   ErrorCodes,
   errorShape,
@@ -15,17 +14,10 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveTranscriptsConfig } from "../../transcripts/config.js";
 import { projectTranscriptSession, readTranscriptNotes } from "../../transcripts/read.js";
 import type { TranscriptReadEntry } from "../../transcripts/store-read.js";
-import { TranscriptsStore } from "../../transcripts/store.js";
+import { createTranscriptsStore } from "../../transcripts/store.js";
 import { truncateUtf16Safe } from "../../utils.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { assertValidParams } from "./validation.js";
-
-function createStore() {
-  const stateDir = resolveStateDir();
-  return new TranscriptsStore(path.join(stateDir, "transcripts"), {
-    env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
-  });
-}
 
 function projectSessions(entries: TranscriptReadEntry[], config: OpenClawConfig) {
   const names = new Map<string, string | undefined>();
@@ -51,7 +43,7 @@ export const transcriptsHandlers: GatewayRequestHandlers = {
     if (!assertValidParams(params, validateTranscriptsListParams, "transcripts.list", respond)) {
       return;
     }
-    const entries = createStore().listReadEntries({
+    const entries = createTranscriptsStore().listReadEntries({
       limit: params.limit ?? 50,
       providerId: params.providerId,
     });
@@ -61,7 +53,7 @@ export const transcriptsHandlers: GatewayRequestHandlers = {
     if (!assertValidParams(params, validateTranscriptsGetParams, "transcripts.get", respond)) {
       return;
     }
-    const store = createStore();
+    const store = createTranscriptsStore();
     const session = await store.readSession(params.selector);
     if (!session) {
       respond(

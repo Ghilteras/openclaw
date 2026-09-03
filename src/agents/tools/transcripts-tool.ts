@@ -12,6 +12,7 @@ import type {
 } from "../../transcripts/provider-types.js";
 import { sanitizeTranscriptSourceLocator } from "../../transcripts/source-locator.js";
 import {
+  createTranscriptsStore,
   transcriptSessionSelector,
   TranscriptsSummaryChangedError,
   type TranscriptsStore,
@@ -22,7 +23,6 @@ import {
   activeSessions,
   authorizeTranscriptSource,
   createTranscriptSessionId,
-  createTranscriptsStore,
   persistTranscriptSummary,
   readTranscriptStringParam,
   readTranscriptSummary,
@@ -314,7 +314,7 @@ export function createTranscriptsTool(options?: {
       ) {
         throw new Error("selector is only supported for stop, summarize, or show.");
       }
-      const store = createTranscriptsStore(ctx);
+      const store = createTranscriptsStore(ctx.stateDir);
       switch (action) {
         case "list":
           return await listPastTranscripts({ ctx, store, rawParams: params });

@@ -1,6 +1,4 @@
-import path from "node:path";
 import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion";
-import { resolveStateDir } from "../config/paths.js";
 import { KeyedAsyncQueue } from "../plugin-sdk/keyed-async-queue.js";
 import { resolveTranscriptsConfig } from "../transcripts/config.js";
 import type {
@@ -12,7 +10,7 @@ import type {
   TranscriptUtterance,
 } from "../transcripts/provider-types.js";
 import { sanitizeTranscriptSourceLocator } from "../transcripts/source-locator.js";
-import { TranscriptsStore } from "../transcripts/store.js";
+import { createTranscriptsStore } from "../transcripts/store.js";
 import { summarizeTranscripts } from "../transcripts/summary.js";
 import { MeetingTranscriptDeliveryError } from "./session-transcript-store.js";
 import type { MeetingSessionRecord, MeetingTranscriptLine } from "./session-types.js";
@@ -93,10 +91,7 @@ export function createMeetingDurableTranscriptBridge<
   options: MeetingDurableTranscriptsOptions;
 }): MeetingDurableTranscriptBridge<TSession> {
   const config = resolveTranscriptsConfig(params.options.config);
-  const stateDir = params.options.stateDir ?? resolveStateDir();
-  const store = new TranscriptsStore(path.join(stateDir, "transcripts"), {
-    env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
-  });
+  const store = createTranscriptsStore(params.options.stateDir);
   const captures = new Map<string, ActiveCapture>();
   const pendingSubscribers = new Map<string, Subscriber>();
   const subscribers = new Map<string, Subscriber>();

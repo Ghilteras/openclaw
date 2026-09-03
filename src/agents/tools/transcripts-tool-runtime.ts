@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveTranscriptsConfig } from "../../transcripts/config.js";
 import { manualTranscriptSourceProvider } from "../../transcripts/manual-source.js";
@@ -14,7 +13,7 @@ import type {
 } from "../../transcripts/provider-types.js";
 import { sanitizeTranscriptSourceLocator } from "../../transcripts/source-locator.js";
 import { transcriptSessionSelector } from "../../transcripts/store-artifacts.js";
-import { TranscriptsStore, TranscriptsSummaryChangedError } from "../../transcripts/store.js";
+import { TranscriptsSummaryChangedError, type TranscriptsStore } from "../../transcripts/store.js";
 import { summarizeTranscriptsWithModel } from "../../transcripts/summary-model.js";
 import { summarizeTranscripts } from "../../transcripts/summary.js";
 import { truncateUtf16Safe } from "../../utils.js";
@@ -69,12 +68,6 @@ const startingSessionIds = new Set<string>();
 
 export function isTranscriptSessionStarting(sessionId: string): boolean {
   return startingSessionIds.has(sessionId);
-}
-
-export function createTranscriptsStore(ctx: TranscriptsRuntimeContext): TranscriptsStore {
-  return new TranscriptsStore(path.join(ctx.stateDir, "transcripts"), {
-    env: { ...process.env, OPENCLAW_STATE_DIR: ctx.stateDir },
-  });
 }
 
 export async function readTranscriptSummary(params: {

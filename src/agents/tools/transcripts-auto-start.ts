@@ -10,12 +10,11 @@ import type {
   TranscriptSessionDescriptor,
 } from "../../transcripts/provider-types.js";
 import { sanitizeTranscriptSourceLocator } from "../../transcripts/source-locator.js";
-import type { TranscriptsStore } from "../../transcripts/store.js";
+import { createTranscriptsStore, type TranscriptsStore } from "../../transcripts/store.js";
 import { truncateUtf16Safe } from "../../utils.js";
 import {
   activeSessions,
   createTranscriptSessionId,
-  createTranscriptsStore,
   isTranscriptSessionStarting,
   resolveSourceProvider,
   resolveTranscriptSourceOwnership,
@@ -430,7 +429,7 @@ export function createTranscriptsAutoStartService(ctx: TranscriptsRuntimeContext
       if (!config.enabled || !config.autoStart.length) {
         return;
       }
-      const store = createTranscriptsStore(ctx);
+      const store = createTranscriptsStore(ctx.stateDir);
       for (const [index, entry] of config.autoStart.entries()) {
         if (entry.whenOccupied) {
           watchEntry(entry, index, store);
@@ -465,7 +464,7 @@ export function createTranscriptsAutoStartService(ctx: TranscriptsRuntimeContext
       if (pendingStartsSettled) {
         await Promise.allSettled(pendingStops);
       }
-      const store = createTranscriptsStore(ctx);
+      const store = createTranscriptsStore(ctx.stateDir);
       for (const [sessionId, lifecycleToken] of startedSessions) {
         await stopCapture({ sessionId, lifecycleToken }, store);
       }
