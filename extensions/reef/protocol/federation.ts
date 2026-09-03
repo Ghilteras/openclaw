@@ -12,6 +12,13 @@ type PromptFrameBinding = {
 };
 
 export type ReefFederationFrame =
+  | {
+      type: "session.mount.offer";
+      mountId: string;
+      sessionKey: string;
+      sessionId: string;
+      grantGeneration: number;
+    }
   | (PromptFrameBinding & {
       type: "session.prompt.propose";
       grantGeneration: number;
@@ -70,7 +77,7 @@ export function createReefFederatedPromptDigest(params: {
 /** Return whether an opened Reef body belongs to the session-federation namespace. */
 export function isReefFederationBody(value: unknown): value is ReefFederationBody {
   return (
-    isRecord(value) &&
+    isFederationRecord(value) &&
     value.namespace === REEF_FEDERATION_NAMESPACE &&
     Object.keys(value).length === 2 &&
     "frame" in value
@@ -79,11 +86,18 @@ export function isReefFederationBody(value: unknown): value is ReefFederationBod
 
 /** Validate a bounded, exact session-federation body before it reaches runtime logic. */
 export function validateReefFederationBody(value: unknown): asserts value is ReefFederationBody {
-  if (!isReefFederationBody(value) || !isRecord(value.frame)) {
+  if (!isReefFederationBody(value) || !isFederationRecord(value.frame)) {
     throw new Error("invalid federation body");
   }
   const frame = value.frame;
   switch (frame.type) {
+    case "session.mount.offer":
+      assertExactKeys(frame, ["type", "mountId", "sessionKey", "sessionId", "grantGeneration"]);
+      assertId(frame.mountId, "mount id");
+      assertBoundedText(frame.sessionKey, 256, "session key");
+      assertId(frame.sessionId, "session id");
+      assertGeneration(frame.grantGeneration);
+      return;
     case "session.prompt.propose":
       assertExactKeys(frame, [
         "type",
@@ -109,7 +123,7 @@ export function validateReefFederationBody(value: unknown): asserts value is Ree
     case "session.prompt.denied":
       assertExactKeys(frame, ["type", "mountId", "proposalId", "sessionId", "reason"]);
       assertPromptBinding(frame);
-      if (!new Set(["host-denied", "grant-revoked", "stale-session"]).has(String(frame.reason))) {
+      if (!new Set(["host-denied", "grant-revoked", "stale-session"]).has(frame.reason)) {
         throw new Error("invalid denial reason");
       }
       return;
@@ -168,6 +182,6 @@ function assertExactKeys(value: Record<string, unknown>, keys: readonly string[]
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isFederationRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }

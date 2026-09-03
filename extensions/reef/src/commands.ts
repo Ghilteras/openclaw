@@ -1,5 +1,6 @@
+import { prepareReefMessageId } from "./flow.js";
 import { ReefAutonomySchema } from "./friend-types.js";
-import { getActiveReef } from "./runtime.js";
+import { getActiveReef, getReefRuntime } from "./runtime.js";
 
 export async function handleReefCommand({
   args,
@@ -12,7 +13,8 @@ export async function handleReefCommand({
   const changesFriendship =
     words[0] === "friend" && /^(code|request|remove|block|autonomy)$/.test(words[1] ?? "");
   const decidesReview = words[0] === "review" && /^(approve|deny)$/.test(words[1] ?? "");
-  if ((changesFriendship || decidesReview) && senderIsOwner !== true) {
+  const changesSession = words[0] === "session" && words[1] !== "list";
+  if ((changesFriendship || decidesReview || changesSession) && senderIsOwner !== true) {
     return {
       text: "Only an owner in commands.ownerAllowFrom can change Reef friends or decide reviews. Ask a configured owner; friendship changes can also use openclaw reef locally.",
     };
@@ -52,6 +54,79 @@ export async function handleReefCommand({
     await active.friends.setAutonomy(peer, autonomy);
     return { text: `Reef friend @${peer} autonomy set to ${autonomy}.` };
   }
+  if (words[0] === "session" && words[1] === "share" && words[2] && words[3]) {
+    const peer = words[2].replace(/^@/, "").toLowerCase();
+    const sessionKey = words[3];
+    const friend = active.trust.get(peer);
+    if (!friend || friend.safetyNumberChanged) {
+      return { text: `Reef peer @${peer} is not approved with current keys.` };
+    }
+    const result = await getReefRuntime().gateway.request<{
+      sessions?: Array<{ key?: string; sessionId?: string }>;
+    }>("sessions.list", { search: sessionKey, limit: 20 });
+    const session = result.sessions?.find((entry) => entry.key === sessionKey);
+    if (!session?.sessionId) {
+      return { text: `Session ${sessionKey} was not found.` };
+    }
+    const mountId = `reef-mount-${prepareReefMessageId()}`;
+    const mount = {
+      mountId,
+      peer,
+      peerKeyEpoch: friend.keyEpoch,
+      role: "host" as const,
+      sessionKey,
+      sessionId: session.sessionId,
+      grantGeneration: 0,
+      allowAlways: false,
+    };
+    active.federation.createMount(mount);
+    await active.flow.sendFederation(peer, {
+      type: "session.mount.offer",
+      mountId,
+      sessionKey,
+      sessionId: session.sessionId,
+      grantGeneration: 0,
+    });
+    return { text: `Shared ${sessionKey} with @${peer} as mount ${mountId}.` };
+  }
+  if (words[0] === "session" && words[1] === "prompt" && words[2] && words[3]) {
+    const mount = active.federation.getMount(words[2]);
+    if (!mount || mount.role !== "guest") {
+      return { text: `Unknown guest Reef session mount ${words[2]}.` };
+    }
+    const proposalId = await active.flow.proposeFederatedPrompt(mount, words.slice(3).join(" "));
+    return { text: `Sent Reef prompt proposal ${proposalId}.` };
+  }
+  if (words[0] === "session" && words[1] === "revoke" && words[2]) {
+    const mount = active.federation.getMount(words[2]);
+    if (!mount || mount.role !== "host") {
+      return { text: `Unknown host Reef session mount ${words[2]}.` };
+    }
+    const revoked = active.federation.revoke(mount.mountId, mount.grantGeneration);
+    if (!revoked) {
+      return { text: `Reef session mount ${mount.mountId} changed before revocation.` };
+    }
+    await active.flow.sendFederation(mount.peer, {
+      type: "session.grant.revoked",
+      mountId: mount.mountId,
+      sessionId: mount.sessionId,
+      grantGeneration: revoked.grantGeneration,
+    });
+    return { text: `Revoked Reef session mount ${mount.mountId}.` };
+  }
+  if (words[0] === "session" && words[1] === "list") {
+    const mounts = active.federation.listMounts();
+    return {
+      text: mounts.length
+        ? mounts
+            .map(
+              (mount) =>
+                `${mount.mountId} ${mount.role} @${mount.peer} ${mount.sessionKey} generation=${mount.grantGeneration}${mount.allowAlways ? " allow-always" : " ask"}`,
+            )
+            .join("\n")
+        : "No Reef session mounts.",
+    };
+  }
   if (words[0] === "review" && words[1] === "list") {
     const reviews = await active.reviews.list();
     return {
@@ -78,6 +153,6 @@ export async function handleReefCommand({
     };
   }
   return {
-    text: "Usage: /reef friend code|request <handle> [code]|list|remove <handle>|autonomy <handle> <notify-only|bounded|extended>; /reef review list|approve <digest>|deny <digest>",
+    text: "Usage: /reef friend code|request <handle> [code]|list|remove <handle>|autonomy <handle> <notify-only|bounded|extended>; /reef review list|approve <digest>|deny <digest>; /reef session share <handle> <session-key>|list|prompt <mount-id> <text>|revoke <mount-id>",
   };
 }

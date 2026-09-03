@@ -12,6 +12,7 @@ export type ReefFederationMount = {
   mountId: string;
   peer: string;
   peerKeyEpoch: number;
+  role: "host" | "guest";
   sessionKey: string;
   sessionId: string;
   grantGeneration: number;
@@ -53,6 +54,11 @@ export class ReefFederationState {
     return this.#mounts.registerIfAbsent(mountKey(mount.mountId), structuredClone(mount));
   }
 
+  /** List validated mounts for owner commands and status surfaces. */
+  listMounts(): ReefFederationMount[] {
+    return this.#mounts.entries().map((entry) => validateMount(entry.value));
+  }
+
   /** Read one validated mount by its public identifier. */
   getMount(mountId: string): ReefFederationMount | undefined {
     const value = this.#mounts.lookup(mountKey(mountId));
@@ -79,6 +85,27 @@ export class ReefFederationState {
       return revoked;
     });
     return revoked;
+  }
+
+  /** Apply a peer-issued revocation only when it advances the local authority generation. */
+  applyRevocation(mountId: string, generation: number): boolean {
+    let changed = false;
+    const update = this.#mounts.update;
+    if (!update) {
+      throw new Error("Reef federation mounts require atomic plugin-state updates");
+    }
+    update(mountKey(mountId), (existing) => {
+      if (!existing) {
+        return existing;
+      }
+      const mount = validateMount(existing);
+      if (generation <= mount.grantGeneration) {
+        return mount;
+      }
+      changed = true;
+      return { ...mount, grantGeneration: generation, allowAlways: false };
+    });
+    return changed;
   }
 
   /** Claim one exact proposal; duplicate IDs return the prior outcome, while digest reuse fails. */
@@ -169,6 +196,7 @@ function validateMount(value: ReefFederationMount): ReefFederationMount {
     typeof value.peer !== "string" ||
     !Number.isSafeInteger(value.peerKeyEpoch) ||
     value.peerKeyEpoch < 1 ||
+    !["host", "guest"].includes(value.role) ||
     typeof value.sessionKey !== "string" ||
     typeof value.sessionId !== "string" ||
     !Number.isSafeInteger(value.grantGeneration) ||

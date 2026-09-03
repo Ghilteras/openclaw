@@ -167,6 +167,7 @@ export class ReefFederationCoordinator {
     const { frame, mount } = params;
     if (
       !mount ||
+      mount.role !== "host" ||
       mount.peer !== params.peer ||
       mount.peerKeyEpoch !== params.peerKeyEpoch ||
       mount.grantGeneration !== frame.grantGeneration

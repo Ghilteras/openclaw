@@ -1,12 +1,10 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import type { OpenKeyedStoreOptions } from "openclaw/plugin-sdk/plugin-state-runtime";
 import {
   createPluginStateSyncKeyedStoreForTests,
   resetPluginStateStoreForTests,
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
+import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ReefFederationState, type ReefFederationMount } from "./federation-state.js";
 
@@ -24,23 +22,25 @@ const mount: ReefFederationMount = {
   mountId: "mount-1",
   peer: "guest",
   peerKeyEpoch: 1,
+  role: "host",
   sessionKey: "agent:main:shared",
   sessionId: "session-1",
   grantGeneration: 0,
   allowAlways: false,
 };
 
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
 describe("Reef federation state", () => {
   let stateDir = "";
 
   beforeEach(() => {
     resetPluginStateStoreForTests();
-    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-reef-federation-"));
+    stateDir = tempDirs.make("openclaw-reef-federation-");
   });
 
   afterEach(() => {
     resetPluginStateStoreForTests();
-    fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
   it("persists session-scoped grants and revokes them by generation", () => {
@@ -58,6 +58,12 @@ describe("Reef federation state", () => {
       grantGeneration: 1,
     });
     expect(state.allowAlways(mount.mountId, 0)).toBe(false);
+    expect(state.applyRevocation(mount.mountId, 3)).toBe(true);
+    expect(state.getMount(mount.mountId)).toMatchObject({
+      allowAlways: false,
+      grantGeneration: 3,
+    });
+    expect(state.applyRevocation(mount.mountId, 2)).toBe(false);
   });
 
   it("deduplicates an exact proposal and rejects ID rebinding", () => {

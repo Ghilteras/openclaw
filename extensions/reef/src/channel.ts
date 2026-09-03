@@ -21,6 +21,8 @@ import {
   resolveReefConfig,
   type ReefCoreConfig,
 } from "./config-schema.js";
+import { ReefFederationCoordinator } from "./federation-coordinator.js";
+import { ReefFederationState } from "./federation-state.js";
 import { createConfiguredGuard, ReefMessageFlow } from "./flow.js";
 import { ReefFriendManager } from "./friends.js";
 import { resolveReefInboundDispatchContent } from "./inbound.js";
@@ -48,6 +50,26 @@ import {
 } from "./transport.js";
 import { isReefPairingApprovalToken, openReefTrustStore } from "./trust-store.js";
 import type { ReefAccount, ReefIngressMessage } from "./types.js";
+
+function formatFederationOutcome(
+  peer: string,
+  frame: Exclude<
+    import("../protocol/federation.js").ReefFederationFrame,
+    { type: "session.mount.offer" | "session.prompt.propose" }
+  >,
+): string {
+  switch (frame.type) {
+    case "session.prompt.accepted":
+      return `Reef prompt ${frame.proposalId} was accepted by @${peer}.`;
+    case "session.prompt.denied":
+      return `Reef prompt ${frame.proposalId} was denied by @${peer}: ${frame.reason}.`;
+    case "session.prompt.failed":
+      return `Reef prompt ${frame.proposalId} failed at @${peer}: ${frame.message}`;
+    case "session.grant.revoked":
+      return `Reef session mount ${frame.mountId} was revoked by @${peer}.`;
+  }
+  throw new Error("unsupported Reef federation outcome");
+}
 
 function resolveAccount(cfg: unknown): ReefAccount {
   const config = resolveReefConfig(cfg as ReefCoreConfig);
@@ -340,7 +362,9 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
         accountId: "default",
         handle: ctx.account.config.handle!,
       });
-      const flow: ReefMessageFlow = new ReefMessageFlow({
+      const federation = new ReefFederationState(runtime);
+      const federationCoordinator = new ReefFederationCoordinator(runtime, federation);
+      const flow = new ReefMessageFlow({
         config: ctx.account.config,
         trust,
         keys,
@@ -352,6 +376,53 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
         delivered: stores.delivered,
         authoritySignal: authority.signal,
         onIngress,
+        onFederation: async ({ peer, from, to, frame }) => {
+          if (frame.type === "session.mount.offer") {
+            const friend = trust.get(peer);
+            if (!friend || friend.safetyNumberChanged) {
+              throw new Error(`unapproved Reef sender @${peer}`);
+            }
+            federation.createMount({
+              mountId: frame.mountId,
+              peer,
+              peerKeyEpoch: friend.keyEpoch,
+              role: "guest",
+              sessionKey: frame.sessionKey,
+              sessionId: frame.sessionId,
+              grantGeneration: frame.grantGeneration,
+              allowAlways: false,
+            });
+            await ownerNotice({
+              text: `Reef session mount ${frame.mountId} from @${peer} is ready.`,
+              peer,
+              contextKey: `reef:federation:${frame.mountId}`,
+            });
+            return;
+          }
+          if (frame.type === "session.prompt.propose") {
+            const friend = trust.get(peer);
+            if (!friend || friend.safetyNumberChanged) {
+              throw new Error(`unapproved Reef sender @${peer}`);
+            }
+            const outcome = await federationCoordinator.handlePrompt({
+              from,
+              to,
+              peer,
+              peerKeyEpoch: friend.keyEpoch,
+              frame,
+            });
+            await flow.sendFederation(peer, outcome);
+            return;
+          }
+          if (frame.type === "session.grant.revoked") {
+            federation.applyRevocation(frame.mountId, frame.grantGeneration);
+          }
+          await ownerNotice({
+            text: formatFederationOutcome(peer, frame),
+            peer,
+            contextKey: `reef:federation:${frame.mountId}:${"proposalId" in frame ? frame.proposalId : frame.grantGeneration}`,
+          });
+        },
         onOwnerNotice: async (text) =>
           ownerNotice({
             text,
@@ -455,7 +526,7 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
         if (ctx.abortSignal.aborted) {
           return;
         }
-        authority.activate({ flow, friends, reviews });
+        authority.activate({ flow, friends, reviews, federation, trust });
         ctx.setStatus({ accountId: "default", running: true, connected: false });
       };
       const inbox = new ReefInboxConnection(

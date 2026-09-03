@@ -12,6 +12,7 @@ const mount: ReefFederationMount = {
   mountId: "mount-1",
   peer: "guest",
   peerKeyEpoch: 1,
+  role: "host",
   sessionKey: "agent:main:shared",
   sessionId: "session-1",
   grantGeneration: 0,
@@ -42,8 +43,12 @@ function promptFrame(
   };
 }
 
-function fixture(options?: { allowAlways?: boolean }) {
-  let currentMount = { ...mount, allowAlways: options?.allowAlways ?? false };
+function fixture(options?: { allowAlways?: boolean; role?: ReefFederationMount["role"] }) {
+  let currentMount = {
+    ...mount,
+    allowAlways: options?.allowAlways ?? false,
+    role: options?.role ?? mount.role,
+  };
   const proposals = new Map<string, ReefFederationProposal>();
   const state = {
     getMount: vi.fn(() => ({ ...currentMount })),
@@ -82,13 +87,23 @@ function fixture(options?: { allowAlways?: boolean }) {
       },
     ),
   };
-  const request = vi.fn(async (method: string) =>
-    method === "plugin.approval.request"
-      ? { id: "plugin:approval-1", decision: "allow-once" }
-      : { runId: "run-1" },
+  const request = vi.fn(
+    async (method: string, _params?: Record<string, unknown>, _options?: { timeoutMs?: number }) =>
+      method === "plugin.approval.request"
+        ? { id: "plugin:approval-1", decision: "allow-once" }
+        : { runId: "run-1" },
   );
+  const gatewayRequest = async <T>(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { timeoutMs?: number },
+  ): Promise<T> => {
+    const response = await request(method, params, options);
+    // SAFETY: this fixture returns the exact response shape for each method the coordinator calls.
+    return response as T;
+  };
   const coordinator = new ReefFederationCoordinator(
-    { gateway: { isAvailable: async () => true, request } },
+    { gateway: { isAvailable: async () => true, request: gatewayRequest } },
     state,
   );
   return { coordinator, request, state, proposals };
@@ -180,6 +195,16 @@ describe("Reef federation coordinator", () => {
     ).resolves.toMatchObject({
       type: "session.prompt.denied",
       reason: "stale-session",
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("rejects a guest-side mount offered back to the host", async () => {
+    const { coordinator, request } = fixture({ role: "guest" });
+
+    await expect(handle(coordinator)).resolves.toMatchObject({
+      type: "session.prompt.denied",
+      reason: "grant-revoked",
     });
     expect(request).not.toHaveBeenCalled();
   });
