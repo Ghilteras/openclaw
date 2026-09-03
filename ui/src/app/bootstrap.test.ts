@@ -2,6 +2,7 @@ import type { RouteLocation } from "@openclaw/uirouter";
 import { describe, expect, it, vi } from "vitest";
 import { CONTROL_UI_BASE_PATH_ATTRIBUTE } from "../../../src/gateway/control-ui-contract.js";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
+import { INTERNAL_SESSION_PATH_PARAM } from "../app-route-paths.ts";
 import { routeIdFromPath, type RouteId } from "../app-routes.ts";
 import {
   isDefaultChatLanding,
@@ -341,6 +342,88 @@ describe("bootstrapApplication", () => {
           previousResourceBasePath,
         );
       }
+    }
+  });
+
+  it("starts downloading an explicit route's page module before the router starts", async () => {
+    const previousSettings = loadSettings();
+    const previousUrl = window.location.href;
+    window.history.replaceState({}, "", "/settings/appearance");
+    const sessionPathBuilder = deferred<void>();
+    const runtime = bootstrapApplication({ sessionPathBuilderReady: sessionPathBuilder.promise });
+    const route = runtime.router.getRoute("appearance");
+    if (!route) {
+      throw new Error("expected the appearance route");
+    }
+    const component = vi.spyOn(route, "component");
+    const routerStart = vi.spyOn(runtime.router, "start");
+
+    try {
+      const start = runtime.start();
+      // The warm-up does not wait for the session-url chunk the router start needs.
+      expect(component).toHaveBeenCalledOnce();
+      expect(routerStart).not.toHaveBeenCalled();
+      sessionPathBuilder.resolve();
+      await start;
+
+      const match = runtime.router.getState().matches[0];
+      expect(match?.routeId).toBe("appearance");
+      expect(match?.fetchCount).toBe(1);
+    } finally {
+      runtime.stop();
+      saveSettings(previousSettings);
+      window.history.replaceState({}, "", previousUrl);
+    }
+  });
+
+  it("does not warm the default chat landing before first-run setup resolves", async () => {
+    const previousSettings = loadSettings();
+    const previousUrl = window.location.href;
+    saveSettings({ ...previousSettings, sessionKey: "", lastActiveSessionKey: "" });
+    window.history.replaceState({}, "", "/chat");
+    const runtime = bootstrapApplication({ sessionPathBuilderReady: Promise.resolve() });
+    const route = runtime.router.getRoute("chat");
+    if (!route) {
+      throw new Error("expected the chat route");
+    }
+    const component = vi.spyOn(route, "component");
+
+    try {
+      const start = runtime.start();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(component).not.toHaveBeenCalled();
+      runtime.stop();
+      await start.catch(() => undefined);
+    } finally {
+      runtime.stop();
+      saveSettings(previousSettings);
+      window.history.replaceState({}, "", previousUrl);
+    }
+  });
+
+  it("bridges dynamic session paths when preloading through the application context", async () => {
+    const previousSettings = loadSettings();
+    const previousUrl = window.location.href;
+    window.history.replaceState({}, "", "/settings/appearance");
+    const runtime = bootstrapApplication({ sessionPathBuilderReady: Promise.resolve() });
+    const preloadLocation = vi.spyOn(runtime.router, "preloadLocation");
+
+    try {
+      await runtime.start();
+      preloadLocation.mockClear();
+      // The chat loader waits for a Gateway that never connects here; the bridge
+      // is observable synchronously from the router call.
+      void runtime.context.preload("chat", { pathname: "/chat/main/question-b9d6252e" });
+
+      const [location] = preloadLocation.mock.calls[0] ?? [];
+      expect(location?.pathname).toBe("/chat");
+      expect(new URLSearchParams(location?.search).get(INTERNAL_SESSION_PATH_PARAM)).toBe(
+        "/chat/main/question-b9d6252e",
+      );
+    } finally {
+      runtime.stop();
+      saveSettings(previousSettings);
+      window.history.replaceState({}, "", previousUrl);
     }
   });
 

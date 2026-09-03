@@ -8,9 +8,11 @@ import type { GatewayBrowserClient } from "../api/gateway.ts";
 import {
   createApplicationRouter,
   locationForRoute,
+  preloadApplicationLocation,
   routeIdFromPath,
   sameRouteLocation,
   startApplicationRouter,
+  warmApplicationRouteModule,
   type ApplicationRouter,
   type RouteId,
 } from "../app-routes.ts";
@@ -475,7 +477,8 @@ export function bootstrapApplication(): ApplicationRuntime {
       void navigateWithMode(routeId, options, "replace");
     },
     revalidate: (routeId) => router.revalidate(context, routeId),
-    preload: (routeId, options) => router.preloadLocation(routeLocation(routeId, options), context),
+    preload: (routeId, options) =>
+      preloadApplicationLocation(router, routeLocation(routeId, options), basePath, context),
   };
   return {
     context,
@@ -499,6 +502,13 @@ export function bootstrapApplication(): ApplicationRuntime {
         },
         () => startGatewayPageActivation(gateway, document, window),
       ];
+      if (startsApplicationRouter && !firstRunDefaultLanding) {
+        // An explicit route is final before the shared boot chunks land, so its page
+        // chunks download now, alongside them and the Gateway handshake, instead of one
+        // wave later when the router starts. The default landing keeps waiting: first-run
+        // setup must not fetch the Chat workspace graph and discard it.
+        warmApplicationRouteModule(router, applicationLocation, basePath);
+      }
       // Resolve first-run setup before routing: the default Chat route owns the
       // workspace graph, which setup users would otherwise fetch and discard.
       steps.push(() =>
