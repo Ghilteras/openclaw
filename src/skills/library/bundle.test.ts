@@ -49,6 +49,8 @@ describe("portable complete skill revision identity", () => {
     "a//b",
     "a/./b",
     "CON.txt",
+    "COM¹.txt",
+    "LPT³",
     "file.",
     "a/../b",
     "node_modules/a",
