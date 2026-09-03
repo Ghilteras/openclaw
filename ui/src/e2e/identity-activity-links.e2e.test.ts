@@ -394,4 +394,68 @@ suite.define(() => {
       },
     );
   });
+
+  it("keeps owner Activity access beside a non-manager draft indicator", async () => {
+    const sessionKey = "agent:main:draft-shared-with-me";
+
+    await suite.withPage(
+      {
+        hasTouch: false,
+        locale: "en-US",
+        serviceWorkers: "block",
+        viewport: { height: 900, width: 1280 },
+      },
+      async ({ page }) => {
+        await installMockGateway(page, {
+          featureMethods: ["chat.metadata", "chat.startup", "session.visibility.set"],
+          historyMessages: [{ role: "assistant", content: [{ type: "text", text: "Ready." }] }],
+          methodResponses: {
+            "sessions.list": chatSessionListResponse([
+              {
+                key: sessionKey,
+                kind: "direct",
+                label: "Draft shared with me",
+                owner: {
+                  actor: {
+                    type: "human",
+                    id: "profile-ada",
+                    identity: { type: "profile", id: "profile-ada" },
+                    label: "Ada King",
+                  },
+                },
+                participantCount: 1,
+                participants: [{ identity: { type: "profile", id: "profile-self" }, label: "You" }],
+                sharingRole: "member",
+                updatedAt: Date.now(),
+                visibility: "draft",
+              },
+            ]),
+          },
+          presenceUsers: [
+            {
+              self: true,
+              id: "profile-self",
+              identity: { type: "profile", id: "profile-self" },
+              name: "You",
+            },
+          ],
+          sessionKey,
+        });
+
+        await page.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
+        await page.getByText("Ready.", { exact: true }).waitFor();
+        await page.locator(".chat-pane__draft-indicator").waitFor({ state: "visible" });
+        const ownerLink = page.locator(
+          ".chat-pane__header a.person-activity-avatar-link:has(openclaw-session-owner-chip)",
+        );
+        await ownerLink.waitFor({ state: "visible" });
+        expect(await ownerLink.getAttribute("href")).toBe("/activity?person=profile-ada");
+
+        await ownerLink.click();
+        await waitForControlUiRoute(page, { pathname: "/activity", routeId: "activity" });
+        expect(new URL(page.url()).searchParams.get("person")).toBe("profile-ada");
+        await captureProof(page, "chat-draft-viewer-owner-activity.png");
+      },
+    );
+  });
 });

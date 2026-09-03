@@ -221,7 +221,7 @@ describe("chat session sharing menu", () => {
     expect(root.querySelectorAll(".chat-pane__sharing-member-skeleton .skeleton")).toHaveLength(6);
   });
 
-  it("shows only the draft marker to a non-manager", () => {
+  it("keeps the linked owner beside the draft marker for a non-manager", () => {
     const root = mount(
       renderChatSessionSharing({
         session: {
@@ -230,8 +230,18 @@ describe("chat session sharing menu", () => {
           updatedAt: 1,
           visibility: "draft",
           sharingRole: "member",
+          owner: {
+            actor: {
+              type: "human",
+              id: "owner",
+              identity: { type: "profile", id: "owner" },
+              label: "Owner",
+            },
+          },
         },
         state: undefined,
+        personActivity: { basePath: "", navigate: vi.fn() },
+        showOwner: true,
         onOpen: vi.fn(),
         onVisibilityChange: vi.fn(),
         onMemberChange: vi.fn(),
@@ -241,6 +251,11 @@ describe("chat session sharing menu", () => {
     const indicator = root.querySelector(".chat-pane__draft-indicator");
     expect(indicator?.querySelector("svg")).not.toBeNull();
     expect(indicator?.textContent?.trim()).toBe("");
+    expect(
+      root
+        .querySelector("a.person-activity-avatar-link:has(openclaw-session-owner-chip)")
+        ?.getAttribute("href"),
+    ).toBe("/activity?person=owner");
   });
 
   it("publishes a manageable draft through the shared visibility callback", () => {

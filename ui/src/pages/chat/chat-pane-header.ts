@@ -167,6 +167,8 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
           : branchSwitchWorking
             ? t("chat.sessionHeader.branchSwitchUnavailable")
             : null;
+    const result = this.state?.sessionsResult;
+    const showOwnerChip = (result?.owners?.length ?? 0) >= 2 || (row?.participantCount ?? 0) > 0;
     const sharingSnapshot = this.context.gateway.snapshot;
     // Sharing was introduced behind this advertised method. Keep the control
     // hidden for older Gateways that omit method metadata.
@@ -211,6 +213,7 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
               ? undefined
               : sharingMemberRemoveAccess.reason,
             personActivity,
+            showOwner: showOwnerChip,
             onOpen: () => void this.loadSessionSharing(row),
             onVisibilityChange: (visibility: SessionVisibility) =>
               void this.setSessionVisibility(row, visibility),
@@ -405,12 +408,10 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
       row,
     });
     const key = this.state?.sessionKey ?? "";
-    const result = this.state?.sessionsResult;
     const knownGroups = collectKnownSessionGroups(
       this.context.sessions?.state?.groups ?? [],
       this.context.sessions?.state?.result?.sessions ?? [],
     );
-    const showOwnerChip = (result?.owners?.length ?? 0) >= 2 || (row?.participantCount ?? 0) > 0;
     const renderedOwnerIdentity = showOwnerChip ? row?.owner?.actor.identity : undefined;
     const viewers = catalog
       ? undefined

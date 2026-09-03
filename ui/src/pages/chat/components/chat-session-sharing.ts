@@ -10,6 +10,7 @@ import {
   personActivityLink,
   renderPersonAvatarLink,
   renderPersonName,
+  renderStandalonePersonLink,
   type PersonActivityRouting,
 } from "../../../components/person-activity-link.ts";
 import { renderSessionOwnerChip } from "../../../components/session-owner-chip.ts";
@@ -32,6 +33,7 @@ export type ChatSessionSharingProps = {
   memberAddDisabledReason?: string;
   memberRemoveDisabledReason?: string;
   personActivity?: PersonActivityRouting;
+  showOwner?: boolean;
   onOpen: () => void;
   onVisibilityChange: (visibility: SessionVisibility) => void;
   onMemberChange: (identityId: string, member: boolean) => void;
@@ -108,19 +110,26 @@ export function renderChatSessionSharing(props: ChatSessionSharingProps, inline 
   }
   const visibility = session.visibility ?? "shared";
   const canManage = canManageChatSessionSharing(session);
-  if (!canManage) {
-    return visibility === "draft"
-      ? html`<span class="chat-pane__draft-indicator" title=${t("chat.sessionSharing.draft")}
-          >${sharingIcon("draft")}</span
-        >`
-      : nothing;
-  }
   const result = props.state?.result;
   const owner = result?.owner ?? session.owner?.actor;
   const ownerActivity = personActivityLink(
     owner?.identity?.type === "profile" ? owner.identity.id : undefined,
     props.personActivity,
   );
+  if (!canManage) {
+    return visibility === "draft"
+      ? html`${props.showOwner && owner
+            ? renderStandalonePersonLink(
+                renderSessionOwnerChip(owner, "header", "owned"),
+                ownerActivity,
+              )
+            : nothing}<span
+            class="chat-pane__draft-indicator"
+            title=${t("chat.sessionSharing.draft")}
+            >${sharingIcon("draft")}</span
+          >`
+      : nothing;
+  }
   const members = new Set(result?.members.map((member) => member.identityId) ?? []);
   // The owner row presents effective ownership; selectable rows below manage mutable members.
   const identities =
