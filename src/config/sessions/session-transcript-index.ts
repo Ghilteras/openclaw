@@ -380,6 +380,75 @@ export function deleteSessionTranscriptIndexInTransaction(
   );
 }
 
+/** Replaces only the changed suffix of one healthy active projection. */
+export function replaceSessionTranscriptIndexSuffixInTransaction(
+  db: DatabaseSync,
+  params: {
+    activePrefixCount: number;
+    expected: Omit<SessionTranscriptProjectionState, "needsRebuild">;
+    ftsMessageIdsToDelete: readonly string[];
+    next: Omit<SessionTranscriptProjectionState, "needsRebuild"> & {
+      activeRows: PreparedSessionTranscriptProjection["activeRows"];
+      ftsRows: PreparedSessionTranscriptProjection["ftsRows"];
+    };
+    sessionId: string;
+  },
+): void {
+  const current = readSessionTranscriptProjectionState(db, params.sessionId);
+  if (
+    !current ||
+    current.needsRebuild ||
+    current.activeEventCount !== params.expected.activeEventCount ||
+    current.activeMessageCount !== params.expected.activeMessageCount ||
+    current.indexedSeq !== params.expected.indexedSeq ||
+    current.leafEventId !== params.expected.leafEventId ||
+    hasUnclassifiedSessionTranscriptEvents(db, params.sessionId)
+  ) {
+    throw new Error(`Transcript projection changed before suffix rewrite: ${params.sessionId}`);
+  }
+
+  const kysely = getIndexKysely(db);
+  executeSqliteQuerySync(
+    db,
+    kysely
+      .deleteFrom("session_transcript_active_events")
+      .where("session_id", "=", params.sessionId)
+      .where("active_position", ">=", params.activePrefixCount),
+  );
+  const deleteFts = prepareSqliteQuerySync<string>(db, (parameter) =>
+    kysely
+      .deleteFrom("session_transcript_fts")
+      .where("session_id", "=", params.sessionId)
+      .where(
+        "message_id",
+        "=",
+        parameter((messageId) => messageId),
+      ),
+  );
+  for (const messageId of params.ftsMessageIdsToDelete) {
+    deleteFts(messageId);
+  }
+  const insertActive = createActiveEventInserter(db, params.sessionId);
+  for (const row of params.next.activeRows) {
+    insertActive(row);
+  }
+  const insertFts = createFtsInserter(db, params.sessionId);
+  for (const row of params.next.ftsRows) {
+    insertFts(row);
+  }
+  createWatermarkWriter(
+    db,
+    params.sessionId,
+  )({
+    activeEventCount: params.next.activeEventCount,
+    activeMessageCount: params.next.activeMessageCount,
+    indexedSeq: params.next.indexedSeq,
+    leafEventId: params.next.leafEventId,
+    needsRebuild: false,
+    updatedAt: Date.now(),
+  });
+}
+
 /**
  * Rebuilds one session's index from its full event set: drops existing FTS
  * rows, indexes the resolved active branch, and resets the watermark to the

@@ -21,6 +21,10 @@ import {
   updateSqliteTranscriptEventJsonInTransaction,
 } from "./session-accessor.sqlite-transcript-store.js";
 import {
+  prepareTranscriptSuffixReplacement,
+  replaceSqliteTranscriptSuffixInTransaction,
+} from "./session-accessor.sqlite-transcript-suffix.js";
+import {
   SYNC_REBUILD_MAX_BYTES,
   sessionTranscriptIndexNeedsReconcile,
 } from "./session-transcript-index.js";
@@ -391,6 +395,58 @@ describe("SQLite exact transcript rewrite", () => {
         db.prepare("SELECT text FROM session_transcript_fts WHERE message_id = 'user'").get()?.text,
       ).toBe("repaired");
       expect(work.counts.deletes).toBeLessThanOrEqual(1);
+    });
+  });
+});
+
+describe("SQLite transcript suffix replacement", () => {
+  it("keeps identities and the active projection current without a rebuild window", async () => {
+    await withRewriteFixture(({ db, snapshot, scope }) => {
+      const before = snapshot();
+      const next = [rewriteEvents[0], rewriteEvents[1]];
+
+      const plan = prepareTranscriptSuffixReplacement(rewriteEvents, next);
+      expect(plan).toBeDefined();
+      runOpenClawAgentWriteTransaction((database) => {
+        replaceSqliteTranscriptSuffixInTransaction(database, scope, plan!);
+      }, scope);
+
+      const after = snapshot();
+      expect(after.generation).not.toBe(before.generation);
+      expect(after.updatedAt).toBeGreaterThan(before.updatedAt!);
+      expect(after.raw).toEqual(before.raw.slice(0, 2));
+      expect(after.identities).toEqual(before.identities.slice(0, 2));
+      expect(after.active).toHaveLength(2);
+      expect(after.search).toMatchObject([{ message_id: "user" }]);
+      expect(sessionTranscriptIndexNeedsReconcile(db, scope.sessionId)).toBe(false);
+      expect(readSessionTranscriptActiveStats(scope)).toMatchObject({ eventCount: 2 });
+    });
+  });
+
+  it("rejects a stale suffix snapshot without disturbing a concurrent append", async () => {
+    await withRewriteFixture(({ db, scope }) => {
+      runOpenClawAgentWriteTransaction((database) => {
+        appendTranscriptEventInTransaction(database, scope, {
+          type: "message",
+          id: "late",
+          parentId: "answer",
+          message: { role: "user", content: "late" },
+        });
+      }, scope);
+
+      const plan = prepareTranscriptSuffixReplacement(rewriteEvents, rewriteEvents.slice(0, 2));
+      expect(plan).toBeDefined();
+      expect(() =>
+        runOpenClawAgentWriteTransaction((database) => {
+          replaceSqliteTranscriptSuffixInTransaction(database, scope, plan!);
+        }, scope),
+      ).toThrow("Transcript changed before suffix rewrite");
+      expect(
+        db
+          .prepare("SELECT COUNT(*) AS count FROM transcript_events WHERE session_id = ?")
+          .get(scope.sessionId),
+      ).toEqual({ count: 4 });
+      expect(sessionTranscriptIndexNeedsReconcile(db, scope.sessionId)).toBe(false);
     });
   });
 });

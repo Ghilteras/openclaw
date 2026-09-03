@@ -43,6 +43,7 @@ export class SessionManagerPersistence extends SessionManagerCore {
     options?: { preserveTrailing?: (entry: SessionEntry) => boolean },
   ): number {
     this.ensureCompletePersistedHistory();
+    const previousPersistedEntries = this.getPersistedFileEntries();
     let preservedStart = this.fileEntries.length;
     while (preservedStart > 1) {
       const entry = this.fileEntries[preservedStart - 1];
@@ -145,7 +146,7 @@ export class SessionManagerPersistence extends SessionManagerCore {
     this.buildIndex();
     this.leafId = this.resolveCanonicalParentId(replacementParentId);
     this.appendParentId = replacementParentId;
-    this.replacePersistedTranscript();
+    this.replacePersistedTranscriptSuffix(previousPersistedEntries);
     return removedEntries.length;
   }
 

@@ -50,6 +50,10 @@ import {
   replaceSqliteTranscriptEventsInTransaction,
   rewriteSqliteTranscriptEventRowsInTransaction,
 } from "./session-accessor.sqlite-transcript-store.js";
+import {
+  prepareTranscriptSuffixReplacement,
+  replaceSqliteTranscriptSuffixInTransaction,
+} from "./session-accessor.sqlite-transcript-suffix.js";
 import type { SessionTranscriptWriteTransactionContext } from "./session-accessor.types.js";
 import type { TranscriptEntryAnchor } from "./transcript-entry-anchor.js";
 import {
@@ -162,6 +166,43 @@ export function replaceTranscriptEventsSync(
     replaced = true;
   }, toDatabaseOptions(resolved));
   if (fencedScope.expectedWriterRunId !== undefined && !replaced) {
+    throw new SessionTranscriptWriterClaimReboundError();
+  }
+  return replaced;
+}
+
+/** Replaces a transcript suffix synchronously while keeping its active projection readable. */
+export function replaceTranscriptSuffixSync(
+  scope: SessionTranscriptWriteScope,
+  previousEvents: TranscriptEvent[],
+  nextEvents: TranscriptEvent[],
+): boolean {
+  const plan = prepareTranscriptSuffixReplacement(previousEvents, nextEvents);
+  if (!plan) {
+    return false;
+  }
+  const fencedScope = withOwnedSessionTranscriptWriterFence(scope);
+  const resolved = resolveSqliteTranscriptScope(fencedScope);
+  let committed = false;
+  let replaced = false;
+  runOpenClawAgentWriteTransaction((database) => {
+    assertOwnedTranscriptWriteCommit(fencedScope);
+    const fresh = readSessionEntryRow(database, resolved.sessionKey);
+    if (
+      !fresh ||
+      fresh.entry.sessionId !== resolved.sessionId ||
+      (fencedScope.expectedLifecycleRevision !== undefined &&
+        fresh.entry.lifecycleRevision !== fencedScope.expectedLifecycleRevision) ||
+      (fencedScope.expectedWriterRunId !== undefined &&
+        (fresh.entry as InternalSessionEntry).activeWriterRunId !== fencedScope.expectedWriterRunId)
+    ) {
+      return;
+    }
+    replaceSqliteTranscriptSuffixInTransaction(database, resolved, plan);
+    replaced = true;
+    committed = true;
+  }, toDatabaseOptions(resolved));
+  if (fencedScope.expectedWriterRunId !== undefined && !committed) {
     throw new SessionTranscriptWriterClaimReboundError();
   }
   return replaced;

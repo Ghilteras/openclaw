@@ -1,6 +1,7 @@
 import {
   loadTranscriptEventsSync,
   replaceTranscriptEventsSync,
+  replaceTranscriptSuffixSync,
   type SessionTranscriptRuntimeTarget,
 } from "../../config/sessions/session-accessor.js";
 import {
@@ -586,6 +587,18 @@ export class SessionManagerCore {
     replaceTranscriptEventsSync(
       this.persistenceTarget,
       this.getPersistedFileEntries(leafAppendParentId, options?.leafAppendMode ?? this.appendMode),
+    );
+    this.persistenceHeaderPending = false;
+  }
+
+  protected replacePersistedTranscriptSuffix(previousEntries: unknown[]): void {
+    if (!this.persistenceTarget) {
+      return;
+    }
+    replaceTranscriptSuffixSync(
+      this.persistenceTarget,
+      previousEntries,
+      this.getPersistedFileEntries(this.appendParentId, this.appendMode),
     );
     this.persistenceHeaderPending = false;
   }

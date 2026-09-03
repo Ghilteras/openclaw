@@ -86,7 +86,7 @@ export function createTranscriptEventInserter(database: OpenClawAgentDatabase, s
   );
 }
 
-function createTranscriptIdentityInserter(
+export function createTranscriptIdentityInserter(
   database: OpenClawAgentDatabase,
   sessionId: string,
   ignoreConflicts: boolean,
@@ -627,7 +627,7 @@ function readTranscriptMessageByIdentity(
   return { messageId: identity.eventId, message: event.message };
 }
 
-function readTranscriptEventIdentity(event: unknown) {
+export function readTranscriptEventIdentity(event: unknown) {
   if (!isRecord(event)) {
     return undefined;
   }
@@ -642,7 +642,7 @@ function readTranscriptEventIdentity(event: unknown) {
     : undefined;
 }
 
-function canonicalizeTranscriptEventMedia(event: TranscriptEvent): TranscriptEvent {
+export function canonicalizeTranscriptEventMedia(event: TranscriptEvent): TranscriptEvent {
   if (!isRecord(event)) {
     return event;
   }
@@ -662,7 +662,7 @@ export function readMessageIdempotencyKey(message: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function readEventTimestamp(event: unknown): number | undefined {
+export function readEventTimestamp(event: unknown): number | undefined {
   if (!isRecord(event)) {
     return undefined;
   }
