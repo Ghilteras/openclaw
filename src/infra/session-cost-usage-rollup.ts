@@ -371,14 +371,12 @@ function mergeMessageCountSummaries(
   left: SessionMessageCounts | undefined,
   right: SessionMessageCounts | undefined,
 ): SessionMessageCounts | undefined {
-  if (!left && !right) {
-    return undefined;
+  if (!left) {
+    return right ? { ...right } : undefined;
   }
-  const counts = emptyMessageCounts();
-  for (const source of [left, right]) {
-    if (source) {
-      addMessageCounts(counts, source);
-    }
+  const counts = { ...left };
+  if (right) {
+    addMessageCounts(counts, right);
   }
   return counts;
 }
@@ -451,7 +449,6 @@ function mergeDailyModels(
     : undefined;
 }
 
-/** Merges historical session summaries through the canonical usage aggregation rules. */
 export function mergeSessionCostSummaryInto(
   target: SessionCostSummary,
   source: SessionCostSummary,

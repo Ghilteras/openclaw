@@ -5,6 +5,7 @@ import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { createEmptyCostUsageTotals } from "../../infra/session-cost-usage-totals.js";
 import { withEnvAsync } from "../../test-utils/env.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 
@@ -74,19 +75,7 @@ vi.mock("../../infra/session-cost-usage.js", async () => {
       return [];
     }),
     loadSessionCostSummariesFromCache: vi.fn(async (params: { sessions: unknown[] }) => ({
-      summaries: params.sessions.map(() => ({
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        totalCost: 0,
-        inputCost: 0,
-        outputCost: 0,
-        cacheReadCost: 0,
-        cacheWriteCost: 0,
-        missingCostEntries: 0,
-      })),
+      summaries: params.sessions.map(() => createEmptyCostUsageTotals()),
       cacheStatus: {
         status: "fresh",
         cachedFiles: params.sessions.length,
@@ -335,17 +324,11 @@ describe("sessions.usage", () => {
         }
         const tokens = session.sessionId === "s-a" ? 10 : 20;
         return {
+          ...createEmptyCostUsageTotals(),
           input: tokens,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
           totalTokens: tokens,
           totalCost: tokens / 1000,
           inputCost: tokens / 1000,
-          outputCost: 0,
-          cacheReadCost: 0,
-          cacheWriteCost: 0,
-          missingCostEntries: 0,
         };
       }),
       cacheStatus: {
@@ -744,17 +727,11 @@ describe("sessions.usage", () => {
           const totalTokens = historical ? 10 : 20;
           const totalCost = historical ? 0.02 : 0.01;
           const totals = {
+            ...createEmptyCostUsageTotals(),
             input: totalTokens,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
             totalTokens,
             totalCost,
             inputCost: totalCost,
-            outputCost: 0,
-            cacheReadCost: 0,
-            cacheWriteCost: 0,
-            missingCostEntries: 0,
           };
           const daily = {
             ...totals,
@@ -1067,19 +1044,7 @@ describe("sessions.usage", () => {
       .mockResolvedValueOnce([]); // second agent (opus) — no extra sessions
 
     const buildUsage = (sessionId?: string) => {
-      const emptyUsage = {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        totalCost: 0,
-        inputCost: 0,
-        outputCost: 0,
-        cacheReadCost: 0,
-        cacheWriteCost: 0,
-        missingCostEntries: 0,
-      };
+      const emptyUsage = createEmptyCostUsageTotals();
       if (sessionId === "s-late") {
         // Range-filtered summary with no in-range entries: zero counts, no
         // first/last activity. Must not count as an active session.
