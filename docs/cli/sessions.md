@@ -258,8 +258,9 @@ openclaw sessions cleanup --json
   pressure-gated: it only removes stale probe rows when session-entry
   maintenance/cap pressure is reached. When it runs, model-run cleanup
   happens before global stale cleanup and capping.
-- `pruneAfter` archives eligible durable sessions in place (`archive-age`), preserving
-  their ids and all transcript generations. Disposable automation rows still delete.
+- `pruneAfter` archives eligible durable sessions in place, preserving their IDs
+  and all transcript generations. Cleanup reports `archive-age`; the stored
+  `archiveReason` is `age-retention`. Disposable automation rows still delete.
 - `maxEntries` defaults to 5000 and caps the unarchived session row count; archived rows do not
   consume it. Eligible ordinary overflow is reported as `archive-cap` and
   archived, while synthetic runtime overflow remains disposable. Protected
