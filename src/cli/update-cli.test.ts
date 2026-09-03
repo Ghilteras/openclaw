@@ -5530,6 +5530,9 @@ describe("update-cli", () => {
 
   it("refuses an absent service update while its selected port has a real listener", async () => {
     await mockPackageInstallAtCaseDir();
+    const actualPortsProbe =
+      await vi.importActual<typeof import("../infra/ports-probe.js")>("../infra/ports-probe.js");
+    probePortUsage.mockImplementation(actualPortsProbe.probePortUsage);
     const listener = createServer();
     try {
       listener.listen(absentServicePort, "127.0.0.1");
