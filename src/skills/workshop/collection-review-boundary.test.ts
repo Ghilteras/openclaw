@@ -77,6 +77,37 @@ describe("skill collection review boundary", () => {
     }
   });
 
+  it("removes and records a new unloadable skill directory", async () => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-unloadable-created-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
+    const unloadableDir = path.join(skillsRoot, "unloadable");
+    try {
+      const result = await runSkillCollectionReviewForAgent({
+        config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
+        agentId: "main",
+        job: createReviewJob("skill-review-unloadable-created"),
+        env: testState.env,
+        runTurn: async () => {
+          await fs.mkdir(unloadableDir, { recursive: true });
+          await fs.writeFile(path.join(unloadableDir, "SKILL.md"), "---\nname: [broken\n---\n");
+          return { status: "ok", summary: "reviewed", outputText: "" };
+        },
+      });
+
+      expect(result).toMatchObject({
+        status: "error",
+        error:
+          "Skill collection review completed with errors: review created unloadable with an unloadable SKILL.md",
+      });
+      await expect(fs.access(unloadableDir)).rejects.toThrow();
+    } finally {
+      await testState.cleanup();
+    }
+  });
+
   it("scans changed paths independently when declared names collide", async () => {
     const testState = await createOpenClawTestState({
       layout: "state-only",

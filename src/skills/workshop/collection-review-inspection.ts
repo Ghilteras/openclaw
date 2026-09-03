@@ -85,6 +85,32 @@ export async function inspectWorkshopReviewTree(params: {
       revertedDirs.add(relativeDir);
       reviewErrors.push(`review removed ${relativeDir}, which was not a loaded skill`);
     }
+    const afterSkillDirs = new Set(
+      [...afterFiles.values()]
+        .filter((file) => file.relativePath === path.join(file.relativeDir, "SKILL.md"))
+        .map((file) => file.relativeDir),
+    );
+    for (const relativeDir of afterSkillDirs) {
+      if (
+        relativeDir === "." ||
+        afterLoadedDirs.has(relativeDir) ||
+        revertedDirs.has(relativeDir) ||
+        params.beforeLoadedDirs.has(relativeDir) ||
+        beforeFileDirs.has(relativeDir)
+      ) {
+        continue;
+      }
+      params.assertCurrent();
+      await restoreWorkshopReviewPath({
+        skillsRoot: params.skillsRoot,
+        backupDir: params.backupDir,
+        relativeDir,
+        relativePath: path.join(relativeDir, "SKILL.md"),
+        existedBefore: false,
+      });
+      revertedDirs.add(relativeDir);
+      reviewErrors.push(`review created ${relativeDir} with an unloadable SKILL.md`);
+    }
     for (const file of afterFiles.values()) {
       if (
         afterLoadedDirs.has(file.relativeDir) ||
