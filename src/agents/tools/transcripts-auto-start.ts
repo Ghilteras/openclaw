@@ -98,6 +98,8 @@ export function createTranscriptsAutoStartService(ctx: TranscriptsRuntimeContext
   };
   const ownsCapture = (capture: OwnedCapture) =>
     activeSessions.get(capture.sessionId)?.lifecycleToken === capture.lifecycleToken;
+  // A capture the runtime still owns (failed startup with pending cleanup) stays in
+  // startedSessions so shutdown retries its exact stop; only released captures are forgotten.
   const forgetCapture = (capture: OwnedCapture) => {
     if (
       !ownsCapture(capture) &&

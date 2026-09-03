@@ -17,15 +17,22 @@ export async function readTranscriptSummary(params: {
   });
   const agentId = params.session.metadata?.agentId;
   if (params.cfg) {
-    const modeled = await summarizeTranscriptsWithModel({
-      cfg: params.cfg,
-      agentId:
-        typeof agentId === "string" && agentId.trim() ? agentId : resolveDefaultAgentId(params.cfg),
-      session: params.session,
-      utterances,
-    });
-    if (modeled) {
-      return modeled;
+    try {
+      const modeled = await summarizeTranscriptsWithModel({
+        cfg: params.cfg,
+        agentId:
+          typeof agentId === "string" && agentId.trim()
+            ? agentId
+            : resolveDefaultAgentId(params.cfg),
+        session: params.session,
+        utterances,
+      });
+      if (modeled) {
+        return modeled;
+      }
+    } catch {
+      // Ownerless rows on a multi-agent host cannot select a model
+      // (resolveDefaultAgentId throws); they still get notes.
     }
   }
   // Heuristic notes are the deterministic base; model inference is an enhancement
