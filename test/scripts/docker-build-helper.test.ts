@@ -6420,6 +6420,7 @@ source "$ROOT_DIR/scripts/lib/docker-e2e-logs.sh"
   it("resolves plugin Docker legacy fixtures from the selected source profile", () => {
     for (const runnerPath of [
       "scripts/e2e/bundled-plugin-install-uninstall-docker.sh",
+      PLUGINS_DOCKER_E2E_PATH,
       KITCHEN_SINK_PLUGIN_DOCKER_E2E_PATH,
       KITCHEN_SINK_RPC_DOCKER_E2E_PATH,
       "scripts/e2e/mcp-channels-docker.sh",
