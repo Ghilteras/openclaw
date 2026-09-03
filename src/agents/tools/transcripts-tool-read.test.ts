@@ -5,6 +5,12 @@ import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db
 import type { TranscriptSourceProvider } from "../../transcripts/provider-types.js";
 import { TranscriptsStore, transcriptSessionSelector } from "../../transcripts/store.js";
 import { summarizeTranscripts } from "../../transcripts/summary.js";
+import {
+  createToolSearchCatalogRef,
+  registerHeadlessToolSearchCatalog,
+} from "../tool-search-catalog.js";
+import { resolveToolSearchConfig } from "../tool-search-config.js";
+import { ToolSearchRuntime } from "../tool-search-runtime.js";
 import { activeSessions } from "./transcripts-tool-runtime.js";
 import { createTranscriptsTool } from "./transcripts-tool.js";
 
@@ -34,6 +40,14 @@ function tool(channel = false) {
 }
 function run(params: Record<string, unknown>, channel = false) {
   return tool(channel).execute("read", params);
+}
+function readThroughCatalog(params: Record<string, unknown>) {
+  const catalogRef = createToolSearchCatalogRef();
+  registerHeadlessToolSearchCatalog({ catalogRef, tools: [tool()] });
+  const runtime = new ToolSearchRuntime({ catalogRef }, resolveToolSearchConfig(), {
+    validateInput: true,
+  });
+  return runtime.callValue("transcripts", params);
 }
 
 beforeEach(async () => {
@@ -68,6 +82,9 @@ describe("transcripts read actions", () => {
     expect(shown.content).toEqual([
       { type: "text", text: expect.stringContaining("Ship the design") },
     ]);
+    await expect(
+      readThroughCatalog({ action: "show", selector: transcriptSessionSelector(session) }),
+    ).resolves.toMatchObject({ text: expect.stringContaining("Ship the design") });
     await expect(
       run({ action: "stop", selector: transcriptSessionSelector(session) }),
     ).rejects.toThrow("not found");
@@ -146,6 +163,12 @@ describe("transcripts read actions", () => {
     expect((await run({ action: "show", sessionId: "meeting" })).details).toMatchObject({
       active: true,
     });
+    await expect(
+      readThroughCatalog({ action: "show", sessionId: "meeting" }),
+    ).resolves.toMatchObject({
+      active: true,
+      text: "No summary exists yet for this meeting. Capture is active.",
+    });
     await store.writeSummary(
       { ...summarizeTranscripts({ session, utterances: [] }), overview: "x".repeat(20000) },
       session,
@@ -159,6 +182,11 @@ describe("transcripts read actions", () => {
     expect(text.text).toContain(
       `[truncated; run openclaw transcripts show ${transcriptSessionSelector(session)} for the full notes]`,
     );
+    await expect(
+      readThroughCatalog({ action: "show", sessionId: "meeting" }),
+    ).resolves.toMatchObject({
+      text: text.text,
+    });
     for (let index = 0; index < 50; index++) {
       await store.writeSession({
         ...session,

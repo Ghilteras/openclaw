@@ -104,6 +104,7 @@ export async function showPastTranscript(params: ReadParams) {
   return {
     content: [{ type: "text" as const, text }],
     details: {
+      text,
       selector,
       sessionId,
       title,
