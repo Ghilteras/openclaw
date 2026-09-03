@@ -130,9 +130,9 @@ vi.mock("../server-model-catalog-auth.js", () => ({
   readPreparedCatalog: mocks.readPreparedCatalog,
 }));
 
+import { invalidateModelAuthStatusCache } from "./models-auth-refresh.js";
 import {
   aggregateRefreshableAuthStatus,
-  invalidateModelAuthStatusCache,
   modelsAuthStatusHandlers,
   type ModelAuthLogoutResult,
   type ModelAuthStatusResult,

@@ -51,7 +51,7 @@ vi.mock("../../plugins/provider-auth-choices.js", () => ({
   resolveManifestProviderAuthChoice: modelsAuthLoginMocks.resolveManifestProviderAuthChoice,
   resolveManifestProviderAuthChoices: modelsAuthLoginMocks.resolveManifestProviderAuthChoices,
 }));
-vi.mock("./models-auth-status.js", () => ({
+vi.mock("./models-auth-refresh.js", () => ({
   refreshModelAuthStateAfterMutation: modelsAuthLoginMocks.refreshModelAuthStateAfterMutation,
 }));
 
@@ -553,7 +553,6 @@ describe("openclaw.setup.auth.start", () => {
     expect(modelsAuthLoginMocks.refreshModelAuthStateAfterMutation).toHaveBeenCalledWith(
       context,
       "login",
-      "research",
     );
     expect(session.cancel()).toBe(false);
   });

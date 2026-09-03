@@ -2,7 +2,7 @@ import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/i
 import { runModelsAuthLoginFlowCore } from "../../commands/models/auth.js";
 import { resolveManifestProviderAuthChoice } from "../../plugins/provider-auth-choices.js";
 import { isProviderLoginChoiceStartable } from "../../plugins/provider-login-options.js";
-import { refreshModelAuthStateAfterMutation } from "./models-auth-status.js";
+import { refreshModelAuthStateAfterMutation } from "./models-auth-refresh.js";
 import type { GatewayRequestContext, RespondFn } from "./types.js";
 import { gatewayWizardStepRuntime, startGatewayWizardSession } from "./wizard-session-start.js";
 
