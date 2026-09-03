@@ -1,3 +1,7 @@
-// Slack test API exposes outbound payload fixtures.
-export { createSlackOutboundPayloadHarness } from "./src/outbound-payload.test-harness.js";
-export { slackOutbound } from "./src/outbound-adapter.js";
+// Slack test API exposes QA Lab runtime operations.
+export { listSlackReactions, sendSlackMessage } from "./src/actions.js";
+export {
+  createSlackWebClient,
+  createSlackWriteClient,
+  resolveSlackWebClientOptions,
+} from "./src/client.js";

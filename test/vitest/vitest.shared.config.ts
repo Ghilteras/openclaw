@@ -215,8 +215,8 @@ export const sharedVitestConfig = {
         replacement: path.join(repoRoot, "extensions", "memory-core", "api.ts"),
       },
       {
-        find: "@openclaw/slack/api.js",
-        replacement: path.join(repoRoot, "extensions", "slack", "api.ts"),
+        find: "@openclaw/slack/test-api.js",
+        replacement: path.join(repoRoot, "extensions", "slack", "test-api.ts"),
       },
       {
         find: "@openclaw/whatsapp/api.js",

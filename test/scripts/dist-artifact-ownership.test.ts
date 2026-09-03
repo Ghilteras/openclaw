@@ -770,7 +770,7 @@ describe.skipIf(process.platform === "win32")("dist artifact ownership", () => {
         "telegram",
         "whatsapp",
       ]) {
-        const entry = name === "matrix" ? "test-api.ts" : "api.ts";
+        const entry = name === "matrix" || name === "slack" ? "test-api.ts" : "api.ts";
         write(root, `extensions/${name}/${entry}`, "export interface Plugin { id: string }\n");
         write(
           root,
