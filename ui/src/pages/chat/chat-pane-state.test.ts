@@ -142,17 +142,24 @@ describe("resolveChatAssistantMedia", () => {
 
     await expect(
       resolveChatAssistantMedia(
-        { connected: true, client: { request } as never },
+        {
+          connected: true,
+          client: { request } as never,
+          sessionKey: "agent:main:research-chat",
+        },
         "/tmp/openclaw/image.png",
       ),
     ).resolves.toMatchObject({ mediaTicket: "ticket-chat-media" });
     expect(request).toHaveBeenCalledWith(
       "assistant.media.get",
-      { source: "/tmp/openclaw/image.png" },
+      { source: "/tmp/openclaw/image.png", sessionKey: "agent:main:research-chat" },
       { timeoutMs: 30_000 },
     );
     await expect(
-      resolveChatAssistantMedia({ connected: false, client: { request } as never }, "/tmp/x"),
+      resolveChatAssistantMedia(
+        { connected: false, client: { request } as never, sessionKey: "agent:main:offline" },
+        "/tmp/x",
+      ),
     ).resolves.toBeNull();
     expect(request).toHaveBeenCalledTimes(1);
   });

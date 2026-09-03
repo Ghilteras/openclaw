@@ -21,4 +21,20 @@ describe("resolveAssistantMedia", () => {
       { timeoutMs: 30_000 },
     );
   });
+
+  it("includes the selected chat session when provided", async () => {
+    const request = vi.fn().mockResolvedValue({ available: false });
+
+    await resolveAssistantMedia(
+      { request } as never,
+      "/tmp/research/output.png",
+      "agent:research:main",
+    );
+
+    expect(request).toHaveBeenCalledWith(
+      "assistant.media.get",
+      { source: "/tmp/research/output.png", sessionKey: "agent:research:main" },
+      { timeoutMs: 30_000 },
+    );
+  });
 });

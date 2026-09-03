@@ -44,7 +44,7 @@ describe("assistant.media.get", () => {
     });
     const handlers = createControlUiHandlers(vi.fn(), vi.fn(), loadMedia);
     const respond = vi.fn<RespondFn>();
-    const context = { getRuntimeConfig: vi.fn() };
+    const context = requestOptions({}, respond).context;
 
     await expectDefined(
       handlers["assistant.media.get"],
@@ -55,10 +55,62 @@ describe("assistant.media.get", () => {
       }),
     );
 
-    expect(loadMedia).toHaveBeenCalledWith("/tmp/browser-shot.png", context);
+    expect(loadMedia).toHaveBeenCalledWith("/tmp/browser-shot.png", context, "main");
     expect(respond).toHaveBeenCalledWith(
       true,
       expect.objectContaining({ mediaTicket: "ticket-local-media" }),
+      undefined,
+    );
+  });
+
+  it("uses the visible session's agent when resolving chat media", async () => {
+    const loadSessionPreview = vi.fn().mockResolvedValue({
+      sessionKey: "agent:research:main",
+      agentId: "research",
+    });
+    const loadMedia = vi
+      .fn()
+      .mockResolvedValue({ available: false, reason: "missing", code: "missing" });
+    const handlers = createControlUiHandlers(vi.fn(), loadSessionPreview, loadMedia);
+    const respond = vi.fn<RespondFn>();
+    const context = requestOptions({}, respond).context;
+    const client = { connId: "control-ui-client" };
+
+    await expectDefined(
+      handlers["assistant.media.get"],
+      'handlers["assistant.media.get"] test invariant',
+    )(
+      requestOptions(
+        { source: "/tmp/research/output.png", sessionKey: "agent:research:main" },
+        respond,
+        { client, context },
+      ),
+    );
+
+    expect(loadSessionPreview).toHaveBeenCalledWith("agent:research:main", context, client);
+    expect(loadMedia).toHaveBeenCalledWith("/tmp/research/output.png", context, "research");
+  });
+
+  it("does not reveal media roots for a session hidden from the caller", async () => {
+    const loadSessionPreview = vi.fn().mockResolvedValue(null);
+    const loadMedia = vi.fn();
+    const handlers = createControlUiHandlers(vi.fn(), loadSessionPreview, loadMedia);
+    const respond = vi.fn<RespondFn>();
+
+    await expectDefined(
+      handlers["assistant.media.get"],
+      'handlers["assistant.media.get"] test invariant',
+    )(
+      requestOptions(
+        { source: "/tmp/research/output.png", sessionKey: "agent:research:hidden" },
+        respond,
+      ),
+    );
+
+    expect(loadMedia).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      { available: false, reason: "Session unavailable", code: "session_unavailable" },
       undefined,
     );
   });
@@ -68,6 +120,8 @@ describe("assistant.media.get", () => {
     { source: " " },
     { source: "/tmp/shot.png", extra: true },
     { source: "x".repeat(8_193) },
+    { source: "/tmp/shot.png", sessionKey: " " },
+    { source: "/tmp/shot.png", sessionKey: "x".repeat(513) },
   ])("rejects invalid or extensible capability params: %#", async (params) => {
     const loadMedia = vi.fn();
     const handlers = createControlUiHandlers(vi.fn(), vi.fn(), loadMedia);

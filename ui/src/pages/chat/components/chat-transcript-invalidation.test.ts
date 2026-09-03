@@ -360,7 +360,11 @@ describe("chat transcript invalidation", () => {
 
     const cacheKey = `::gateway:${state.connectionEpoch}::${source}`;
     const previousResource = observeChatMediaResource("assistant-attachment", cacheKey);
-    expect(request).toHaveBeenCalledWith("assistant.media.get", { source }, { timeoutMs: 30_000 });
+    expect(request).toHaveBeenCalledWith(
+      "assistant.media.get",
+      { source, sessionKey: state.sessionKey },
+      { timeoutMs: 30_000 },
+    );
     expect(previousResource.subscribers.size).toBe(1);
 
     const config = {
@@ -388,7 +392,7 @@ describe("chat transcript invalidation", () => {
     expect(request).toHaveBeenCalledTimes(2);
     expect(request).toHaveBeenLastCalledWith(
       "assistant.media.get",
-      { source },
+      { source, sessionKey: state.sessionKey },
       { timeoutMs: 30_000 },
     );
     expect(isChatMediaResourceCurrent(restoredResource)).toBe(true);

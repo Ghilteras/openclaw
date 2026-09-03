@@ -108,6 +108,7 @@ type LoadSessionPreview = (
 type LoadAssistantMedia = (
   source: string,
   context: GatewayRequestContext,
+  agentId: string,
 ) => Promise<AssistantMediaGetResult>;
 
 const SESSION_PREVIEW_TEXT_MAX_CHARS = 200;
@@ -125,24 +126,33 @@ function parseSessionPreviewKey(params: unknown): string | null {
   return sessionKey && sessionKey.length <= 512 ? sessionKey : null;
 }
 
-function parseAssistantMediaSource(params: unknown): string | null {
-  if (!isRecord(params) || Object.keys(params).some((key) => key !== "source")) {
+function parseAssistantMediaParams(
+  params: unknown,
+): { source: string; sessionKey?: string } | null {
+  if (
+    !isRecord(params) ||
+    Object.keys(params).some((key) => key !== "source" && key !== "sessionKey")
+  ) {
     return null;
   }
   const source = typeof params.source === "string" ? params.source.trim() : "";
-  return source && source.length <= 8192 ? source : null;
+  if (!source || source.length > 8192) {
+    return null;
+  }
+  if (params.sessionKey === undefined) {
+    return { source };
+  }
+  const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey.trim() : "";
+  return sessionKey && sessionKey.length <= 512 ? { source, sessionKey } : null;
 }
 
 async function loadAssistantMedia(
   source: string,
   context: GatewayRequestContext,
+  agentId: string,
 ): Promise<AssistantMediaGetResult> {
   const cfg = context.getRuntimeConfig();
-  return await resolveControlUiAssistantMedia(
-    source,
-    cfg,
-    resolveAssistantIdentity({ cfg }).agentId,
-  );
+  return await resolveControlUiAssistantMedia(source, cfg, agentId);
 }
 
 function projectSessionPreview(source: SessionPreviewSource | null): ControlUiSessionPreview {
@@ -226,9 +236,9 @@ export function createControlUiHandlers(
   loadMedia: LoadAssistantMedia = loadAssistantMedia,
 ): GatewayRequestHandlers {
   return {
-    "assistant.media.get": async ({ params, context, respond }) => {
-      const source = parseAssistantMediaSource(params);
-      if (!source) {
+    "assistant.media.get": async ({ params, context, client, respond }) => {
+      const parsed = parseAssistantMediaParams(params);
+      if (!parsed) {
         respond(
           false,
           undefined,
@@ -236,7 +246,21 @@ export function createControlUiHandlers(
         );
         return;
       }
-      respond(true, await loadMedia(source, context), undefined);
+      const cfg = context.getRuntimeConfig();
+      let agentId = resolveAssistantIdentity({ cfg }).agentId;
+      if (parsed.sessionKey) {
+        const session = await loadSessionPreview(parsed.sessionKey, context, client);
+        if (!session) {
+          respond(
+            true,
+            { available: false, reason: "Session unavailable", code: "session_unavailable" },
+            undefined,
+          );
+          return;
+        }
+        agentId = session.agentId;
+      }
+      respond(true, await loadMedia(parsed.source, context, agentId), undefined);
     },
     "controlUi.githubPreview": async (options) => {
       const { params, respond, context } = options;

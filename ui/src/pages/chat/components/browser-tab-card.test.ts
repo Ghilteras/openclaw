@@ -24,9 +24,19 @@ afterEach(() => {
 
 function gatewayContext(methods = ["browser.request"], scopes = ["operator.admin"]) {
   const request = vi.fn().mockResolvedValue({ path: "/tmp/tab.png" });
+  const clientRequest = vi.fn((method: string, params?: unknown) => {
+    if (method === "assistant.media.get") {
+      return Promise.resolve({
+        available: true,
+        mediaTicket: "ticket-browser-tab",
+        mediaTicketExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+      });
+    }
+    return request(method, params);
+  });
   const listeners = new Set<() => void>();
   const snapshot = {
-    client: { request } as unknown as GatewayBrowserClient,
+    client: { request: clientRequest } as unknown as GatewayBrowserClient,
     phase: "connected",
     hello: { features: { methods }, auth: { role: "operator", scopes } },
   } as ApplicationGatewaySnapshot;

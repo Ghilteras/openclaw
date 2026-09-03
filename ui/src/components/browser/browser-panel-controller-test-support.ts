@@ -31,19 +31,22 @@ export function createBrowserClient(
   handleRequest: (envelope: BrowserRequestEnvelope) => Promise<unknown>,
 ) {
   const request = vi.fn(async (method: string, params?: unknown) => {
-    if (method === "assistant.media.get") {
-      return {
-        available: true,
-        mediaTicket: "ticket-browser-panel",
-        mediaTicketExpiresAt: "2026-09-03T12:00:00.000Z",
-      };
-    }
     if (method !== "browser.request") {
       throw new Error(`Unexpected Gateway method: ${method}`);
     }
     return await handleRequest(params as BrowserRequestEnvelope);
   });
-  return { client: { request } as unknown as GatewayBrowserClient, request };
+  const clientRequest = vi.fn(async (method: string, params?: unknown) => {
+    if (method === "assistant.media.get") {
+      return {
+        available: true,
+        mediaTicket: "ticket-browser-panel",
+        mediaTicketExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+      };
+    }
+    return await request(method, params);
+  });
+  return { client: { request: clientRequest } as unknown as GatewayBrowserClient, request };
 }
 
 export function createBrowserPanelTestTab(id: string, url: string, title: string) {

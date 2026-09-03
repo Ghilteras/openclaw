@@ -21,10 +21,11 @@ export function buildAssistantMediaUrl(
 export async function resolveAssistantMedia(
   client: GatewayBrowserClient,
   source: string,
+  sessionKey?: string,
 ): Promise<AssistantMediaGetResult> {
   return await client.request<AssistantMediaGetResult>(
     "assistant.media.get",
-    { source },
+    { source, ...(sessionKey ? { sessionKey } : {}) },
     { timeoutMs: ASSISTANT_MEDIA_RESOLVE_TIMEOUT_MS },
   );
 }
