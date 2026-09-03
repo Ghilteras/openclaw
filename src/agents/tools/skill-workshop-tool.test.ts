@@ -141,7 +141,9 @@ describe("skill_workshop tool", () => {
       },
     });
     expect(
-      listSkillProposalEvents({ proposalId: details.id }).events.map((event) => event.actor),
+      listSkillProposalEvents({ config: {}, proposalId: details.id }).events.map(
+        (event) => event.actor,
+      ),
     ).toEqual([
       { type: "agent", id: "main" },
       { type: "agent", id: "main" },
