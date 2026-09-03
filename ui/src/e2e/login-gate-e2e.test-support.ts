@@ -40,12 +40,12 @@ export type ServiceWorkerObservation = {
 
 export type ObservedGatewayRequest = {
   documentOrdinal: number;
-  method: "chat.send" | "connect" | "sessions.assignOwner";
+  method: "chat.history" | "chat.send" | "chat.startup" | "connect" | "sessions.assignOwner";
   requestId: string;
 };
 
 export type PhoneRecoveryObservation = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   proofRevision: "base" | "head" | "local";
   serviceWorker: "normal" | "blocked";
   targetPath: string;
@@ -96,6 +96,33 @@ export type PhoneRecoveryObservation = {
     modelWakeCount: number;
     selectedOwners: string[];
     visible: boolean;
+  };
+  failureRetention?: {
+    generatedImage: {
+      alt: string;
+      artifactId: string;
+      artifactDownloadRequestCount: number;
+      blockedUnticketedRequestCount: number;
+      loadedAfterReconnect: boolean;
+      loadedBeforeReconnect: boolean;
+      mediaRequestUrls: string[];
+      naturalWidth: number;
+      renderedSrc: string;
+      requestCount: number;
+      sourcePathname: string;
+    };
+    reconnect: {
+      assignmentMutationCount: number;
+      connectRequestCount: number;
+      connectRequestIds: string[];
+      modelWakeCount: number;
+      transcriptRequestCount: number;
+    };
+    timeoutDelivery: {
+      retainedAfterReconnect: boolean;
+      text: string;
+      visibleBeforeReconnect: boolean;
+    };
   };
   final?: {
     appShellCount: number;
@@ -271,6 +298,13 @@ export async function observeGatewayRequests(page: Page): Promise<ObservedGatewa
   }, RECORDED_GATEWAY_REQUESTS_KEY)) as ObservedGatewayRequest[];
 }
 
+export async function resetPhoneRecoveryRequestObserver(page: Page): Promise<void> {
+  await page.evaluate((key) => {
+    sessionStorage.setItem(key, "[]");
+    sessionStorage.setItem("openclaw.control-ui-e2e.build-rejection-loads", "0");
+  }, RECORDED_GATEWAY_REQUESTS_KEY);
+}
+
 export async function waitForObservedGatewayRequest(
   page: Page,
   documentOrdinal: number,
@@ -321,7 +355,9 @@ export async function installPhoneRecoveryRequestObserver(
                 frame.type === "req" &&
                 typeof frame.id === "string" &&
                 (frame.method === "connect" ||
+                  frame.method === "chat.history" ||
                   frame.method === "chat.send" ||
+                  frame.method === "chat.startup" ||
                   frame.method === "sessions.assignOwner")
               ) {
                 const existing = JSON.parse(

@@ -1,5 +1,5 @@
 // Control UI tests cover the responsive disconnected login gate.
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { ConnectErrorDetailCodes } from "../../../packages/gateway-protocol/src/connect-error-details.js";
@@ -21,6 +21,7 @@ import {
   observePhoneProofServiceWorker,
   phoneProofIdentity,
   renderLoginGate,
+  resetPhoneRecoveryRequestObserver,
   startPhoneProofServer,
   type PhoneRecoveryObservation,
   waitForObservedGatewayRequest,
@@ -38,6 +39,9 @@ const suite = createControlUiE2eSuite({
   unavailableMessage: (executablePath) =>
     `Playwright Chromium is not installed or cannot start at ${executablePath}. Run \`pnpm --dir ui exec playwright install --with-deps chromium\`, or set OPENCLAW_UI_E2E_ALLOW_MISSING_CHROMIUM=1 only when intentionally skipping this lane.`,
 });
+const RETAINED_IMAGE_ALT = "Generated image retained after timeout";
+const RETAINED_TIMEOUT_TEXT =
+  "Provider timed out after the request started. Retry the turn, or increase its configured timeout.";
 let RECOVERY_ARTIFACT_DIR: string;
 
 beforeEach(() => {
@@ -89,13 +93,65 @@ suite.define(() => {
         page,
         controlUiBundledGatewayUrl(suite.server.baseUrl),
       );
+      const retainedImageArtifactId = "artifact_phone_proof_generated_image";
+      const retainedImagePath =
+        "/api/chat/media/outgoing/agent%3Amain%3Amain/phone-proof-generated/full";
+      const retainedImageTicketedUrl = `${retainedImagePath}?mediaTicket=phone-proof`;
+      const retainedImageBytes = await readFile(
+        path.join(process.cwd(), "docs/assets/openclaw-banner-dark.png"),
+      );
+      const retainedImageRequestUrls: string[] = [];
+      let blockedUnticketedRequestCount = 0;
+      await page.route("**/api/chat/media/outgoing/**", async (route) => {
+        const requestUrl = new URL(route.request().url());
+        if (requestUrl.searchParams.get("mediaTicket") !== "phone-proof") {
+          blockedUnticketedRequestCount += 1;
+          await route.abort("blockedbyclient");
+          return;
+        }
+        retainedImageRequestUrls.push(requestUrl.href);
+        await route.fulfill({ body: retainedImageBytes, contentType: "image/png" });
+      });
       const config = { ui: { prefs: { theme: "absolutely", themeMode: "dark" } } };
       const sessionKey = "agent:main:main";
       const gateway = await installMockGateway(page, {
         deferredMethods: ["connect"],
         featureMethods: ["chat.startup", "sessions.assignOwner", "users.list"],
+        historyMessages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: RETAINED_TIMEOUT_TEXT }],
+            timestamp: 1,
+          },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "image",
+                artifactId: retainedImageArtifactId,
+                url: retainedImagePath,
+                alt: RETAINED_IMAGE_ALT,
+                mimeType: "image/png",
+                width: 1280,
+                height: 358,
+              },
+            ],
+            timestamp: 2,
+          },
+        ],
         serverBuildId: proofBuildId,
         methodResponses: {
+          "artifacts.download": {
+            artifact: {
+              id: retainedImageArtifactId,
+              type: "image",
+              title: RETAINED_IMAGE_ALT,
+              mimeType: "image/png",
+              download: { mode: "url" },
+            },
+            url: retainedImageTicketedUrl,
+            expiresAt: "2099-01-01T00:00:00.000Z",
+          },
           "config.get": {
             config,
             hash: "phone-recovery-theme",
@@ -187,7 +243,7 @@ suite.define(() => {
       const target = new URL("chat/main", suite.server.baseUrl);
 
       const observation: PhoneRecoveryObservation = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         proofRevision: proofIdentity.proofRevision,
         serviceWorker,
         targetPath: target.pathname,
@@ -215,6 +271,94 @@ suite.define(() => {
           expect(initialServiceWorker.controllerState).toBeNull();
           expect(initialServiceWorker.registrations).toHaveLength(0);
         }
+        await gateway.waitForRequest("connect");
+        await gateway.resolveDeferred("connect");
+        const retainedImage = page.getByAltText(RETAINED_IMAGE_ALT);
+        const retainedTimeout = page.getByText(RETAINED_TIMEOUT_TEXT, { exact: true });
+        await retainedImage.waitFor({ state: "visible", timeout: 10_000 });
+        await retainedTimeout.waitFor({ state: "visible", timeout: 10_000 });
+        const imageBeforeReconnect = await retainedImage.evaluate(
+          (element) => element instanceof HTMLImageElement && element.complete,
+        );
+        const timeoutBeforeReconnect = await retainedTimeout.isVisible();
+        const connectCountBeforeReconnect = (await gateway.getRequests("connect")).length;
+        await gateway.deferNext("connect");
+        await gateway.closeLatest(1006, "phone proof timeout-delivery reconnect");
+        await gateway.waitForRequest("connect", { after: connectCountBeforeReconnect });
+        await gateway.resolveDeferred("connect");
+        await retainedImage.waitFor({ state: "visible", timeout: 10_000 });
+        await retainedTimeout.waitFor({ state: "visible", timeout: 10_000 });
+        const imageAfterReconnect = await retainedImage.evaluate(
+          (element) => element instanceof HTMLImageElement && element.complete,
+        );
+        const timeoutAfterReconnect = await retainedTimeout.isVisible();
+        const retentionRequests = await observeGatewayRequests(page);
+        const retentionConnects = retentionRequests.filter(
+          (request) => request.method === "connect",
+        );
+        const retentionTranscripts = retentionRequests.filter(
+          (request) => request.method === "chat.history" || request.method === "chat.startup",
+        );
+        const retentionModelWakes = retentionRequests.filter(
+          (request) => request.method === "chat.send",
+        );
+        const retentionAssignmentMutations = retentionRequests.filter(
+          (request) => request.method === "sessions.assignOwner",
+        );
+        expect(imageBeforeReconnect).toBe(true);
+        expect(imageAfterReconnect).toBe(true);
+        expect(timeoutBeforeReconnect).toBe(true);
+        expect(timeoutAfterReconnect).toBe(true);
+        expect(retentionConnects).toHaveLength(2);
+        expect(new Set(retentionConnects.map((request) => request.requestId)).size).toBe(2);
+        expect(retentionTranscripts.length).toBeGreaterThanOrEqual(1);
+        expect(retentionModelWakes).toHaveLength(0);
+        expect(retentionAssignmentMutations).toHaveLength(0);
+        const artifactDownloadRequests = await gateway.getRequests("artifacts.download");
+        expect(artifactDownloadRequests.length).toBeGreaterThanOrEqual(1);
+        expect(retainedImageRequestUrls.length).toBeGreaterThanOrEqual(1);
+        for (const requestUrl of retainedImageRequestUrls) {
+          const url = new URL(requestUrl);
+          expect(url.pathname).toContain("/api/chat/media/outgoing/");
+          expect(url.searchParams.get("mediaTicket")).toBe("phone-proof");
+        }
+        observation.failureRetention = {
+          generatedImage: {
+            alt: RETAINED_IMAGE_ALT,
+            artifactId: retainedImageArtifactId,
+            artifactDownloadRequestCount: artifactDownloadRequests.length,
+            blockedUnticketedRequestCount,
+            loadedAfterReconnect: imageAfterReconnect,
+            loadedBeforeReconnect: imageBeforeReconnect,
+            mediaRequestUrls: [...retainedImageRequestUrls],
+            naturalWidth: await retainedImage.evaluate((element) =>
+              element instanceof HTMLImageElement ? element.naturalWidth : 0,
+            ),
+            renderedSrc: await retainedImage.evaluate((element) =>
+              element instanceof HTMLImageElement ? element.currentSrc : "",
+            ),
+            requestCount: retainedImageRequestUrls.length,
+            sourcePathname: retainedImagePath,
+          },
+          reconnect: {
+            assignmentMutationCount: retentionAssignmentMutations.length,
+            connectRequestCount: retentionConnects.length,
+            connectRequestIds: retentionConnects.map((request) => request.requestId),
+            modelWakeCount: retentionModelWakes.length,
+            transcriptRequestCount: retentionTranscripts.length,
+          },
+          timeoutDelivery: {
+            retainedAfterReconnect: timeoutAfterReconnect,
+            text: RETAINED_TIMEOUT_TEXT,
+            visibleBeforeReconnect: timeoutBeforeReconnect,
+          },
+        };
+        await resetPhoneRecoveryRequestObserver(page);
+        documentRequests.length = 0;
+        documentResponses.length = 0;
+        installedArtifacts.length = 0;
+        await gateway.deferNext("connect");
+        await page.reload();
         await waitForConnect();
         await gateway.rejectDeferred("connect", mismatch);
         await page.waitForFunction(
