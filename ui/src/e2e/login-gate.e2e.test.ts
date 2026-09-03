@@ -1,9 +1,11 @@
 // Control UI tests cover the responsive disconnected login gate.
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { BrowserContext, Page } from "playwright";
 import { beforeEach, expect, it } from "vitest";
 import { ConnectErrorDetailCodes } from "../../../packages/gateway-protocol/src/connect-error-details.js";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
+import { takeControlUiViewportScreenshot } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import {
   captureControlUiE2eFailureDiagnostics,
   controlUiSessionUrl,
@@ -133,131 +135,187 @@ suite.define(() => {
     }
   });
 
-  it("rearms one bounded build recovery after the visible refresh action", async () => {
-    const context = await suite.browser.newContext({
-      hasTouch: true,
-      isMobile: true,
-      recordVideo: {
-        dir: RECOVERY_ARTIFACT_DIR,
-        size: { height: 844, width: 390 },
-      },
-      serviceWorkers: "block",
-      viewport: { height: 844, width: 390 },
-    });
-    const page = await context.newPage();
-    const documentRequests: boolean[] = [];
-    const appOrigin = new URL(suite.server.baseUrl).origin;
-    await page.route(`${appOrigin}/**`, async (route) => {
-      const request = route.request();
-      if (request.resourceType() === "document") {
-        documentRequests.push(new URL(request.url()).searchParams.has("openclaw_mount_recovery"));
+  it.each([
+    { serviceWorker: "normal", serviceWorkers: "allow" as const },
+    { serviceWorker: "blocked", serviceWorkers: "block" as const },
+  ])(
+    "rearms one bounded build recovery after the visible refresh action with $serviceWorker service-worker state",
+    async ({ serviceWorker, serviceWorkers }) => {
+      const context = await suite.browser.newContext({
+        hasTouch: true,
+        isMobile: true,
+        recordVideo: {
+          dir: RECOVERY_ARTIFACT_DIR,
+          size: { height: 844, width: 390 },
+        },
+        serviceWorkers,
+        viewport: { height: 844, width: 390 },
+      });
+      const page = await context.newPage();
+      const documentRequests: boolean[] = [];
+      const documentResponses: Array<{ cacheControl: string | undefined; fromWorker: boolean }> =
+        [];
+      page.on("request", (request) => {
+        if (request.resourceType() === "document") {
+          documentRequests.push(new URL(request.url()).searchParams.has("openclaw_mount_recovery"));
+        }
+      });
+      page.on("response", (response) => {
+        if (response.request().resourceType() === "document") {
+          documentResponses.push({
+            cacheControl: response.headers()["cache-control"],
+            fromWorker: response.fromServiceWorker(),
+          });
+        }
+      });
+      await page.addInitScript(() => {
+        const key = "openclaw.control-ui-e2e.build-rejection-loads";
+        const count = Number.parseInt(sessionStorage.getItem(key) ?? "0", 10);
+        sessionStorage.setItem(key, String(count + 1));
+      });
+      const config = { ui: { prefs: { theme: "absolutely", themeMode: "dark" } } };
+      const gateway = await installMockGateway(page, {
+        deferredMethods: ["connect"],
+        methodResponses: {
+          "config.get": {
+            config,
+            hash: "phone-recovery-theme",
+            issues: [],
+            raw: JSON.stringify(config),
+            valid: true,
+          },
+        },
+      });
+      const mismatch = {
+        code: "UNAVAILABLE",
+        message: "Control UI updated; reload this page to continue",
+        details: {
+          code: ConnectErrorDetailCodes.PROTOCOL_MISMATCH,
+          gatewayBuildId: "replacement-build",
+          reloadRequired: true,
+        },
+        retryable: false,
+      };
+      const target = new URL("chat/main", suite.server.baseUrl);
+
+      try {
+        await page.goto(target.href);
+        await gateway.waitForRequest("connect");
+        await gateway.rejectDeferred("connect", mismatch);
+        await page.waitForFunction(
+          () =>
+            sessionStorage.getItem("openclaw.controlUi.staleChunkReloadBuildId") ===
+              "replacement-build" &&
+            sessionStorage.getItem("openclaw.control-ui-e2e.build-rejection-loads") === "2",
+        );
+
+        await gateway.waitForRequest("connect");
+        await gateway.rejectDeferred("connect", mismatch);
+        const recovery = page.getByRole("button", { name: /Server updated/u });
+        await recovery.waitFor({ timeout: 10_000 });
+        expect(await recovery.count()).toBe(1);
+        expect(await page.locator("openclaw-login-gate").count()).toBe(0);
+        expect(await page.locator("#control-ui-main").getAttribute("inert")).toBeNull();
+        expect(await page.locator("openclaw-router-outlet").getAttribute("inert")).not.toBeNull();
+        const recoveryAccess = await recovery.evaluate((button) => {
+          const bounds = button.getBoundingClientRect();
+          const liveRegion = button.closest<HTMLElement>("[role='status']");
+          const outlet = document.querySelector("openclaw-router-outlet");
+          return {
+            ariaLive: liveRegion?.getAttribute("aria-live"),
+            disabled: (button as HTMLButtonElement).disabled,
+            height: bounds.height,
+            insideFencedOutlet: outlet?.contains(button) ?? false,
+            tabIndex: (button as HTMLButtonElement).tabIndex,
+            width: bounds.width,
+          };
+        });
+        expect(recoveryAccess).toEqual({
+          ariaLive: "polite",
+          disabled: false,
+          height: expect.any(Number),
+          insideFencedOutlet: false,
+          tabIndex: 0,
+          width: expect.any(Number),
+        });
+        expect(recoveryAccess.height).toBeGreaterThanOrEqual(44);
+        expect(recoveryAccess.width).toBeGreaterThanOrEqual(44);
+        await recovery.focus();
+        expect(await recovery.evaluate((button) => document.activeElement === button)).toBe(true);
+        await writeFile(
+          path.join(RECOVERY_ARTIFACT_DIR, `01-${serviceWorker}-reload-required.png`),
+          await takeControlUiViewportScreenshot(page, page.locator(".shell"), [recovery]),
+        );
+        expect(await gateway.getRequests("terminal.open")).toHaveLength(0);
+
+        await recovery.tap();
+        await expect.poll(() => documentRequests.length).toBe(3);
+        expect(documentRequests).toEqual([false, true, true]);
+
+        await gateway.waitForRequest("connect");
+        await gateway.rejectDeferred("connect", mismatch);
+        await expect.poll(() => documentRequests.length).toBe(4);
+        await gateway.waitForRequest("connect");
+        await gateway.resolveDeferred("connect");
+
+        await page.locator("openclaw-app-shell").waitFor();
+        expect(documentRequests).toEqual([false, true, true, true]);
+        expect(await page.getByRole("button", { name: /Server updated/u }).count()).toBe(0);
+        await expect
+          .poll(() => page.locator("openclaw-router-outlet").getAttribute("inert"))
+          .toBeNull();
+        await waitForControlUiRoute(page, { pathname: "/chat/main", routeId: "chat" });
+        expect(
+          await page.evaluate(() =>
+            sessionStorage.getItem("openclaw.control-ui-e2e.build-rejection-loads"),
+          ),
+        ).toBe("4");
+        await expect.poll(() => documentResponses.length).toBe(4);
+        expect(documentResponses).toEqual(
+          Array.from({ length: 4 }, () => ({ cacheControl: "no-cache", fromWorker: false })),
+        );
+        const artifactIdentity = await page.evaluate(async () => {
+          await document.fonts.ready;
+          const buildId = document.documentElement.getAttribute(
+            "data-openclaw-control-ui-build-id",
+          );
+          const versionedUrl = (selector: string) => {
+            const link = document.querySelector<HTMLLinkElement>(selector);
+            return link ? new URL(link.href) : null;
+          };
+          return {
+            buildId,
+            icon: versionedUrl('link[rel="icon"][type="image/svg+xml"]')?.searchParams.get("v"),
+            font: versionedUrl('link[id^="openclaw-typeface-"]')?.searchParams.get("v"),
+            theme: versionedUrl("#openclaw-theme-palette-absolutely")?.searchParams.get("v"),
+            bodyDisplay: getComputedStyle(document.body).display,
+          };
+        });
+        expect(artifactIdentity.buildId).not.toBeNull();
+        expect(artifactIdentity).toEqual({
+          buildId: artifactIdentity.buildId,
+          icon: artifactIdentity.buildId,
+          font: artifactIdentity.buildId,
+          theme: artifactIdentity.buildId,
+          bodyDisplay: "block",
+        });
+        const actions = page.getByRole("button", { name: "Actions for Main" });
+        await writeFile(
+          path.join(RECOVERY_ARTIFACT_DIR, `02-${serviceWorker}-recovered.png`),
+          await takeControlUiViewportScreenshot(page, page.locator(".shell"), [actions]),
+        );
+        await actions.tap();
+        const assignment = page.getByRole("menuitem", { name: "Assign to…", exact: true });
+        await assignment.waitFor();
+        await writeFile(
+          path.join(RECOVERY_ARTIFACT_DIR, `03-${serviceWorker}-assignment-menu.png`),
+          await takeControlUiViewportScreenshot(page, page.locator(".shell"), [assignment]),
+        );
+      } finally {
+        await closeContext(context);
       }
-      await route.continue();
-    });
-    await page.addInitScript(() => {
-      const key = "openclaw.control-ui-e2e.build-rejection-loads";
-      const count = Number.parseInt(sessionStorage.getItem(key) ?? "0", 10);
-      sessionStorage.setItem(key, String(count + 1));
-    });
-    const gateway = await installMockGateway(page, { deferredMethods: ["connect"] });
-    const mismatch = {
-      code: "UNAVAILABLE",
-      message: "Control UI updated; reload this page to continue",
-      details: {
-        code: ConnectErrorDetailCodes.PROTOCOL_MISMATCH,
-        gatewayBuildId: "replacement-build",
-        reloadRequired: true,
-      },
-      retryable: false,
-    };
-    const target = new URL("chat/main", suite.server.baseUrl);
-
-    try {
-      await page.goto(target.href);
-      await gateway.waitForRequest("connect");
-      await gateway.rejectDeferred("connect", mismatch);
-      await page.waitForFunction(
-        () =>
-          sessionStorage.getItem("openclaw.controlUi.staleChunkReloadBuildId") ===
-            "replacement-build" &&
-          sessionStorage.getItem("openclaw.control-ui-e2e.build-rejection-loads") === "2",
-      );
-
-      await gateway.waitForRequest("connect");
-      await gateway.rejectDeferred("connect", mismatch);
-      const recovery = page.getByRole("button", { name: /Server updated/u });
-      await recovery.waitFor({ timeout: 10_000 });
-      expect(await recovery.count()).toBe(1);
-      expect(await page.locator("openclaw-login-gate").count()).toBe(0);
-      expect(await page.locator("#control-ui-main").getAttribute("inert")).toBeNull();
-      expect(await page.locator("openclaw-router-outlet").getAttribute("inert")).not.toBeNull();
-      const recoveryAccess = await recovery.evaluate((button) => {
-        const bounds = button.getBoundingClientRect();
-        const liveRegion = button.closest<HTMLElement>("[role='status']");
-        const outlet = document.querySelector("openclaw-router-outlet");
-        return {
-          ariaLive: liveRegion?.getAttribute("aria-live"),
-          disabled: (button as HTMLButtonElement).disabled,
-          height: bounds.height,
-          insideFencedOutlet: outlet?.contains(button) ?? false,
-          tabIndex: (button as HTMLButtonElement).tabIndex,
-          width: bounds.width,
-        };
-      });
-      expect(recoveryAccess).toEqual({
-        ariaLive: "polite",
-        disabled: false,
-        height: expect.any(Number),
-        insideFencedOutlet: false,
-        tabIndex: 0,
-        width: expect.any(Number),
-      });
-      expect(recoveryAccess.height).toBeGreaterThanOrEqual(44);
-      expect(recoveryAccess.width).toBeGreaterThanOrEqual(44);
-      await recovery.focus();
-      expect(await recovery.evaluate((button) => document.activeElement === button)).toBe(true);
-      await page.screenshot({
-        path: path.join(RECOVERY_ARTIFACT_DIR, "01-reload-required.png"),
-        fullPage: true,
-      });
-      expect(await gateway.getRequests("terminal.open")).toHaveLength(0);
-
-      await recovery.tap();
-      await expect.poll(() => documentRequests.length).toBe(3);
-      expect(documentRequests).toEqual([false, true, true]);
-
-      await gateway.waitForRequest("connect");
-      await gateway.rejectDeferred("connect", mismatch);
-      await expect.poll(() => documentRequests.length).toBe(4);
-      await gateway.waitForRequest("connect");
-      await gateway.resolveDeferred("connect");
-
-      await page.locator("openclaw-app-shell").waitFor();
-      expect(documentRequests).toEqual([false, true, true, true]);
-      expect(await page.getByRole("button", { name: /Server updated/u }).count()).toBe(0);
-      await expect
-        .poll(() => page.locator("openclaw-router-outlet").getAttribute("inert"))
-        .toBeNull();
-      await waitForControlUiRoute(page, { pathname: "/chat/main", routeId: "chat" });
-      expect(
-        await page.evaluate(() =>
-          sessionStorage.getItem("openclaw.control-ui-e2e.build-rejection-loads"),
-        ),
-      ).toBe("4");
-      await page.screenshot({
-        path: path.join(RECOVERY_ARTIFACT_DIR, "02-recovered.png"),
-        fullPage: true,
-      });
-      await page.getByRole("button", { name: "Actions for Main" }).tap();
-      await page.getByRole("menuitem", { name: "Assign to…", exact: true }).waitFor();
-      await page.screenshot({
-        path: path.join(RECOVERY_ARTIFACT_DIR, "03-assignment-menu.png"),
-        fullPage: true,
-      });
-    } finally {
-      await closeContext(context);
-    }
-  });
+    },
+  );
 
   it("shows a bare protocol mismatch as compatibility guidance without reconnecting", async () => {
     const context = await suite.browser.newContext({ viewport: { height: 900, width: 1280 } });
