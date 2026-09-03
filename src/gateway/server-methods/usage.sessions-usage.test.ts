@@ -716,6 +716,7 @@ describe("sessions.usage", () => {
 
   it("rolls up known session family ids when historical usage is requested", async () => {
     const storeKey = "agent:opus:main";
+    const dailySources: Array<{ missingCostByModel: Record<string, number> }> = [];
 
     await withUsageState(async (writeSessionFile) => {
       const oldSessionFile = writeSessionFile("old.jsonl.reset.2026-02-01T00-00-00.000Z");
@@ -755,8 +756,18 @@ describe("sessions.usage", () => {
             cacheWriteCost: 0,
             missingCostEntries: 0,
           };
+          const daily = {
+            ...totals,
+            date: "2026-02-01",
+            tokens: totalTokens,
+            cost: totalCost,
+            missingCostEntries: 1,
+            missingCostByModel: { "fixture/unpriced": 1 },
+          };
+          dailySources.push(daily);
           return {
             ...totals,
+            dailyBreakdown: [daily],
             messageCounts: {
               total: 1,
               user: 1,
@@ -815,6 +826,12 @@ describe("sessions.usage", () => {
           usage?: {
             totalTokens: number;
             totalCost: number;
+            dailyBreakdown?: Array<{
+              totalTokens: number;
+              totalCost: number;
+              missingCostEntries: number;
+              missingCostByModel?: Record<string, number>;
+            }>;
             messageCounts?: { total: number };
             modelUsage?: Array<{ provider?: string; model?: string }>;
             dailyModelUsage?: Array<{ provider?: string; model?: string }>;
@@ -833,6 +850,24 @@ describe("sessions.usage", () => {
       expect(result.sessions[0]?.includedSessionIds).toEqual(["current", "old"]);
       expect(result.sessions[0]?.usage?.totalTokens).toBe(30);
       expect(result.sessions[0]?.usage?.totalCost).toBeCloseTo(0.03);
+      expect(result.sessions[0]?.usage?.dailyBreakdown).toMatchObject([
+        {
+          date: "2026-02-01",
+          tokens: 30,
+          cost: 0.03,
+          totalTokens: 30,
+          totalCost: 0.03,
+          input: 30,
+          inputCost: 0.03,
+          missingCostEntries: 2,
+          missingCostByModel: { "fixture/unpriced": 2 },
+        },
+      ]);
+      expect(dailySources).toHaveLength(2);
+      expect(dailySources.map((day) => day.missingCostByModel)).toEqual([
+        { "fixture/unpriced": 1 },
+        { "fixture/unpriced": 1 },
+      ]);
       expect(result.sessions[0]?.usage?.messageCounts?.total).toBe(2);
       expect(result.sessions[0]?.usage?.toolUsage?.tools.map((tool) => tool.name)).toEqual([
         "z-first",
