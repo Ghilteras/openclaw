@@ -27,9 +27,87 @@ export async function inspectWorkshopReviewTree(params: {
   afterFiles: Map<string, WorkshopReviewSkillFile>;
   reviewErrors: string[];
 }> {
-  let afterFiles: Map<string, WorkshopReviewSkillFile>;
   try {
-    afterFiles = await snapshotWorkshopSkillFiles(params.skillsRoot);
+    const afterFiles = await snapshotWorkshopSkillFiles(params.skillsRoot);
+    const afterLoadedDirs = await params.resolveAfterLoadedDirs();
+    const beforeFileDirs = new Set(
+      [...params.beforeFiles.values()].map((file) => file.relativeDir),
+    );
+    const afterFileDirs = new Set([...afterFiles.values()].map((file) => file.relativeDir));
+    const revertedDirs = new Set<string>();
+    const reviewErrors: string[] = [];
+    const changedFiles = [...afterFiles.values()].filter((file) => {
+      const previous = params.beforeFiles.get(file.relativePath);
+      return !previous || previous.contentHash !== file.contentHash;
+    });
+    const criticalFilesByDir = new Map<string, string>();
+    const skillsRootAccess = await root(params.skillsRoot);
+    for (const file of changedFiles) {
+      params.assertCurrent();
+      const findings = await scanWorkshopReviewFile(file, skillsRootAccess);
+      if (findings.some((finding) => finding.severity === "critical")) {
+        if (!criticalFilesByDir.has(file.relativeDir)) {
+          criticalFilesByDir.set(file.relativeDir, file.relativePath);
+        }
+      }
+    }
+    for (const [relativeDir, relativePath] of criticalFilesByDir) {
+      params.assertCurrent();
+      await restoreWorkshopReviewPath({
+        skillsRoot: params.skillsRoot,
+        backupDir: params.backupDir,
+        relativeDir,
+        relativePath,
+        existedBefore:
+          relativeDir === "."
+            ? params.beforeFiles.has(relativePath)
+            : beforeFileDirs.has(relativeDir),
+      });
+      revertedDirs.add(relativeDir);
+      reviewErrors.push(`security scan rejected ${relativePath}`);
+    }
+    for (const [relativeDir, relativePath] of beforeFilesByDirectory(params.beforeFiles)) {
+      if (
+        relativeDir === "." ||
+        afterFileDirs.has(relativeDir) ||
+        params.beforeLoadedDirs.has(relativeDir)
+      ) {
+        continue;
+      }
+      params.assertCurrent();
+      await restoreWorkshopReviewPath({
+        skillsRoot: params.skillsRoot,
+        backupDir: params.backupDir,
+        relativeDir,
+        relativePath,
+        existedBefore: true,
+      });
+      revertedDirs.add(relativeDir);
+      reviewErrors.push(`review removed ${relativeDir}, which was not a loaded skill`);
+    }
+    for (const file of afterFiles.values()) {
+      if (
+        afterLoadedDirs.has(file.relativeDir) ||
+        revertedDirs.has(file.relativeDir) ||
+        (!params.beforeLoadedDirs.has(file.relativeDir) && !beforeFileDirs.has(file.relativeDir))
+      ) {
+        continue;
+      }
+      params.assertCurrent();
+      await restoreWorkshopReviewPath({
+        skillsRoot: params.skillsRoot,
+        backupDir: params.backupDir,
+        relativeDir: file.relativeDir,
+        relativePath: file.relativePath,
+        existedBefore:
+          file.relativeDir === "."
+            ? params.beforeFiles.has(file.relativePath)
+            : beforeFileDirs.has(file.relativeDir),
+      });
+      revertedDirs.add(file.relativeDir);
+      reviewErrors.push(`review left ${file.relativeDir} unloadable`);
+    }
+    return { afterFiles, reviewErrors };
   } catch (error) {
     await restoreWorkshopReviewTreeFromBackup({
       skillsRoot: params.skillsRoot,
@@ -37,92 +115,6 @@ export async function inspectWorkshopReviewTree(params: {
     });
     throw error;
   }
-  const afterLoadedDirs = await params.resolveAfterLoadedDirs();
-  const beforeFileDirs = new Set([...params.beforeFiles.values()].map((file) => file.relativeDir));
-  const afterFileDirs = new Set([...afterFiles.values()].map((file) => file.relativeDir));
-  const revertedDirs = new Set<string>();
-  const reviewErrors: string[] = [];
-  const changedFiles = [...afterFiles.values()].filter((file) => {
-    const previous = params.beforeFiles.get(file.relativePath);
-    return !previous || previous.contentHash !== file.contentHash;
-  });
-  const criticalFilesByDir = new Map<string, string>();
-  const skillsRootAccess = await root(params.skillsRoot);
-  for (const file of changedFiles) {
-    params.assertCurrent();
-    let findings;
-    try {
-      findings = await scanWorkshopReviewFile(file, skillsRootAccess);
-    } catch (error) {
-      await restoreWorkshopReviewTreeFromBackup({
-        skillsRoot: params.skillsRoot,
-        backupDir: params.backupDir,
-      });
-      throw error;
-    }
-    if (findings.some((finding) => finding.severity === "critical")) {
-      if (!criticalFilesByDir.has(file.relativeDir)) {
-        criticalFilesByDir.set(file.relativeDir, file.relativePath);
-      }
-    }
-  }
-  for (const [relativeDir, relativePath] of criticalFilesByDir) {
-    params.assertCurrent();
-    await restoreWorkshopReviewPath({
-      skillsRoot: params.skillsRoot,
-      backupDir: params.backupDir,
-      relativeDir,
-      relativePath,
-      existedBefore:
-        relativeDir === "."
-          ? params.beforeFiles.has(relativePath)
-          : beforeFileDirs.has(relativeDir),
-    });
-    revertedDirs.add(relativeDir);
-    reviewErrors.push(`security scan rejected ${relativePath}`);
-  }
-  for (const [relativeDir, relativePath] of beforeFilesByDirectory(params.beforeFiles)) {
-    if (
-      relativeDir === "." ||
-      afterFileDirs.has(relativeDir) ||
-      params.beforeLoadedDirs.has(relativeDir)
-    ) {
-      continue;
-    }
-    params.assertCurrent();
-    await restoreWorkshopReviewPath({
-      skillsRoot: params.skillsRoot,
-      backupDir: params.backupDir,
-      relativeDir,
-      relativePath,
-      existedBefore: true,
-    });
-    revertedDirs.add(relativeDir);
-    reviewErrors.push(`review removed ${relativeDir}, which was not a loaded skill`);
-  }
-  for (const file of afterFiles.values()) {
-    if (
-      afterLoadedDirs.has(file.relativeDir) ||
-      revertedDirs.has(file.relativeDir) ||
-      (!params.beforeLoadedDirs.has(file.relativeDir) && !beforeFileDirs.has(file.relativeDir))
-    ) {
-      continue;
-    }
-    params.assertCurrent();
-    await restoreWorkshopReviewPath({
-      skillsRoot: params.skillsRoot,
-      backupDir: params.backupDir,
-      relativeDir: file.relativeDir,
-      relativePath: file.relativePath,
-      existedBefore:
-        file.relativeDir === "."
-          ? params.beforeFiles.has(file.relativePath)
-          : beforeFileDirs.has(file.relativeDir),
-    });
-    revertedDirs.add(file.relativeDir);
-    reviewErrors.push(`review left ${file.relativeDir} unloadable`);
-  }
-  return { afterFiles, reviewErrors };
 }
 
 function beforeFilesByDirectory(

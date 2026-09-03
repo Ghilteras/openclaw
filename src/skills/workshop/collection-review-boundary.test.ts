@@ -470,6 +470,44 @@ describe("skill collection review boundary", () => {
     }
   });
 
+  it("restores the tree when post-turn skill resolution exceeds the bundle limit", async () => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-oversized-skill-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
+    const oversizedDir = path.join(skillsRoot, "oversized");
+    try {
+      await writeSkill(skillsRoot, "procedure", "Procedure", "# Before\n");
+      const result = await runSkillCollectionReviewForAgent({
+        config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
+        agentId: "main",
+        job: createReviewJob("skill-review-oversized-skill"),
+        env: testState.env,
+        runTurn: async () => {
+          await writeSkill(skillsRoot, "oversized", "Oversized procedure", "# New\n");
+          await Promise.all(
+            Array.from({ length: 512 }, (_, index) =>
+              fs.writeFile(path.join(oversizedDir, `support-${index.toString()}.txt`), "Support\n"),
+            ),
+          );
+          return { status: "ok", summary: "reviewed", outputText: "" };
+        },
+      });
+
+      expect(result.status).toBe("error");
+      await expect(fs.access(oversizedDir)).rejects.toThrow();
+      await expect(
+        fs.readFile(path.join(skillsRoot, "procedure", "SKILL.md"), "utf8"),
+      ).resolves.toContain("# Before");
+      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.main).toEqual(
+        expect.objectContaining({ error: expect.stringContaining("Skill evaluation bundle") }),
+      );
+    } finally {
+      await testState.cleanup();
+    }
+  });
+
   it("snapshots, scans, records tree changes, and restores the pre-turn tree", async () => {
     const testState = await createOpenClawTestState({
       layout: "state-only",
