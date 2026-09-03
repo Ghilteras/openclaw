@@ -7848,11 +7848,11 @@ done
     writeExecutables(binDir, {
       docker: `#!/bin/bash
 printf '%s\\n' "$*" >>"$OPENCLAW_TEST_DOCKER_LOG"
+printf 'selected=%s tooling=%s\\n' "$OPENCLAW_SELECTED_SHA" "$OPENCLAW_TOOLING_SHA" >>"$OPENCLAW_TEST_DOCKER_LOG"
 exit 0
 `,
     });
     const selectedSha = "a".repeat(40);
-    const toolingSha = "b".repeat(40);
 
     const result = spawnSync("bash", [PLUGINS_DOCKER_E2E_PATH], {
       cwd: process.cwd(),
@@ -7862,10 +7862,9 @@ exit 0
         PATH: `${binDir}:${process.env.PATH}`,
         OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS: "1",
         OPENCLAW_DOCKER_E2E_DISABLE_RESOURCE_LIMITS: "1",
-        OPENCLAW_SELECTED_SHA: selectedSha,
+        OPENCLAW_DOCKER_E2E_SELECTED_SHA: selectedSha,
         OPENCLAW_SKIP_DOCKER_BUILD: "1",
         OPENCLAW_TEST_DOCKER_LOG: dockerLog,
-        OPENCLAW_TOOLING_SHA: toolingSha,
       },
     });
 
@@ -7876,5 +7875,6 @@ exit 0
     expect(run).toContain("-e OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS");
     expect(run).toContain("-e OPENCLAW_SELECTED_SHA");
     expect(run).toContain("-e OPENCLAW_TOOLING_SHA");
+    expect(readFileSync(dockerLog, "utf8")).toContain(`selected=${selectedSha} tooling=`);
   });
 });
