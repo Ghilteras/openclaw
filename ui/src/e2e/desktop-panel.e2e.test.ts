@@ -886,7 +886,7 @@ suite.define(() => {
   it.each([
     {
       kind: "invalid server message",
-      expected: "The desktop connection failed. Reconnect to try again.",
+      expected: "Reconnect. If it fails again,",
     },
     { kind: "server close", expected: "synthetic desktop service stopped" },
   ])("explains real RFB $kind failures", async ({ kind, expected }) => {

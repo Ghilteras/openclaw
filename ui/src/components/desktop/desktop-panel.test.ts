@@ -845,7 +845,7 @@ describe("embedded desktop panel presentation", () => {
         "transport failure": "desktop stream closed",
         "transport close code": "connection closed with code 1006",
         "unclean disconnect":
-          "The desktop connection failed. Reconnect to try again. If it fails again, check the browser console and desktop service logs.",
+          "Reconnect. If it fails again, check the browser console and desktop service logs.",
         "clean disconnect": "unknown reason",
       };
       const disconnectReason = disconnectReasons[outcome];
