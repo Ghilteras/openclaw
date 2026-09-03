@@ -378,6 +378,7 @@ export async function prepareQaGatewayChild(
             bundledPluginsDir: stagedPluginRuntime.bundledPluginsDir,
             stagedBundledPluginsRoot: lifetime.stagedBundledPluginsRoot,
             compatibilityHostVersion: stagedPluginRuntime.runtimeHostVersion,
+            developmentSourceRoot: usesPackagedCandidate ? null : params.repoRoot,
             providerMode,
             runtimeEnvPatch: {
               ...params.runtimeEnvPatch,
