@@ -824,6 +824,7 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
   const hardlinkOwners = new Map<string, string>();
   const observedEntries: Array<{ entryPath: string; stat: BigIntStats }> = [];
   const canonicalPackageRoot = path.resolve(packageRoot);
+  let packageRootDevice: bigint | null = null;
   let latestCtimeNs = 0n;
   let bytes = 0;
   let entries = 0;
@@ -860,6 +861,14 @@ async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeF
     }
     const stat = await fs.lstat(entryPath, { bigint: true });
     if (stat.ino === 0n) {
+      return false;
+    }
+    if (relativePath === "") {
+      packageRootDevice = stat.dev;
+    } else if (packageRootDevice === null || stat.dev !== packageRootDevice) {
+      // The metadata-clock barrier can advance only the package root's
+      // filesystem. A mounted descendant must therefore keep rollback
+      // verification conservative rather than leave its ctime unbounded.
       return false;
     }
     observedEntries.push({ entryPath, stat });

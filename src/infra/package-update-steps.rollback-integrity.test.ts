@@ -641,6 +641,100 @@ describe("package rollback tree integrity", () => {
     });
   });
 
+  it("keeps rollback unverified when the package tree spans filesystem devices", async () => {
+    await withTestDir({ prefix: "openclaw-package-recovery-mounted-tree-" }, async (base) => {
+      const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+      const packageRoot = path.join(globalRoot, "openclaw");
+      await writePackageRoot(packageRoot, "1.0.0");
+      const lstat = fs.lstat.bind(fs);
+      const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+        const stat = await lstat(...args);
+        if (
+          typeof stat.dev === "bigint" &&
+          String(args[0]).endsWith(`${path.sep}openclaw${path.sep}dist`)
+        ) {
+          Object.assign(stat, { dev: stat.dev + 1n });
+        }
+        return stat;
+      });
+
+      try {
+        const result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: stageCandidatePackage,
+          postVerifyStep: async (candidateRoot) => ({
+            name: "openclaw doctor",
+            command: "openclaw doctor --non-interactive --fix",
+            cwd: candidateRoot,
+            durationMs: 0,
+            exitCode: 1,
+            stderrTail: "doctor rejected candidate",
+          }),
+          timeoutMs: 1000,
+        });
+
+        expect(result.afterVersion).toBe("1.0.0");
+        expect(result.recovery).toMatchObject({
+          serviceRestartSafe: false,
+          packageRollbackVerified: false,
+        });
+        expect(result.failedStep?.stderrTail).toContain(
+          "rollback verification failed: restored package tree does not match backup",
+        );
+      } finally {
+        lstatSpy.mockRestore();
+      }
+    });
+  });
+
+  it("does not fail a successful candidate when the source package spans filesystem devices", async () => {
+    await withTestDir({ prefix: "openclaw-package-success-mounted-tree-" }, async (base) => {
+      const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+      const packageRoot = path.join(globalRoot, "openclaw");
+      await writePackageRoot(packageRoot, "1.0.0");
+      const lstat = fs.lstat.bind(fs);
+      const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+        const stat = await lstat(...args);
+        if (
+          typeof stat.dev === "bigint" &&
+          String(args[0]).endsWith(`${path.sep}openclaw${path.sep}dist`)
+        ) {
+          Object.assign(stat, { dev: stat.dev + 1n });
+        }
+        return stat;
+      });
+
+      try {
+        const result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: stageCandidatePackage,
+          postVerifyStep: async (candidateRoot) => ({
+            name: "openclaw doctor",
+            command: "openclaw doctor --non-interactive --fix",
+            cwd: candidateRoot,
+            durationMs: 0,
+            exitCode: 0,
+          }),
+          timeoutMs: 1000,
+        });
+
+        expect(result.failedStep).toBeNull();
+        expect(result.afterVersion).toBe("2.0.0");
+        expect(result.recovery).toEqual({ serviceRestartSafe: true, version: "2.0.0" });
+      } finally {
+        lstatSpy.mockRestore();
+      }
+    });
+  });
+
   it("keeps rollback unverified when filesystem inode identity is unavailable", async () => {
     await withTestDir({ prefix: "openclaw-package-recovery-no-inode-" }, async (base) => {
       const globalRoot = path.join(base, "prefix", "lib", "node_modules");
