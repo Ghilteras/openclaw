@@ -316,6 +316,38 @@ describe("Codex app-server binding store", () => {
     expect(store.read(identity)).toMatchObject({ threadId: "thread-new" });
   });
 
+  it("drops pending native compaction remediation when the binding changes threads", async () => {
+    const { state } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const identity = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "session-native-compaction-retry",
+    };
+    await store.mutate(identity, {
+      kind: "set",
+      binding: {
+        threadId: "thread-old",
+        cwd: "/repo",
+        nativeCompactionRetryPending: true,
+      },
+    });
+    expect(store.read(identity)).toMatchObject({ nativeCompactionRetryPending: true });
+
+    await expect(
+      store.mutate(identity, {
+        kind: "replace-thread",
+        expectedThreadId: "thread-old",
+        binding: {
+          threadId: "thread-new",
+          cwd: "/repo",
+          nativeCompactionRetryPending: true,
+        },
+      }),
+    ).resolves.toBe(true);
+    expect(store.read(identity)).toEqual({ threadId: "thread-new", cwd: "/repo" });
+  });
+
   it("rejects same-thread and supervision ownership through replacement CAS", async () => {
     const { state } = createStateStore();
     const store = createCodexAppServerBindingStore(state);

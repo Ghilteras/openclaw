@@ -695,6 +695,64 @@ describe("maybeCompactCodexAppServerSession", () => {
     );
   });
 
+  it("retries a rejected post-context-engine compaction until native completion", async () => {
+    const fake = createFakeCodexClient();
+    fake.request.mockRejectedValueOnce(
+      new CodexAppServerRpcError(
+        { code: -32_600, message: "compaction temporarily unavailable" },
+        "thread/compact/start",
+      ),
+    );
+    setCodexAppServerClientFactoryForTest(async () => fake.client);
+    const projection = {
+      schemaVersion: 1 as const,
+      mode: "thread_bootstrap" as const,
+      epoch: "epoch-1",
+      fingerprint: "fingerprint-1",
+    };
+    const sessionFile = await writeTestBinding({
+      contextEngine: {
+        schemaVersion: 1,
+        engineId: "lossless-claw",
+        policyFingerprint: "policy-1",
+        projection,
+      },
+    });
+    const params = {
+      sessionId: "session-1",
+      sessionKey: "agent:main:session-1",
+      sessionFile,
+      workspaceDir: tempDir,
+      trigger: "budget" as const,
+    };
+    const options = {
+      allowNonManualNativeRequest: true,
+      nativeCompactionRequest: "after_context_engine" as const,
+    };
+
+    await expect(maybeCompactCodexAppServerSession(params, options)).resolves.toMatchObject({
+      ok: false,
+      compacted: false,
+      reason: "compaction temporarily unavailable",
+    });
+    expect(await readCodexAppServerBinding(sessionFile)).toMatchObject({
+      threadId: "thread-1",
+      contextEngine: { projection },
+      nativeCompactionRetryPending: true,
+    });
+
+    await expect(maybeCompactCodexAppServerSession(params, options)).resolves.toMatchObject({
+      ok: true,
+      compacted: true,
+    });
+    const binding = await readCodexAppServerBinding(sessionFile);
+    expect(binding?.contextEngine?.projection).toBeUndefined();
+    expect(binding?.nativeCompactionRetryPending).toBeUndefined();
+    expect(
+      fake.request.mock.calls.filter(([method]) => method === "thread/compact/start"),
+    ).toHaveLength(2);
+  });
+
   it("records the required-preflight origin on native app-server compaction requests", async () => {
     const fake = createFakeCodexClient({ retainedThreadId: null });
     setCodexAppServerClientFactoryForTest(async () => fake.client);

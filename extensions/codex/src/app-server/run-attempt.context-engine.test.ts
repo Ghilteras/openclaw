@@ -22,6 +22,7 @@ import { readStringValue } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { describe, expect, it, vi } from "vitest";
 import { readAttemptTerminal } from "./attempt-terminal.test-helper.js";
+import { CodexAppServerRpcError } from "./client.js";
 import { shouldEnableCodexAppServerNativeToolSurface } from "./dynamic-tool-build.js";
 import {
   assistantMessage,
@@ -774,6 +775,139 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
 
     await harness.completeTurn("completed", "thread-bootstrapped");
     await run;
+  });
+
+  it("retries pending native compaction before starting the next Codex turn", async () => {
+    const sessionFile = path.join(tempDir, "pending-native-compaction.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace-pending-native-compaction");
+    await writeCodexAppServerBinding(sessionFile, {
+      threadId: "thread-1",
+      cwd: workspaceDir,
+      dynamicToolsFingerprint: "[]",
+      nativeCompactionRetryPending: true,
+      contextEngine: {
+        schemaVersion: 1,
+        engineId: "lossless-claw",
+        policyFingerprint: "policy-1",
+        projection: {
+          schemaVersion: 1,
+          mode: "thread_bootstrap",
+          epoch: "epoch-1",
+        },
+      },
+    });
+    let harness!: ReturnType<typeof createStartedThreadHarness>;
+    harness = createStartedThreadHarness(
+      async (method) => {
+        if (method === "thread/resume") {
+          return threadStartResult("thread-1");
+        }
+        if (method === "thread/compact/start") {
+          await harness.notify({
+            method: "turn/started",
+            params: {
+              threadId: "thread-1",
+              turn: {
+                id: "compact-turn-1",
+                threadId: "thread-1",
+                status: "inProgress",
+              },
+            },
+          });
+          for (const method of ["item/started", "item/completed"] as const) {
+            await harness.notify({
+              method,
+              params: {
+                threadId: "thread-1",
+                turnId: "compact-turn-1",
+                item: { id: "compact-item-1", type: "contextCompaction" },
+              },
+            });
+          }
+          await harness.notify({
+            method: "turn/completed",
+            params: {
+              threadId: "thread-1",
+              turn: {
+                id: "compact-turn-1",
+                threadId: "thread-1",
+                status: "completed",
+              },
+            },
+          });
+          return {};
+        }
+        return undefined;
+      },
+      { persistedThreads: ["thread-1"] },
+    );
+    const params = createParams(sessionFile, workspaceDir);
+
+    const run = runCodexAppServerAttempt(params);
+    await harness.waitForMethod("turn/start");
+
+    const methods = harness.requests.map(({ method }) => method);
+    expect(methods.filter((method) => method === "thread/compact/start")).toHaveLength(1);
+    expect(methods.indexOf("thread/compact/start")).toBeLessThan(methods.indexOf("turn/start"));
+    const binding = await readCodexAppServerBinding(sessionFile);
+    expect(binding?.contextEngine?.projection).toBeUndefined();
+    expect(binding?.nativeCompactionRetryPending).toBeUndefined();
+
+    await harness.completeTurn();
+    await run;
+  });
+
+  it("cleans up upstream abort when pending native compaction retry is rejected", async () => {
+    const sessionFile = path.join(tempDir, "rejected-native-compaction.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace-rejected-native-compaction");
+    await writeCodexAppServerBinding(sessionFile, {
+      threadId: "thread-1",
+      cwd: workspaceDir,
+      dynamicToolsFingerprint: "[]",
+      nativeCompactionRetryPending: true,
+      contextEngine: {
+        schemaVersion: 1,
+        engineId: "lossless-claw",
+        policyFingerprint: "policy-1",
+        projection: {
+          schemaVersion: 1,
+          mode: "thread_bootstrap",
+          epoch: "epoch-1",
+        },
+      },
+    });
+    const harness = createStartedThreadHarness(
+      async (method) => {
+        if (method === "thread/resume") {
+          return threadStartResult("thread-1");
+        }
+        if (method === "thread/compact/start") {
+          throw new CodexAppServerRpcError(
+            { code: -32_600, message: "compaction temporarily unavailable" },
+            "thread/compact/start",
+          );
+        }
+        return undefined;
+      },
+      { persistedThreads: ["thread-1"] },
+    );
+    const params = createParams(sessionFile, workspaceDir);
+    const upstreamAbort = new AbortController();
+    const onAttemptAbort = vi.fn();
+    params.abortSignal = upstreamAbort.signal;
+    params.onAttemptAbort = onAttemptAbort;
+
+    await expect(runCodexAppServerAttempt(params)).rejects.toThrow(
+      "Codex native compaction retry remains pending before turn/start",
+    );
+    expect(harness.requests.some(({ method }) => method === "turn/start")).toBe(false);
+    expect(await readCodexAppServerBinding(sessionFile)).toMatchObject({
+      threadId: "thread-1",
+      nativeCompactionRetryPending: true,
+      contextEngine: { projection: { epoch: "epoch-1" } },
+    });
+    upstreamAbort.abort("after retry rejection");
+    expect(onAttemptAbort).not.toHaveBeenCalled();
   });
 
   it("starts a fresh thread instead of resuming a token-pressured thread-bootstrap binding", async () => {
