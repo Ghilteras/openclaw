@@ -5,7 +5,10 @@ import { render } from "lit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardProvider } from "../../../lib/board/provider.ts";
 import * as messageNormalizer from "../../../lib/chat/message-normalizer.ts";
-import { resolveAssistantAttachmentAuthToken } from "../chat-pane-state.ts";
+import {
+  resolveAssistantAttachmentAuthToken,
+  resolveChatAssistantMedia,
+} from "../chat-pane-state.ts";
 import { createTestChatPane } from "../chat-pane.test-support.ts";
 import * as chatThreadBuild from "../chat-thread-build.ts";
 import {
@@ -199,31 +202,18 @@ describe("chat transcript invalidation", () => {
   });
 
   it("reconciles guarded local attachments when pane preview roots change", async () => {
-    let previousSignal: AbortSignal | undefined;
-    const fetchMock = vi.fn((_source: string, init?: RequestInit) => {
-      if (fetchMock.mock.calls.length === 1) {
-        return new Promise<Response>((_resolve, reject) => {
-          previousSignal = init?.signal ?? undefined;
-          previousSignal?.addEventListener(
-            "abort",
-            () => reject(new DOMException("preview roots changed", "AbortError")),
-            { once: true },
-          );
-        });
+    const request = vi.fn(() => {
+      if (request.mock.calls.length === 1) {
+        return new Promise<never>(() => undefined);
       }
       return Promise.resolve({
-        ok: true,
-        json: async () => ({
-          available: true,
-          mediaTicket: "root-restored-ticket",
-          mediaTicketExpiresAt: new Date(Date.now() + 90_000).toISOString(),
-        }),
-      } as Response);
+        available: true,
+        mediaTicket: "root-restored-ticket",
+        mediaTicketExpiresAt: new Date(Date.now() + 90_000).toISOString(),
+      });
     });
-    vi.stubGlobal("fetch", fetchMock);
-
     const client = {
-      request: vi.fn(async () => null),
+      request,
     } as unknown as Parameters<typeof createTestChatPane>[0]["client"];
     const sessions = {} as Parameters<typeof createTestChatPane>[0]["sessions"];
     const { pane, state } = createTestChatPane({ client, sessions });
@@ -252,8 +242,9 @@ describe("chat transcript invalidation", () => {
         renderChatThread(
           {
             ...threadProps("pane-local-media-roots", state.sessionKey, messages),
-            assistantAttachmentAuthToken: resolveAssistantAttachmentAuthToken(state),
+            connectionEpoch: state.connectionEpoch,
             localMediaPreviewRoots: state.localMediaPreviewRoots,
+            resolveAssistantMedia: (mediaSource) => resolveChatAssistantMedia(state, mediaSource),
             onRequestUpdate: renderPane,
           },
           transcript,
@@ -269,11 +260,9 @@ describe("chat transcript invalidation", () => {
     transcript.hostUpdated();
     await flushDeferredRowPrune();
 
-    const previousResource = observeChatMediaResource(
-      "assistant-attachment",
-      `::test-auth-token::${source}`,
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const cacheKey = `::gateway:${state.connectionEpoch}::${source}`;
+    const previousResource = observeChatMediaResource("assistant-attachment", cacheKey);
+    expect(request).toHaveBeenCalledWith("assistant.media.get", { source }, { timeoutMs: 30_000 });
     expect(previousResource.subscribers.size).toBe(1);
 
     const config = {
@@ -285,9 +274,8 @@ describe("chat transcript invalidation", () => {
     configPane.applyApplicationConfig(config);
     await flushDeferredRowPrune();
 
-    expect(previousSignal?.aborted).toBe(true);
     expect(isChatMediaResourceCurrent(previousResource)).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
     expect(
       container.querySelector(".chat-assistant-attachment-card__status-meta")?.textContent,
     ).toContain("Outside allowed folders");
@@ -298,14 +286,12 @@ describe("chat transcript invalidation", () => {
     });
     await flushDeferredRowPrune();
 
-    const restoredResource = observeChatMediaResource(
-      "assistant-attachment",
-      `::test-auth-token::${source}`,
-    );
-    const metadataCalls = fetchMock.mock.calls.filter(([input]) => input.includes("meta=1"));
-    expect(metadataCalls).toHaveLength(2);
-    expect(new Headers(metadataCalls[1]?.[1]?.headers).get("Authorization")).toBe(
-      "Bearer test-auth-token",
+    const restoredResource = observeChatMediaResource("assistant-attachment", cacheKey);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenLastCalledWith(
+      "assistant.media.get",
+      { source },
+      { timeoutMs: 30_000 },
     );
     expect(isChatMediaResourceCurrent(restoredResource)).toBe(true);
     expect(restoredResource.subscribers.size).toBe(1);

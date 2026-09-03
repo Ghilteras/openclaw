@@ -3482,18 +3482,13 @@ describe("grouped chat rendering", () => {
     expect(preview?.querySelector(".session-run-spinner")).toBeInstanceOf(HTMLElement);
   });
 
-  it("checks local assistant audio against server metadata while preview roots load", async () => {
+  it("checks local assistant audio through the media capability while preview roots load", async () => {
     const source = `/home/node/.openclaw/media/outbound/${crypto.randomUUID()}.mp3`;
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(new URL(url, "http://control.test").pathname).toBe("/__openclaw__/assistant-media");
-      expect(url).toContain("meta=1");
-      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer session-token");
-      return {
-        ok: true,
-        json: async () => ({ ...mediaTicketPayload("ticket-bootstrap-audio"), durationMs: 2_345 }),
-      };
-    });
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const resolveAssistantMedia = vi.fn(async () => ({
+      ...mediaTicketPayload("ticket-bootstrap-audio"),
+      available: true as const,
+      durationMs: 2_345,
+    }));
 
     const container = document.body.appendChild(document.createElement("div"));
     const renderMessage = () =>
@@ -3507,13 +3502,14 @@ describe("grouped chat rendering", () => {
           resourceBasePath: "",
           assistantAttachmentAuthToken: "session-token",
           localMediaPreviewRoots: [],
+          resolveAssistantMedia,
           onRequestUpdate: renderMessage,
         },
       );
 
     renderMessage();
     expect(container.textContent).not.toContain("Outside allowed folders");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(resolveAssistantMedia).toHaveBeenCalledWith(source);
     await flushAssistantAttachmentAvailabilityChecks();
 
     expect(
@@ -3873,14 +3869,12 @@ describe("grouped chat rendering", () => {
     ).toContain("Unavailable");
   });
 
-  it("checks local assistant images against server metadata while preview roots load", async () => {
+  it("checks local assistant images through the media capability while preview roots load", async () => {
     const source = `/home/node/.openclaw/media/outbound/${crypto.randomUUID()}.png`;
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toContain("meta=1");
-      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer session-token");
-      return { ok: true, json: async () => mediaTicketPayload("ticket-bootstrap-image") };
-    });
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const resolveAssistantMedia = vi.fn(async () => ({
+      ...mediaTicketPayload("ticket-bootstrap-image"),
+      available: true as const,
+    }));
 
     const container = document.createElement("div");
     const renderMessage = () =>
@@ -3899,12 +3893,13 @@ describe("grouped chat rendering", () => {
           resourceBasePath: "/openclaw",
           assistantAttachmentAuthToken: "session-token",
           localMediaPreviewRoots: [],
+          resolveAssistantMedia,
           onRequestUpdate: renderMessage,
         },
       );
 
     renderMessage();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(resolveAssistantMedia).toHaveBeenCalledWith(source);
     await flushAssistantAttachmentAvailabilityChecks();
 
     const image = expectElement(container, ".chat-message-image", HTMLImageElement);
@@ -3927,12 +3922,11 @@ describe("grouped chat rendering", () => {
   ] as const)(
     "keeps server-rejected $code media blocked while preview roots load",
     async ({ code, reason, source }) => {
-      const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-        expect(url).toContain("meta=1");
-        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer session-token");
-        return { ok: true, json: async () => ({ available: false, code, reason }) };
-      });
-      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const resolveAssistantMedia = vi.fn(async () => ({
+        available: false as const,
+        code,
+        reason,
+      }));
 
       const container = document.createElement("div");
       const renderMessage = () =>
@@ -3946,12 +3940,13 @@ describe("grouped chat rendering", () => {
             resourceBasePath: "/openclaw",
             assistantAttachmentAuthToken: "session-token",
             localMediaPreviewRoots: [],
+            resolveAssistantMedia,
             onRequestUpdate: renderMessage,
           },
         );
 
       renderMessage();
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(resolveAssistantMedia).toHaveBeenCalledWith(source);
       await flushAssistantAttachmentAvailabilityChecks();
 
       await vi.waitFor(() => {
@@ -4076,37 +4071,23 @@ describe("grouped chat rendering", () => {
     );
   });
 
-  it("stops checking when local assistant attachment metadata fetch stalls", async () => {
-    vi.useFakeTimers();
-    const source = `/tmp/openclaw/${crypto.randomUUID()}-stalled.txt`;
-    const fetchMock = vi.fn(
-      (_url: string, init?: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          const signal = init?.signal;
-          signal?.addEventListener(
-            "abort",
-            () =>
-              reject(
-                signal.reason instanceof Error
-                  ? signal.reason
-                  : new DOMException("aborted", "AbortError"),
-              ),
-            { once: true },
-          );
-        }),
-    );
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+  it("stops checking when the local media capability request fails", async () => {
+    const source = `/tmp/openclaw/${crypto.randomUUID()}-failed.txt`;
+    const resolveAssistantMedia = vi.fn(async () => {
+      throw new Error("Gateway request failed");
+    });
     const container = document.createElement("div");
     const rerender = () =>
       renderAssistantMessage(
         container,
         createAssistantMessage(`Local document\nMEDIA:${source}`, {
-          id: "assistant-local-media-stalled-metadata",
+          id: "assistant-local-media-failed-capability",
         }),
         {
           showToolCalls: false,
           resourceBasePath: "/openclaw",
           localMediaPreviewRoots: ["/tmp/openclaw"],
+          resolveAssistantMedia,
           onRequestUpdate: rerender,
         },
       );
@@ -4115,14 +4096,9 @@ describe("grouped chat rendering", () => {
     expect(
       container.querySelector(".chat-assistant-attachment-card__status-meta")?.textContent?.trim(),
     ).toBe("Checking...");
-
-    const expectedMetaUrl = `/openclaw/__openclaw__/assistant-media?source=${encodeURIComponent(source)}&meta=1`;
-    const [, fetchInit] = requireFetchCallForUrl(fetchMock, expectedMetaUrl);
-    await vi.advanceTimersByTimeAsync(30_001);
     await flushAssistantAttachmentAvailabilityChecks();
 
-    expect(fetchInit?.signal).toBeInstanceOf(AbortSignal);
-    expect(fetchInit?.signal?.aborted).toBe(true);
+    expect(resolveAssistantMedia).toHaveBeenCalledWith(source);
     expect(
       container.querySelector(".chat-assistant-attachment-card__status-meta")?.textContent,
     ).toContain("Unavailable");
@@ -4132,19 +4108,10 @@ describe("grouped chat rendering", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-30T00:00:00Z"));
     const source = `/tmp/openclaw/${crypto.randomUUID()}-refresh.png`;
-    const fetchMock = vi
-      .fn<
-        (url: string, init?: RequestInit) => Promise<{ ok: true; json: () => Promise<unknown> }>
-      >()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => mediaTicketPayload("ticket-old", 31_000),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => mediaTicketPayload("ticket-new"),
-      });
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const resolveAssistantMedia = vi
+      .fn()
+      .mockResolvedValueOnce({ ...mediaTicketPayload("ticket-old", 31_000), available: true })
+      .mockResolvedValueOnce({ ...mediaTicketPayload("ticket-new"), available: true });
     const container = document.createElement("div");
     const rerender = () =>
       renderAssistantMessage(
@@ -4160,13 +4127,14 @@ describe("grouped chat rendering", () => {
           resourceBasePath: "/openclaw",
           assistantAttachmentAuthToken: "test-auth-token",
           localMediaPreviewRoots: ["/tmp/openclaw"],
+          resolveAssistantMedia,
           onRequestUpdate: rerender,
         },
       );
 
     rerender();
     await flushAssistantAttachmentAvailabilityChecks();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(resolveAssistantMedia).toHaveBeenCalledTimes(1);
     expect(
       container.querySelector<HTMLImageElement>(".chat-message-image")?.getAttribute("src"),
     ).toContain("mediaTicket=ticket-old");
@@ -4174,7 +4142,7 @@ describe("grouped chat rendering", () => {
 
     await vi.advanceTimersByTimeAsync(1_001);
     await flushAssistantAttachmentAvailabilityChecks();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(resolveAssistantMedia).toHaveBeenCalledTimes(2);
     expect(getChatMediaRenderVersion()).not.toBe(renderVersionBeforeRefresh);
     expect(
       container.querySelector<HTMLImageElement>(".chat-message-image")?.getAttribute("src"),
@@ -4185,19 +4153,10 @@ describe("grouped chat rendering", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-30T00:00:00Z"));
     const source = `/tmp/openclaw/${crypto.randomUUID()}-refresh.mp3`;
-    const fetchMock = vi
-      .fn<
-        (url: string, init?: RequestInit) => Promise<{ ok: true; json: () => Promise<unknown> }>
-      >()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => mediaTicketPayload("ticket-old", 31_000),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => mediaTicketPayload("ticket-new"),
-      });
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const resolveAssistantMedia = vi
+      .fn()
+      .mockResolvedValueOnce({ ...mediaTicketPayload("ticket-old", 31_000), available: true })
+      .mockResolvedValueOnce({ ...mediaTicketPayload("ticket-new"), available: true });
     const container = document.body.appendChild(document.createElement("div"));
     const rerender = () =>
       renderAssistantMessage(
@@ -4212,6 +4171,7 @@ describe("grouped chat rendering", () => {
           showToolCalls: false,
           resourceBasePath: "/openclaw",
           localMediaPreviewRoots: ["/tmp/openclaw"],
+          resolveAssistantMedia,
           onRequestUpdate: rerender,
         },
       );
@@ -4230,29 +4190,19 @@ describe("grouped chat rendering", () => {
     expect(container.querySelector("audio, openclaw-chat-audio-player")).toBeNull();
   });
 
-  it("rechecks local assistant media when its auth token changes", async () => {
-    const source = `/tmp/openclaw/${crypto.randomUUID()}-auth.png`;
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (!url.includes("meta=1")) {
-        throw new Error(`Unexpected fetch: ${url}`);
-      }
-      const usesUpdatedFixture =
-        new Headers(init?.headers).get("Authorization") ===
-        ["Bearer", "test-token-placeholder"].join(" ");
-      return {
-        ok: true,
-        json: async () =>
-          usesUpdatedFixture ? mediaTicketPayload("ticket-fresh") : { available: false },
-      };
-    });
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+  it("rechecks local assistant media when the Gateway connection changes", async () => {
+    const source = `/tmp/openclaw/${crypto.randomUUID()}-connection.png`;
+    const resolveAssistantMedia = vi
+      .fn()
+      .mockResolvedValueOnce({ available: false })
+      .mockResolvedValueOnce({ ...mediaTicketPayload("ticket-fresh"), available: true });
     const container = document.createElement("div");
 
-    const renderWithToken = (token: string | null) =>
+    const renderWithEpoch = (connectionEpoch: number) =>
       renderAssistantMessage(
         container,
         {
-          id: "assistant-local-media-auth-refresh",
+          id: "assistant-local-media-connection-refresh",
           role: "assistant",
           content: `Local image\nMEDIA:${source}`,
           timestamp: Date.now(),
@@ -4260,21 +4210,22 @@ describe("grouped chat rendering", () => {
         {
           showToolCalls: false,
           resourceBasePath: "/openclaw",
-          assistantAttachmentAuthToken: token,
+          connectionEpoch,
+          resolveAssistantMedia,
           localMediaPreviewRoots: ["/tmp/openclaw"],
-          onRequestUpdate: () => renderWithToken(token),
+          onRequestUpdate: () => renderWithEpoch(connectionEpoch),
         },
       );
 
-    renderWithToken(null);
+    renderWithEpoch(1);
     await flushAssistantAttachmentAvailabilityChecks();
     expect(
       container.querySelector(".chat-assistant-attachment-card__status-meta")?.textContent,
     ).toContain("Unavailable");
 
-    renderWithToken("test-token-placeholder");
+    renderWithEpoch(2);
     await flushAssistantAttachmentAvailabilityChecks();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(resolveAssistantMedia).toHaveBeenCalledTimes(2);
     expect(
       expectElement(container, ".chat-message-image", HTMLImageElement).getAttribute("src"),
     ).toContain("mediaTicket=ticket-fresh");
@@ -4283,14 +4234,10 @@ describe("grouped chat rendering", () => {
   it("automatically retries unavailable local assistant media after the retry window", async () => {
     vi.useFakeTimers();
     const source = `/tmp/openclaw/${crypto.randomUUID()}-retry.png`;
-    const fetchMock = vi
-      .fn<(url: string) => Promise<{ ok: true; json: () => Promise<unknown> }>>()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ available: false }) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => mediaTicketPayload("ticket-retry"),
-      });
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const resolveAssistantMedia = vi
+      .fn()
+      .mockResolvedValueOnce({ available: false })
+      .mockResolvedValueOnce({ ...mediaTicketPayload("ticket-retry"), available: true });
     const container = document.createElement("div");
     const rerender = () =>
       renderAssistantMessage(
@@ -4305,20 +4252,21 @@ describe("grouped chat rendering", () => {
           showToolCalls: false,
           resourceBasePath: "/openclaw",
           localMediaPreviewRoots: ["/tmp/openclaw"],
+          resolveAssistantMedia,
           onRequestUpdate: rerender,
         },
       );
 
     rerender();
     await flushAssistantAttachmentAvailabilityChecks();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(resolveAssistantMedia).toHaveBeenCalledTimes(1);
     expect(
       container.querySelector(".chat-assistant-attachment-card__status-meta")?.textContent,
     ).toContain("Unavailable");
 
     await vi.advanceTimersByTimeAsync(5_001);
     await flushAssistantAttachmentAvailabilityChecks();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(resolveAssistantMedia).toHaveBeenCalledTimes(2);
     expect(
       expectElement(container, ".chat-message-image", HTMLImageElement).getAttribute("src"),
     ).toContain("mediaTicket=ticket-retry");
@@ -4327,11 +4275,7 @@ describe("grouped chat rendering", () => {
   it("stops automatically retrying permanently unavailable local assistant media", async () => {
     vi.useFakeTimers();
     const source = `/tmp/openclaw/${crypto.randomUUID()}-permanently-unavailable.png`;
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ available: false }),
-    }));
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const resolveAssistantMedia = vi.fn(async () => ({ available: false as const }));
     const container = document.createElement("div");
     const rerender = () =>
       renderAssistantMessage(
@@ -4346,29 +4290,30 @@ describe("grouped chat rendering", () => {
           showToolCalls: false,
           resourceBasePath: "/openclaw",
           localMediaPreviewRoots: ["/tmp/openclaw"],
+          resolveAssistantMedia,
           onRequestUpdate: rerender,
         },
       );
 
     rerender();
     await flushAssistantAttachmentAvailabilityChecks();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(resolveAssistantMedia).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(5_001);
     await flushAssistantAttachmentAvailabilityChecks();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(resolveAssistantMedia).toHaveBeenCalledTimes(2);
 
     await vi.advanceTimersByTimeAsync(20_000);
     await flushAssistantAttachmentAvailabilityChecks();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(resolveAssistantMedia).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
     expect(
       container.querySelector(".chat-assistant-attachment-card__status-meta")?.textContent,
     ).toContain("Unavailable");
 
     rerender();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(resolveAssistantMedia).toHaveBeenCalledTimes(2);
   });
 
   it("preserves same-origin assistant attachments without local preview rewriting", () => {
@@ -4449,14 +4394,10 @@ describe("grouped chat rendering", () => {
   it("renders transcript image variants and structured image blocks", async () => {
     const firstSource = `/tmp/openclaw/${crypto.randomUUID()}-first.png`;
     const secondSource = `/tmp/openclaw/${crypto.randomUUID()}-second.jpg`;
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      const mediaUrl = new URL(url, "http://control.test");
-      expect(mediaUrl.pathname).toBe("/openclaw/__openclaw__/assistant-media");
-      expect(mediaUrl.searchParams.get("meta")).toBe("1");
-      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer test-auth-token");
-      return { ok: true, json: async () => mediaTicketPayload("ticket-transcript") };
-    });
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const resolveAssistantMedia = vi.fn(async () => ({
+      ...mediaTicketPayload("ticket-transcript"),
+      available: true as const,
+    }));
 
     const container = document.createElement("div");
     const renderUserMedia = (message: unknown) => {
@@ -4466,6 +4407,7 @@ describe("grouped chat rendering", () => {
           resourceBasePath: "/openclaw",
           assistantAttachmentAuthToken: "test-auth-token",
           localMediaPreviewRoots: ["/tmp/openclaw"],
+          resolveAssistantMedia,
           onRequestUpdate: rerender,
         });
       rerender();
@@ -4516,13 +4458,10 @@ describe("grouped chat rendering", () => {
 
   it("renders canonical inbound transcript images through the authenticated media route", async () => {
     const source = `media://inbound/${crypto.randomUUID()}.png`;
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      const mediaUrl = new URL(url, "http://control.test");
-      expect(mediaUrl.searchParams.get("source")).toBe(source);
-      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer test-auth-token");
-      return { ok: true, json: async () => mediaTicketPayload("ticket-inbound") };
-    });
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const resolveAssistantMedia = vi.fn(async () => ({
+      ...mediaTicketPayload("ticket-inbound"),
+      available: true as const,
+    }));
 
     const container = document.createElement("div");
     const rerender = () =>
@@ -4538,6 +4477,7 @@ describe("grouped chat rendering", () => {
           resourceBasePath: "/openclaw",
           assistantAttachmentAuthToken: "test-auth-token",
           localMediaPreviewRoots: [],
+          resolveAssistantMedia,
           onRequestUpdate: rerender,
         },
       );
@@ -4545,7 +4485,7 @@ describe("grouped chat rendering", () => {
     rerender();
     await flushAssistantAttachmentAvailabilityChecks();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(resolveAssistantMedia).toHaveBeenCalledWith(source);
     expect(
       container.querySelector<HTMLImageElement>(".chat-message-image")?.getAttribute("src"),
     ).toBe(

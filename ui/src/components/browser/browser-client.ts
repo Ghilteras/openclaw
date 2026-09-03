@@ -322,23 +322,15 @@ export async function inspectBrowserElementAt(
  * then fetches bytes from the same assistant-media route chat history uses.
  */
 export async function fetchBrowserScreenshotDataUrl(params: {
-  client?: GatewayBrowserClient | null;
-  authToken?: string | null;
-  useMediaCapability?: boolean;
+  client: GatewayBrowserClient;
   resourceBasePath: string;
   path: string;
 }): Promise<string> {
-  const capability =
-    params.useMediaCapability && params.client
-      ? await resolveAssistantMedia(params.client, params.path)
-      : null;
-  if (capability && !capability.available) {
+  const capability = await resolveAssistantMedia(params.client, params.path);
+  if (!capability.available) {
     throw new Error(capability.reason);
   }
   const headers = new Headers({ Accept: "image/*" });
-  if (!capability && params.authToken) {
-    headers.set("Authorization", `Bearer ${params.authToken}`);
-  }
   const controller = new AbortController();
   const timeout = setTimeout(
     () =>
@@ -350,11 +342,7 @@ export async function fetchBrowserScreenshotDataUrl(params: {
   let blob: Blob;
   try {
     const res = await fetch(
-      buildAssistantMediaUrl(
-        params.path,
-        params.resourceBasePath,
-        capability?.available ? capability.mediaTicket : undefined,
-      ),
+      buildAssistantMediaUrl(params.path, params.resourceBasePath, capability.mediaTicket),
       {
         method: "GET",
         headers,

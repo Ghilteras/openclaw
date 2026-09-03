@@ -447,9 +447,7 @@ export function renderAssistantAttachments(
             retryAssistantAttachmentAvailability(
               attachment.url,
               resourceBasePath,
-              authToken,
               onRequestUpdate,
-              resolveAssistantMedia,
               connectionEpoch,
             )
         : managedAvailability?.status === "unavailable" &&

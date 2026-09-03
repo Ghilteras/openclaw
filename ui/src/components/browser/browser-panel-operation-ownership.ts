@@ -11,8 +11,6 @@ export interface BrowserPanelControllerHost extends ReactiveControllerHost {
   readonly client: GatewayBrowserClient | null;
   readonly available: boolean;
   readonly resourceBasePath: string;
-  readonly authToken: string | null;
-  readonly mediaCapabilityAvailable: boolean;
   readonly isConnected: boolean;
   readonly renderRoot: HTMLElement | DocumentFragment;
   readonly updateComplete: Promise<boolean>;

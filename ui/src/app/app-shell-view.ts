@@ -15,7 +15,7 @@ import {
 } from "../components/settings-sidebar-lazy.ts";
 import type { ThemeModeChangeDetail } from "../components/theme-mode-toggle.ts";
 import { t } from "../i18n/index.ts";
-import { canCallGatewayMethod, isGatewayMethodAdvertised } from "../lib/gateway-methods.ts";
+import { canCallGatewayMethod } from "../lib/gateway-methods.ts";
 import {
   formatKeyboardShortcutCombo,
   KEYBOARD_SHORTCUT_COMBOS,
@@ -30,7 +30,6 @@ import { isBrowserPanelAvailable, isDesktopPanelAvailable } from "./app-shell-ch
 import type { OutboxStoreRuntime, StoredOutboxScopeHost } from "./app-shell-gateway.ts";
 import type { ApplicationRuntime } from "./bootstrap.ts";
 import type { ApplicationContext, ApplicationNavigationOptions } from "./context.ts";
-import { resolveControlUiAuthToken } from "./control-ui-auth.ts";
 import {
   DEBUG_OVERLAY_ELEMENT,
   isOptionalElementDefined,
@@ -646,15 +645,6 @@ export function renderApplicationShell(host: ShellViewHost) {
               .available=${browserPanelAvailable}
               .suppressed=${settingsTakeover}
               .resourceBasePath=${context.resourceBasePath}
-              .mediaCapabilityAvailable=${isGatewayMethodAdvertised(
-                gatewaySnapshot,
-                "assistant.media.get",
-              ) === true}
-              .authToken=${resolveControlUiAuthToken({
-                hello: gatewaySnapshot.hello,
-                settings: { token: context.gateway.connection.token },
-                password: context.gateway.connection.password,
-              })}
             ></openclaw-browser-panel>
             <openclaw-desktop-panel
               data-chat-autotype-exempt

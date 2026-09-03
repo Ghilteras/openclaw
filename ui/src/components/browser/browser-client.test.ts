@@ -31,7 +31,6 @@ describe("fetchBrowserScreenshotDataUrl", () => {
     await expect(
       fetchBrowserScreenshotDataUrl({
         client: createAssistantMediaClient() as never,
-        useMediaCapability: true,
         resourceBasePath: "",
         path: "/tmp/browser shot.png",
       }),
@@ -52,7 +51,6 @@ describe("fetchBrowserScreenshotDataUrl", () => {
     await expect(
       fetchBrowserScreenshotDataUrl({
         client: createAssistantMediaClient() as never,
-        useMediaCapability: true,
         resourceBasePath: "/openclaw",
         path: "/tmp/missing.png",
       }),
@@ -72,7 +70,6 @@ describe("fetchBrowserScreenshotDataUrl", () => {
     await expect(
       fetchBrowserScreenshotDataUrl({
         client: createAssistantMediaClient() as never,
-        useMediaCapability: true,
         resourceBasePath: "/openclaw",
         path: "/tmp/missing.png",
       }),
@@ -95,7 +92,6 @@ describe("fetchBrowserScreenshotDataUrl", () => {
     await expect(
       fetchBrowserScreenshotDataUrl({
         client: createAssistantMediaClient() as never,
-        useMediaCapability: true,
         resourceBasePath: "/openclaw",
         path: "/tmp/missing.png",
       }),
@@ -127,7 +123,6 @@ describe("fetchBrowserScreenshotDataUrl", () => {
 
     const request = fetchBrowserScreenshotDataUrl({
       client: createAssistantMediaClient() as never,
-      useMediaCapability: true,
       resourceBasePath: "/openclaw",
       path: "/tmp/browser shot.png",
     });
@@ -176,7 +171,6 @@ describe("fetchBrowserScreenshotDataUrl", () => {
 
     const request = fetchBrowserScreenshotDataUrl({
       client: createAssistantMediaClient() as never,
-      useMediaCapability: true,
       resourceBasePath: "/openclaw",
       path: "/tmp/browser shot.png",
     });
@@ -216,7 +210,6 @@ describe("fetchBrowserScreenshotDataUrl", () => {
     await expect(
       fetchBrowserScreenshotDataUrl({
         client: createAssistantMediaClient() as never,
-        useMediaCapability: true,
         resourceBasePath: "/openclaw",
         path: "/tmp/missing.png",
       }),

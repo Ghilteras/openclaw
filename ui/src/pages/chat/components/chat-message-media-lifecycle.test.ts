@@ -441,22 +441,15 @@ describe("chat media resource lifecycle", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          available: true,
-          mediaTicket: "ticket-before-refresh",
-          mediaTicketExpiresAt: new Date(Date.now() + 31_000).toISOString(),
-        }),
+        available: true,
+        mediaTicket: "ticket-before-refresh",
+        mediaTicketExpiresAt: new Date(Date.now() + 31_000).toISOString(),
       })
       .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          available: true,
-          mediaTicket: "ticket-after-refresh",
-          mediaTicketExpiresAt: new Date(Date.now() + 90_000).toISOString(),
-        }),
+        available: true,
+        mediaTicket: "ticket-after-refresh",
+        mediaTicketExpiresAt: new Date(Date.now() + 90_000).toISOString(),
       });
-    vi.stubGlobal("fetch", fetchMock);
 
     let firstTicket: string | undefined;
     let secondTicket: string | undefined;
@@ -465,8 +458,9 @@ describe("chat media resource lifecycle", () => {
         source,
         ["/tmp/openclaw"],
         "/openclaw",
-        "split-pane-token",
+        null,
         rerenderFirst,
+        fetchMock,
       );
       firstTicket = availability.status === "available" ? availability.mediaTicket : undefined;
     });
@@ -475,8 +469,9 @@ describe("chat media resource lifecycle", () => {
         source,
         ["/tmp/openclaw"],
         "/openclaw",
-        "split-pane-token",
+        null,
         rerenderSecond,
+        fetchMock,
       );
       secondTicket = availability.status === "available" ? availability.mediaTicket : undefined;
     });
@@ -501,18 +496,11 @@ describe("chat media resource lifecycle", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          available: true,
-          mediaTicket: "ticket-before-definitive-rejection",
-          mediaTicketExpiresAt: new Date(Date.now() + 31_000).toISOString(),
-        }),
+        available: true,
+        mediaTicket: "ticket-before-definitive-rejection",
+        mediaTicketExpiresAt: new Date(Date.now() + 31_000).toISOString(),
       })
-      .mockResolvedValue({
-        ok: true,
-        json: async () => ({ available: false, reason: "Attachment removed" }),
-      });
-    vi.stubGlobal("fetch", fetchMock);
+      .mockResolvedValue({ available: false, reason: "Attachment removed" });
 
     let latest: ReturnType<typeof resolveAssistantAttachmentAvailability> | undefined;
     const rerender = observeSubscriber(() => {
@@ -520,8 +508,9 @@ describe("chat media resource lifecycle", () => {
         source,
         ["/tmp/openclaw"],
         "/openclaw",
-        "definitive-rejection-token",
+        null,
         rerender,
+        fetchMock,
       );
     });
 
@@ -543,21 +532,14 @@ describe("chat media resource lifecycle", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          available: true,
-          mediaTicket: "ticket-before-transient-failures",
-          mediaTicketExpiresAt: new Date(Date.now() + 60_000).toISOString(),
-        }),
+        available: true,
+        mediaTicket: "ticket-before-transient-failures",
+        mediaTicketExpiresAt: new Date(Date.now() + 60_000).toISOString(),
       })
       .mockRejectedValueOnce(new Error("refresh unavailable 1"))
       .mockRejectedValueOnce(new Error("refresh unavailable 2"))
       .mockRejectedValueOnce(new Error("refresh unavailable 3"))
-      .mockResolvedValue({
-        ok: true,
-        json: async () => ({ available: false }),
-      });
-    vi.stubGlobal("fetch", fetchMock);
+      .mockResolvedValue({ available: false });
 
     let latest: ReturnType<typeof resolveAssistantAttachmentAvailability> | undefined;
     const rerender = observeSubscriber(() => {
@@ -565,8 +547,9 @@ describe("chat media resource lifecycle", () => {
         source,
         ["/tmp/openclaw"],
         "/openclaw",
-        "transient-refresh-token",
+        null,
         rerender,
+        fetchMock,
       );
     });
 
@@ -593,18 +576,14 @@ describe("chat media resource lifecycle", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          available: true,
-          mediaTicket: "ticket-that-will-expire",
-          mediaTicketExpiresAt: expiredAt.toISOString(),
-        }),
+        available: true,
+        mediaTicket: "ticket-that-will-expire",
+        mediaTicketExpiresAt: expiredAt.toISOString(),
       })
       .mockImplementationOnce(async () => {
         vi.setSystemTime(new Date(expiredAt.getTime() + 1));
         throw new Error("refresh completed after ticket expiry");
       });
-    vi.stubGlobal("fetch", fetchMock);
 
     let latest: ReturnType<typeof resolveAssistantAttachmentAvailability> | undefined;
     const rerender = observeSubscriber(() => {
@@ -612,8 +591,9 @@ describe("chat media resource lifecycle", () => {
         source,
         ["/tmp/openclaw"],
         "/openclaw",
-        "expired-refresh-token",
+        null,
         rerender,
+        fetchMock,
       );
     });
 
@@ -629,19 +609,12 @@ describe("chat media resource lifecycle", () => {
     const source = `/tmp/openclaw/${crypto.randomUUID()}.png`;
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce({ available: false })
       .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ available: false }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          available: true,
-          mediaTicket: "ticket-after-retry",
-          mediaTicketExpiresAt: new Date(Date.now() + 90_000).toISOString(),
-        }),
+        available: true,
+        mediaTicket: "ticket-after-retry",
+        mediaTicketExpiresAt: new Date(Date.now() + 90_000).toISOString(),
       });
-    vi.stubGlobal("fetch", fetchMock);
 
     let firstTicket: string | undefined;
     let secondTicket: string | undefined;
@@ -650,8 +623,9 @@ describe("chat media resource lifecycle", () => {
         source,
         ["/tmp/openclaw"],
         "/openclaw",
-        "split-pane-token",
+        null,
         rerenderFirst,
+        fetchMock,
       );
       firstTicket = availability.status === "available" ? availability.mediaTicket : undefined;
     });
@@ -660,8 +634,9 @@ describe("chat media resource lifecycle", () => {
         source,
         ["/tmp/openclaw"],
         "/openclaw",
-        "split-pane-token",
+        null,
         rerenderSecond,
+        fetchMock,
       );
       secondTicket = availability.status === "available" ? availability.mediaTicket : undefined;
     });

@@ -642,10 +642,7 @@ export class ChatPane extends ChatPaneLayoutRender {
       fetchLinkFavicon,
       chatMessageMaxWidth: state.settings.chatMessageMaxWidth,
       assistantAttachmentAuthToken: resolveAssistantAttachmentAuthToken(state as never),
-      resolveAssistantMedia:
-        isGatewayMethodAdvertised(gatewaySnapshot, "assistant.media.get") === true
-          ? (source) => resolveChatAssistantMedia(state, source)
-          : undefined,
+      resolveAssistantMedia: (source) => resolveChatAssistantMedia(state, source),
       resolveArtifactDownload: (params) => resolveChatArtifactDownload(state, params),
       basePath: state.basePath,
       resourceBasePath: state.resourceBasePath,

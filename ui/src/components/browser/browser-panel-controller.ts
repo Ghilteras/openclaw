@@ -205,8 +205,6 @@ export class BrowserPanelController implements ReactiveController {
       }
       const dataUrl = await fetchBrowserScreenshotDataUrl({
         client,
-        authToken: this.host.authToken,
-        useMediaCapability: this.host.mediaCapabilityAvailable,
         resourceBasePath: this.host.resourceBasePath,
         path: shot.path,
       });

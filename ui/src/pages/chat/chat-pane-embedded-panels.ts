@@ -4,12 +4,10 @@ import type { ControlUiSessionPullRequest } from "../../../../src/gateway/contro
 import { desktopFocusPath } from "../../components/desktop/desktop-focus-window.ts";
 import { icons } from "../../components/icons.ts";
 import { t } from "../../i18n/index.ts";
-import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import {
   formatKeyboardShortcutCombo,
   KEYBOARD_SHORTCUT_COMBOS,
 } from "../../lib/keyboard-shortcut-catalog.ts";
-import { resolveAssistantAttachmentAuthToken } from "./chat-pane-state.ts";
 import type { ChatSessionCompanionThread } from "./chat-session-companion.ts";
 import type { ChatPageHost } from "./chat-state-host.ts";
 import { resolveSessionDiffSidebarContent } from "./components/chat-session-workspace.ts";
@@ -111,11 +109,6 @@ export function sidebarPanelDefinitions(
           .available=${state.browserPanelAvailable}
           .presented=${params?.browserPresented ?? false}
           .resourceBasePath=${state.resourceBasePath}
-          .mediaCapabilityAvailable=${isGatewayMethodAdvertised(
-            { hello: state.hello },
-            "assistant.media.get",
-          ) === true}
-          .authToken=${resolveAssistantAttachmentAuthToken(state)}
         ></openclaw-browser-panel>`
       : null;
   const companion = params
