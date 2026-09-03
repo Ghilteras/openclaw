@@ -47,7 +47,7 @@ export function toolFrame(rows: string[], complete: boolean) {
     frame.includes("idle")
   );
 }
-const release = async (fixture: Fixture, gate: string) =>
+export const releaseTuiFixture = async (fixture: Fixture, gate: string) =>
   await writeFile(`${fixture.logPath}.${gate}.release`, "release\n", "utf8");
 async function withFixture(
   start: StartTuiPtyFixture,
@@ -71,7 +71,7 @@ export async function exerciseStreamingRendering(start: StartTuiPtyFixture, time
       (rows) => streamingPrefixFrame(rows),
       timeoutMs,
     );
-    await release(fixture, "streaming");
+    await releaseTuiFixture(fixture, "streaming");
     await waitForSynchronizedFrameRows(
       fixture.run,
       (rows) => tokens(rows).join(",") === TOKENS.join(",") && text(rows).includes("idle"),
@@ -90,14 +90,14 @@ export async function exerciseToolCardRendering(start: StartTuiPtyFixture, timeo
     async (fixture) => {
       await fixture.run.write(`${TOOL_PROMPT}\r`, { delay: false });
       await waitForSynchronizedFrameRows(fixture.run, (rows) => toolFrame(rows, false), timeoutMs);
-      await release(fixture, "tool");
+      await releaseTuiFixture(fixture, "tool");
       await waitForSynchronizedFrameRows(fixture.run, (rows) => toolFrame(rows, true), timeoutMs);
     },
   );
 }
 export const TUI_PTY_RENDERING_FIXTURE_SCRIPT = `
   const renderingTokens = Array.from({ length: 128 }, (_, i) => "T" + String(i).padStart(3, "0"));
-  async function waitForRenderingRelease(gate: string) {
+  async function waitForFixtureRelease(gate: string) {
     const target = actionLogPath + "." + gate + ".release";
     if (existsSync(target)) return;
     await new Promise<void>((resolve) => {
@@ -115,7 +115,7 @@ export const TUI_PTY_RENDERING_FIXTURE_SCRIPT = `
   }
   async function runStreamingRendering(backend, runId, sessionKey) {
     for (let i = 0; i < 64; i += 1) emitAssistant(backend, runId, sessionKey, "delta", "PTY_STREAM_BURST: " + renderingTokens.slice(0, i + 1).join(" "));
-    record("streamingPrefixReady", { runId, count: 64 }); await waitForRenderingRelease("streaming");
+    record("streamingPrefixReady", { runId, count: 64 }); await waitForFixtureRelease("streaming");
     for (let i = 64; i < 128; i += 1) emitAssistant(backend, runId, sessionKey, "delta", "PTY_STREAM_BURST: " + renderingTokens.slice(0, i + 1).join(" "));
     emitAssistant(backend, runId, sessionKey, "final", "PTY_STREAM_BURST: " + renderingTokens.join(" ")); record("streamingComplete", { runId, count: 128 });
   }
@@ -125,7 +125,7 @@ export const TUI_PTY_RENDERING_FIXTURE_SCRIPT = `
     backend.onEvent?.({ event: "agent", payload: { runId, sessionKey, stream: "tool", data: { ...base, phase: "start", args: { path: "chronology-proof.txt" } } } });
     if (process.env.OPENCLAW_TUI_PTY_VERBOSE_LEVEL === "full") {
       backend.onEvent?.({ event: "agent", payload: { runId, sessionKey, stream: "tool", data: { ...base, phase: "update", partialResult: { content: [{ type: "text", text: "    # PTY_TOOL_PARTIAL" }] } } } });
-      record("toolPartialReady", { runId }); await waitForRenderingRelease("tool");
+      record("toolPartialReady", { runId }); await waitForFixtureRelease("tool");
       backend.onEvent?.({ event: "agent", payload: { runId, sessionKey, stream: "tool", data: { ...base, phase: "result", result: { content: [{ type: "text", text: "    > PTY_TOOL_RESULT" }] } } } });
     }
     const finalText = "PTY_BEFORE_TOOL\\n\\nPTY_AFTER_TOOL"; emitAssistant(backend, runId, sessionKey, "delta", finalText); emitAssistant(backend, runId, sessionKey, "final", finalText); record("toolComplete", { runId }); record("toolChronologyComplete", { runId });

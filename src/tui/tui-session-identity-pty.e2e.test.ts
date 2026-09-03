@@ -10,6 +10,7 @@ import {
   waitForSynchronizedFrameRows,
   type FixtureLogEntry,
 } from "./tui-pty-harness-fixture-test-support.js";
+import { releaseTuiFixture } from "./tui-pty-rendering-test-support.js";
 
 const STARTUP_TIMEOUT_MS = 60_000;
 const REMEMBERED_SESSION_KEY = "agent:main:picker-target";
@@ -260,15 +261,20 @@ it("keeps input editable while remembered startup history is loading", async () 
     env: {
       OPENCLAW_STATE_DIR: stateDir,
       OPENCLAW_TUI_PTY_PICKER_FIXTURE: "1",
-      OPENCLAW_TUI_PTY_STARTUP_DELAY_MS: "400",
+      OPENCLAW_TUI_PTY_HOLD_STARTUP_HISTORY: "1",
     },
   });
 
   try {
     await fixture.waitForLogEntry(
       (entry) =>
-        entry.method === "loadHistory" &&
+        entry.method === "startupHistoryPending" &&
         objectFieldEquals(entry, "sessionKey", REMEMBERED_SESSION_KEY),
+      STARTUP_TIMEOUT_MS,
+    );
+    await waitForSynchronizedFrameRows(
+      fixture.run,
+      (frame) => frame.some((row) => row.includes("starting up")),
       STARTUP_TIMEOUT_MS,
     );
     const outputOffset = fixture.run.visibleOutput().length;
@@ -276,6 +282,17 @@ it("keeps input editable while remembered startup history is loading", async () 
     const decision = await waitForSubmitDecision({ fixture, marker, outputOffset });
     expect(markerSends(decision.entries, marker).map((entry) => entry.payload)).toEqual([]);
     expect(decision.output).toContain("local runtime not ready — message not sent");
+    expect(fixture.run.visibleOutput()).not.toContain("local ready");
+    expect(decision.entries).not.toContainEqual(
+      expect.objectContaining({ method: "startupHistoryReleased" }),
+    );
+    await releaseTuiFixture(fixture, "startup-history");
+    await fixture.waitForLogEntry(
+      (entry) =>
+        entry.method === "startupHistoryReleased" &&
+        objectFieldEquals(entry, "sessionKey", REMEMBERED_SESSION_KEY),
+      STARTUP_TIMEOUT_MS,
+    );
     await waitForSynchronizedFrameRows(
       fixture.run,
       (frame) =>
@@ -292,6 +309,13 @@ it("keeps input editable while remembered startup history is loading", async () 
     );
     expect(sent.payload).toMatchObject({ sessionKey: REMEMBERED_SESSION_KEY });
     expect(markerSends(await readFixtureLog(fixture.logPath), marker)).toHaveLength(1);
+    await waitForSynchronizedFrameRows(
+      fixture.run,
+      (frame) =>
+        frame.some((row) => row.includes(`PTY_RESPONSE: ${marker}`)) &&
+        frame.some((row) => row.includes("local ready | idle")),
+      STARTUP_TIMEOUT_MS,
+    );
   } finally {
     await fixture.cleanup();
   }

@@ -19,6 +19,7 @@ import { registerTuiReconnectTests } from "./tui-pty-reconnect-test-support.js";
 import {
   exerciseStreamingRendering,
   exerciseToolCardRendering,
+  releaseTuiFixture,
   streamingPrefixFrame,
   toolFrame,
 } from "./tui-pty-rendering-test-support.js";
@@ -50,8 +51,8 @@ describe("TUI PTY harness", { concurrent: false }, () => {
 
   beforeAll(async () => {
     // Boot every suite PTY concurrently: tsx+TUI startup dominates this file's
-    // wall time. The env-specific fixtures never receive input, so their tests
-    // only await readiness output and stay attributable to their own `it`.
+    // wall time. The env-specific fixtures receive no terminal input; their tests
+    // observe their own output and release held startup history.
     // allSettled (not all) so a failed boot still assigns the survivors for
     // afterAll cleanup instead of leaking their PTY processes.
     const boots = await Promise.allSettled([
@@ -71,7 +72,7 @@ describe("TUI PTY harness", { concurrent: false }, () => {
         },
       }),
       startTuiFixture({
-        env: { OPENCLAW_TUI_PTY_STARTUP_DELAY_MS: "400" },
+        env: { OPENCLAW_TUI_PTY_HOLD_STARTUP_HISTORY: "1" },
       }),
     ]);
     const [mainBoot, compactBoot, thinkingOverrideBoot, slowBoot] = boots;
@@ -235,14 +236,29 @@ describe("TUI PTY harness", { concurrent: false }, () => {
   it(
     "shows startup activity while post-connect initialization is pending",
     async () => {
-      const output = await slowStartupFixture.run.waitForOutput(
-        "local ready | idle",
+      await slowStartupFixture.waitForLogEntry(
+        (entry) => entry.method === "startupHistoryPending",
         STARTUP_TIMEOUT_MS,
       );
-      // PTY output is append-only, so first-occurrence order proves the startup
-      // activity frame rendered before the delayed post-connect init completed.
-      expect(output.indexOf("starting up")).toBeGreaterThanOrEqual(0);
-      expect(output.indexOf("starting up")).toBeLessThan(output.indexOf("local ready | idle"));
+      await waitForSynchronizedFrameRows(
+        slowStartupFixture.run,
+        (rows) => rows.some((row) => row.includes("starting up")),
+        STARTUP_TIMEOUT_MS,
+      );
+      expect(slowStartupFixture.run.visibleOutput()).not.toContain("local ready");
+      expect(await readFixtureLog(slowStartupFixture.logPath)).not.toContainEqual(
+        expect.objectContaining({ method: "startupHistoryReleased" }),
+      );
+      await releaseTuiFixture(slowStartupFixture, "startup-history");
+      await slowStartupFixture.waitForLogEntry(
+        (entry) => entry.method === "startupHistoryReleased",
+        STARTUP_TIMEOUT_MS,
+      );
+      await waitForSynchronizedFrameRows(
+        slowStartupFixture.run,
+        (rows) => rows.some((row) => row.includes("local ready | idle")),
+        STARTUP_TIMEOUT_MS,
+      );
     },
     STARTUP_TEST_TIMEOUT_MS,
   );

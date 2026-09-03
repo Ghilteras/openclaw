@@ -83,7 +83,6 @@ export async function writeTuiPtyFixtureScript(dir: string) {
 
       const actionLogPath = process.env.OPENCLAW_TUI_PTY_LOG_PATH;
       const gatewayStatus = process.env.OPENCLAW_TUI_PTY_GATEWAY_STATUS ?? "fixture gateway ok";
-      const startupDelayMs = Number(process.env.OPENCLAW_TUI_PTY_STARTUP_DELAY_MS ?? 0);
       ${TUI_PTY_STARTUP_SESSION_FIXTURE.variables}
       const footerModel = process.env.OPENCLAW_TUI_PTY_MODEL;
       const footerThinkingLevel = process.env.OPENCLAW_TUI_PTY_THINKING_LEVEL;
@@ -459,7 +458,7 @@ export async function writeTuiPtyFixtureScript(dir: string) {
               ? "B"
               : null;
           const delayMs =
-            rapidSwitchMarker === "A" ? 500 : rapidSwitchMarker === "B" ? 40 : startupDelayMs;
+            rapidSwitchMarker === "A" ? 500 : rapidSwitchMarker === "B" ? 40 : 0;
           if (delayMs > 0) {
             await new Promise((resolve) => setTimeout(resolve, delayMs));
           }
