@@ -517,7 +517,9 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
         onDockSideChange: (dock) => this.handleBoardDockChange(dock),
       }),
       sharingControl:
-        sharing && (!this.narrow || !canManageChatSessionSharing(sharing.session))
+        sharing &&
+        !sharing.openDisabledReason &&
+        (!this.narrow || !canManageChatSessionSharing(sharing.session))
           ? renderChatSessionSharing(sharing)
           : nothing,
       placementControl: renderChatPanePlacement({

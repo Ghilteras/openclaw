@@ -692,6 +692,35 @@ describe("chat pane header", () => {
     }
   });
 
+  it("keeps the linked owner visible when session sharing cannot open", async () => {
+    const owners = [
+      { type: "human" as const, id: "profile-ada", label: "Ada" },
+      { type: "human" as const, id: "profile-zoe", label: "Zoe" },
+    ];
+    const mounted = mountIntegratedPresenceHeader({ owners, presence: [] });
+    const snapshot = mounted.pane.context.gateway.snapshot;
+    snapshot.hello = {
+      ...snapshot.hello,
+      auth: { role: "operator", scopes: [] },
+      features: {
+        ...snapshot.hello?.features,
+        methods: ["session.visibility.set"],
+      },
+    } as typeof snapshot.hello;
+
+    mounted.renderHeader();
+    const ownerLink = mounted.container.querySelector<HTMLAnchorElement>(
+      "a.person-activity-avatar-link:has(openclaw-session-owner-chip)",
+    );
+    const ownerChip = ownerLink?.querySelector<HTMLElement & { updateComplete?: Promise<unknown> }>(
+      "openclaw-session-owner-chip",
+    );
+    await ownerChip?.updateComplete;
+
+    expect(mounted.container.querySelector(".chat-pane__sharing-trigger")).toBeNull();
+    expect(ownerLink?.getAttribute("href")).toBe("/activity?person=profile-ada");
+  });
+
   it("renders the durable session actor avatar with the header attribution semantics", async () => {
     const mounted = mountHeader({
       showOwnerChip: true,
