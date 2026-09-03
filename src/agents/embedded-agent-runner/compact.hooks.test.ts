@@ -722,6 +722,23 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
     expect(sessionCompactImpl).not.toHaveBeenCalled();
   });
 
+  it("allows the exact locked Codex transcript-byte preflight through generic compaction", async () => {
+    const result = await compactEmbeddedAgentSessionDirect(
+      wrappedCompactionArgs({
+        provider: "openai",
+        model: "gpt-5.5",
+        agentHarnessId: "codex",
+        modelSelectionLocked: true,
+        trigger: "budget",
+        preflightRequired: true,
+        preflightCompactionTrigger: "transcript_bytes",
+      }),
+    );
+
+    expect(result).toMatchObject({ ok: true, compacted: true });
+    expect(sessionCompactImpl).toHaveBeenCalledOnce();
+  });
+
   it("preserves prepared runtime plans for the normalized primary compaction candidate", async () => {
     const { modelRoute, runtimeAuthPlan, runtimePlan } = createPreparedCodexCompactionPlans();
 
@@ -3582,6 +3599,99 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
     expect(result.compactionKind).toBe("native-harness");
     expect(contextEngineCompactMock).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      name: "unlocked transcript bytes",
+      modelSelectionLocked: false,
+      ownsCompaction: false,
+      preflightCompactionTrigger: "transcript_bytes",
+      expectedKind: "context-engine",
+      expectedOrder: ["host"],
+    },
+    {
+      name: "locked transcript bytes",
+      modelSelectionLocked: true,
+      ownsCompaction: false,
+      preflightCompactionTrigger: "transcript_bytes",
+      expectedKind: "context-engine",
+      expectedOrder: ["host"],
+    },
+    {
+      name: "owning-engine transcript bytes",
+      modelSelectionLocked: true,
+      ownsCompaction: true,
+      preflightCompactionTrigger: "transcript_bytes",
+      expectedKind: "context-engine",
+      expectedOrder: ["host", "native"],
+    },
+    {
+      name: "locked token pressure",
+      modelSelectionLocked: true,
+      ownsCompaction: false,
+      preflightCompactionTrigger: "tokens",
+      expectedKind: "native-harness",
+      expectedOrder: ["native"],
+    },
+  ] as const)(
+    "routes Codex required preflight by owner ($name)",
+    async ({
+      modelSelectionLocked,
+      ownsCompaction,
+      preflightCompactionTrigger,
+      expectedKind,
+      expectedOrder,
+    }) => {
+      const order: string[] = [];
+      resolveContextEngineMock.mockResolvedValue({
+        info: { ownsCompaction },
+        compact: contextEngineCompactMock,
+      });
+      contextEngineCompactMock.mockImplementationOnce(async () => {
+        order.push("host");
+        return {
+          ok: true,
+          compacted: true,
+          result: { summary: "host summary", tokensBefore: 120, tokensAfter: 40 },
+        };
+      });
+      maybeCompactAgentHarnessSessionMock.mockImplementationOnce(async () => {
+        order.push("native");
+        return {
+          ok: true,
+          compacted: true,
+          result: { summary: "native summary", tokensBefore: 120, tokensAfter: 40 },
+        };
+      });
+
+      const result = await compactEmbeddedAgentSession(
+        wrappedCompactionArgs({
+          provider: "openai",
+          model: "gpt-5.5",
+          agentHarnessId: "codex",
+          modelSelectionLocked,
+          trigger: "budget",
+          preflightRequired: true,
+          preflightCompactionTrigger,
+        }),
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        compacted: true,
+        compactionKind: expectedKind,
+      });
+      expect(order).toEqual(expectedOrder);
+      if (expectedOrder.at(-1) === "native") {
+        expect(maybeCompactAgentHarnessSessionMock).toHaveBeenCalledWith(
+          expect.objectContaining({ preflightCompactionTrigger }),
+          expectedNativeCompactionOptions(
+            expectedOrder[0] === "host" ? "after_context_engine" : "required_preflight",
+          ),
+        );
+      }
+    },
+  );
 
   it.each([
     { outcome: "waits for the active session lane", writerRunId: undefined },

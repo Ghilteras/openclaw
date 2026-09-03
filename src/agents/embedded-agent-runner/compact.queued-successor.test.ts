@@ -24,6 +24,7 @@ const [
     loadSessionEntry,
     loadTranscriptEventsSync,
     patchSessionEntryCore,
+    readSessionTranscriptActiveStats,
     replaceSessionEntrySync,
     upsertSessionEntryCore,
   },
@@ -168,6 +169,65 @@ beforeEach(async () => {
 });
 
 describe("queued compaction successor ownership", () => {
+  it("bounds the host transcript and fresh model context for Codex byte preflight", async () => {
+    const manager = PersistentSessionManager.open(target(), workspaceDir);
+    const oldMarker = "oversized-old-payload";
+    manager.appendMessage({
+      role: "user",
+      content: `${oldMarker}:${"x".repeat(12_000)}`,
+      timestamp: 1,
+    });
+    const tailMarker = "retained-tail";
+    const tailId = manager.appendMessage({
+      role: "user",
+      content: tailMarker,
+      timestamp: 2,
+    });
+    const before = readSessionTranscriptActiveStats(target());
+    expect(before.sizeBytes).toBeGreaterThan(4_096);
+
+    contextEngineCompactMock.mockImplementationOnce(async () => {
+      PersistentSessionManager.open(target(), workspaceDir).appendCompaction(
+        "host byte summary",
+        tailId,
+        4_097,
+      );
+      return {
+        ok: true,
+        compacted: true,
+        result: {
+          summary: "host byte summary",
+          firstKeptEntryId: tailId,
+          tokensBefore: 4_097,
+          tokensAfter: 40,
+        },
+      };
+    });
+
+    await expect(
+      compact({
+        ...compactParams(),
+        modelSelectionLocked: true,
+        trigger: "budget",
+        preflightRequired: true,
+        preflightCompactionTrigger: "transcript_bytes",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      compacted: true,
+      compactionKind: "context-engine",
+    });
+
+    const after = readSessionTranscriptActiveStats(target());
+    expect(after.sizeBytes).toBeLessThan(before.sizeBytes);
+    expect(after.sizeBytes).toBeLessThan(4_096);
+    const modelContext = PersistentSessionManager.openModelContext(target()).buildSessionContext();
+    const serializedContext = JSON.stringify(modelContext.messages);
+    expect(serializedContext).not.toContain(oldMarker);
+    expect(serializedContext).toContain("host byte summary");
+    expect(serializedContext).toContain(tailMarker);
+  });
+
   it.each([false, true])(
     "commits the successor before observers, with caller abort=%s",
     async (abortAfterCommit) => {
