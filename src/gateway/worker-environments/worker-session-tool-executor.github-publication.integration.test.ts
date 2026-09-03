@@ -646,6 +646,9 @@ describe("worker GitHub publication integration", () => {
         branch: BRANCH,
         url: "https://github.com/proof-owner/proof-repository/pull/1",
       });
+      if (!published || published.status !== "published") {
+        throw new Error("expected a published GitHub publication result");
+      }
       const persisted = readGitHubPublicationRequest(openOpenClawStateDatabase().db, {
         requestId: requested!.request_id,
       });
@@ -663,7 +666,7 @@ describe("worker GitHub publication integration", () => {
         "rev-parse",
         `refs/heads/${BRANCH}`,
       ]);
-      expect(remoteHead).toBe(published?.headCommit);
+      expect(remoteHead).toBe(published.headCommit);
       await expect(
         requireActual(["git", "--git-dir", fixture.bareRemote, "rev-parse", `${remoteHead}^`]),
       ).resolves.toBe(fixture.sourceHead);
