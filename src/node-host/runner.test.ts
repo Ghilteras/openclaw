@@ -1067,9 +1067,7 @@ describe("runNodeHost", () => {
       }),
     ).rejects.toThrow("event loop readiness timeout");
 
-    const lastConfigured =
-      mocks.capturedConfiguredGatewayConfigs[mocks.capturedConfiguredGatewayConfigs.length - 1];
-    expect(lastConfigured?.contextPath).toBe("/gws");
+    expect(mocks.capturedConfiguredGatewayConfigs.at(-1)?.contextPath).toBe("/gws");
   });
 
   it("clears configured contextPath when opts do not pass one (retarget scenario)", async () => {
@@ -1080,9 +1078,7 @@ describe("runNodeHost", () => {
       }),
     ).rejects.toThrow("event loop readiness timeout");
 
-    const lastConfigured =
-      mocks.capturedConfiguredGatewayConfigs[mocks.capturedConfiguredGatewayConfigs.length - 1];
-    expect(lastConfigured?.contextPath).toBeUndefined();
+    expect(mocks.capturedConfiguredGatewayConfigs.at(-1)?.contextPath).toBeUndefined();
     expect(lastCapturedOptions()?.url).toBe("ws://192.168.1.1:9999");
   });
 
@@ -1095,9 +1091,7 @@ describe("runNodeHost", () => {
       }),
     ).rejects.toThrow("event loop readiness timeout");
 
-    const lastConfigured =
-      mocks.capturedConfiguredGatewayConfigs[mocks.capturedConfiguredGatewayConfigs.length - 1];
-    expect(lastConfigured?.contextPath || undefined).toBeUndefined();
+    expect(mocks.capturedConfiguredGatewayConfigs.at(-1)?.contextPath || undefined).toBeUndefined();
     expect(lastCapturedOptions()?.url).toBe("ws://127.0.0.1:18789");
   });
 });
