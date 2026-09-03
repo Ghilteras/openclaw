@@ -21,6 +21,8 @@ import { TranscriptsStore } from "../../transcripts/store.js";
 import { activeSessions } from "./transcripts-tool-runtime.js";
 import { createTranscriptsAutoStartService, createTranscriptsTool } from "./transcripts-tool.js";
 
+// Stop paths write SQLite and generate notes; vitest's default 1s waitFor budget flakes under CI load.
+const WAIT_FOR_OPTIONS = { timeout: 15_000 } as const;
 const tempDirs = createTempDirTracker();
 const capturedText = "Private captured decision: keep these notes out of operator logs.";
 const obstruction = "existing file; do not overwrite\n";
@@ -102,7 +104,7 @@ describe("transcripts auto-start stop reporting", () => {
               sessionId,
             ]);
             expect(activeSessions.has(sessionId)).toBe(false);
-          });
+          }, WAIT_FOR_OPTIONS);
         } finally {
           release.resolve();
           await stopping;
@@ -203,7 +205,7 @@ describe("transcripts auto-start stop reporting", () => {
                 active: expect.arrayContaining([expect.objectContaining({ sessionId: id })]),
               },
             });
-          });
+          }, WAIT_FOR_OPTIONS);
           const request = requests.get(id)!;
           await request.onUtterance({ text: capturedText, final: true });
           await expect(store.readUtterancesForSession(request.session)).resolves.toEqual([
