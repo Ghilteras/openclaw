@@ -645,7 +645,9 @@ async function compactResolvedContextEngine(
       isRecoverableNativeHarnessBindingFailure(harnessResult)
     )
   ) {
-    return harnessResult ?? lockedCompactionRuntimeFailure(selectedHarnessRuntime);
+    return harnessResult
+      ? { ...harnessResult, compactionKind: "native-harness" }
+      : lockedCompactionRuntimeFailure(selectedHarnessRuntime);
   }
   if (harnessResult) {
     if (!isRecoverableNativeHarnessBindingFailure(harnessResult)) {
