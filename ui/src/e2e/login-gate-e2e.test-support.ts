@@ -177,6 +177,7 @@ export function phoneProofIdentity(): Pick<
     const allowedProofPaths = new Set([
       "ui/src/e2e/login-gate-e2e.test-support.ts",
       "ui/src/e2e/login-gate.e2e.test.ts",
+      "ui/src/e2e/phone-stale-build-recovery.e2e.test.ts",
       "ui/src/e2e/stale-build-recovery.e2e.test.ts",
     ]);
     const changedPaths = [
