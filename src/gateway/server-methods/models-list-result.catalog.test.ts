@@ -32,6 +32,7 @@ describe("models.list completed catalog facts", () => {
         },
       },
       metadataSnapshot: createPluginMetadataSnapshotFixture(),
+      oauthRefreshProviderIds: [],
       authMaterializations: [],
       entries: [curated],
       routeVariants: [curated],
@@ -49,7 +50,7 @@ describe("models.list completed catalog facts", () => {
     } as never;
 
     const result = await buildModelsListResult({
-      context,
+      source: { kind: "gateway", context },
       agentId: "main",
       params: { view: "configured" },
     });
@@ -77,6 +78,7 @@ describe("models.list completed catalog facts", () => {
       providerAuth: {},
       authStore: { version: 1, profiles: {} },
       metadataSnapshot: createPluginMetadataSnapshotFixture(),
+      oauthRefreshProviderIds: [],
       authMaterializations: [],
       ...catalog,
       catalogComplete: true,
@@ -95,12 +97,12 @@ describe("models.list completed catalog facts", () => {
     } as never;
 
     await buildModelsListResult({
-      context,
+      source: { kind: "gateway", context },
       agentId: "main",
       params: { view: "configured", refresh: true },
     });
     const ordinary = await buildModelsListResult({
-      context,
+      source: { kind: "gateway", context },
       agentId: "main",
       params: { view: "configured" },
     });
@@ -164,6 +166,7 @@ describe("models.list completed catalog facts", () => {
             },
           },
           metadataSnapshot: createPluginMetadataSnapshotFixture(),
+          oauthRefreshProviderIds: [],
           authMaterializations: [],
           entries: [
             {
@@ -191,7 +194,7 @@ describe("models.list completed catalog facts", () => {
         });
 
         const result = await buildModelsListResult({
-          context,
+          source: { kind: "gateway", context },
           agentId: "worker",
           params: { view: "configured" },
         });
@@ -223,7 +226,7 @@ describe("models.list completed catalog facts", () => {
 
     await expect(
       buildModelsListResult({
-        context,
+        source: { kind: "gateway", context },
         agentId: "main",
         params: { view: "configured", refresh: true },
       }),

@@ -96,8 +96,8 @@ describe("models list prepared catalog boundary", () => {
       refreshFullCatalog: true,
     });
     expect(mocks.buildModelsListResult).toHaveBeenCalledWith({
+      source: { kind: "prepared", catalog: preparedCatalog },
       agentId: "main",
-      preparedCatalog,
       params: { view: "all" },
     });
     expect(mocks.printModelTable).toHaveBeenCalledWith(

@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MigrationProviderPlugin, ProviderAuthMethod } from "../../plugins/types.js";
 
-const mocks = vi.hoisted(() => ({ tryResolveMigrationProvider: vi.fn() }));
+const mocks = vi.hoisted(() => ({ resolvePluginMigrationProvider: vi.fn() }));
 
-vi.mock("../migrate/providers.js", () => ({
-  tryResolveMigrationProvider: mocks.tryResolveMigrationProvider,
+vi.mock("../../plugins/migration-provider-runtime.js", () => ({
+  resolvePluginMigrationProvider: mocks.resolvePluginMigrationProvider,
 }));
 
 const { tryImportProviderCredential } = await import("./auth-credential-import.js");
@@ -95,7 +95,7 @@ describe("tryImportProviderCredential", () => {
         };
       },
     });
-    mocks.tryResolveMigrationProvider.mockReturnValue(provider);
+    mocks.resolvePluginMigrationProvider.mockReturnValue(provider);
 
     const result = await tryImportProviderCredential({
       method,
@@ -161,7 +161,7 @@ describe("tryImportProviderCredential", () => {
         return plan;
       },
     });
-    mocks.tryResolveMigrationProvider.mockReturnValue(provider);
+    mocks.resolvePluginMigrationProvider.mockReturnValue(provider);
 
     await expect(
       tryImportProviderCredential({
@@ -175,7 +175,7 @@ describe("tryImportProviderCredential", () => {
 
   it("continues to interactive login when no matching credential exists", async () => {
     const beforePersistentEffect = vi.fn();
-    mocks.tryResolveMigrationProvider.mockReturnValue(
+    mocks.resolvePluginMigrationProvider.mockReturnValue(
       migrationProvider({
         plan: async () => ({
           providerId: "codex",
@@ -207,7 +207,7 @@ describe("tryImportProviderCredential", () => {
   });
 
   it("returns the provider-owned reason when an existing credential cannot be imported", async () => {
-    mocks.tryResolveMigrationProvider.mockReturnValue(
+    mocks.resolvePluginMigrationProvider.mockReturnValue(
       migrationProvider({
         plan: async () => ({
           providerId: "codex",
@@ -252,7 +252,7 @@ describe("tryImportProviderCredential", () => {
 
   it("stops after a fenced import changes instead of falling through to interactive login", async () => {
     const beforePersistentEffect = vi.fn();
-    mocks.tryResolveMigrationProvider.mockReturnValue(
+    mocks.resolvePluginMigrationProvider.mockReturnValue(
       migrationProvider({
         plan: async () => ({
           providerId: "codex",

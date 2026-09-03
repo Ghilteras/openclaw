@@ -1,6 +1,10 @@
 import type { PreparedProviderAuth } from "../../agents/agent-auth-credential-modes.js";
 import { loadAuthProfileStoreWithoutExternalProfiles } from "../../agents/auth-profiles.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
+import {
+  publishPreparedProviderAuthFacts,
+  retirePreparedProviderAuthFacts,
+} from "../../agents/prepared-provider-auth-facts.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { loadManifestMetadataSnapshot } from "../../plugins/manifest-contract-eligibility.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
@@ -41,7 +45,7 @@ export function registerTestCatalogAccess(
   });
 }
 
-export async function listModels(params: {
+type ListModelsParams = {
   agentId?: string;
   agentDir?: string;
   workspaceDir?: string;
@@ -58,8 +62,21 @@ export async function listModels(params: {
   preparedProviderAuth?: PreparedProviderAuth;
   metadataSnapshot?: PluginMetadataSnapshot;
   view?: "all" | "configured" | "provider-config" | "default";
-}) {
+};
+
+export async function listModels(params: ListModelsParams) {
   const agentId = params.agentId ?? "main";
+  const facts = params.preparedProviderAuth ?? {};
+  // The Gateway owner publishes these facts for harness policy; mirror that for the request path.
+  publishPreparedProviderAuthFacts(agentId, facts);
+  try {
+    return await listModelsWithFacts(params, agentId);
+  } finally {
+    retirePreparedProviderAuthFacts(agentId, facts);
+  }
+}
+
+async function listModelsWithFacts(params: ListModelsParams, agentId: string) {
   const config = params.cfg ?? ({} as OpenClawConfig);
   const createCatalogSnapshot = (entries: ModelCatalogEntry[]) =>
     ({

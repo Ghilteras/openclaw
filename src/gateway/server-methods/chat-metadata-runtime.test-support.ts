@@ -80,23 +80,21 @@ export function createChatMetadataHarness(
   const buildCommands = vi.fn(async () => ({
     commands: [{ name: `command-${skillsVersion}-${pluginRegistryVersion}` }],
   }));
-  const buildProjection = vi.fn(
-    async ({
-      facts,
-    }: {
+  const buildProjection = vi.fn<
+    (params: {
       facts: {
         authStore: AuthProfileStore;
         modelCatalog: ModelCatalogSnapshot;
         owner: PreparedModelRuntimeSnapshot;
       };
-    }) => {
-      const modelCatalog = facts.modelCatalog;
-      return {
-        modelCatalog: modelCatalog.entries,
-        models: modelCatalog.entries,
-      };
-    },
-  );
+    }) => Promise<{ modelCatalog: ModelCatalogEntry[]; models?: ModelCatalogEntry[] }>
+  >(async ({ facts }) => {
+    const modelCatalog = facts.modelCatalog;
+    return {
+      modelCatalog: modelCatalog.entries,
+      models: modelCatalog.entries,
+    };
+  });
   const readProjection = vi.fn(
     (projection: { modelCatalog: ModelCatalogEntry[]; models?: unknown[] }) => projection,
   );

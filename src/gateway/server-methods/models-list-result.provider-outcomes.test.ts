@@ -73,12 +73,9 @@ describe("models.list provider catalog outcomes", () => {
 
       await expect(
         buildModelsListResult({
-          context,
+          source: { kind: "published", context, config, snapshot, projector },
           agentId: "main",
           params: { view: "configured" },
-          preloadedCatalog: { agentId: "main", config, snapshot },
-          preloadedOnly: true,
-          catalogProjector: projector,
         }),
       ).resolves.toEqual({
         models: [expect.objectContaining({ provider: "ollama", id: "qwen3.5", available })],
@@ -119,7 +116,9 @@ describe("models.list provider catalog outcomes", () => {
       readPrepared: async () => snapshot as PreparedGatewayModelCatalogSnapshot,
     });
 
-    await expect(buildModelsListResult({ context, params: { view: "all" } })).resolves.toEqual({
+    await expect(
+      buildModelsListResult({ source: { kind: "gateway", context }, params: { view: "all" } }),
+    ).resolves.toEqual({
       models: [],
       providerOutcomes: [
         { provider: "openai", profileId: "openai:chatgpt", status: "auth-rejected" },
@@ -201,12 +200,9 @@ describe("models.list provider catalog outcomes", () => {
 
     await expect(
       buildModelsListResult({
-        context,
+        source: { kind: "published", context, config, snapshot, projector },
         agentId: "main",
         params: { view: "configured" },
-        preloadedCatalog: { agentId: "main", config, snapshot },
-        preloadedOnly: true,
-        catalogProjector: projector,
       }),
     ).resolves.toEqual({
       models: [

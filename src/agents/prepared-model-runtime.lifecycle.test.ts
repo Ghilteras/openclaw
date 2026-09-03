@@ -254,6 +254,8 @@ describe("prepared model runtime snapshots", () => {
       gatewayLifecycle: true,
       defaultWorkspaceDir: "/tmp/gateway-launch-workspace",
     });
+    // Gateway lifecycle startup builds the static owner; count only the dynamic owner below.
+    mocks.prepareStaticCatalog.mockClear();
     const acquireDynamicLease = () =>
       acquireAgentRunPreparedModelRuntime({
         agentId: "default",
@@ -288,6 +290,8 @@ describe("prepared model runtime snapshots", () => {
     mocks.configuredAgentIds = ["default"];
     const config = {};
     await refreshPreparedModelRuntimeSnapshots(config, { gatewayLifecycle: true });
+    // Gateway lifecycle startup builds the static owner; count only the dynamic owner below.
+    mocks.prepareStaticCatalog.mockClear();
     const finishDynamicGate = createDeferred();
     let finishDynamic!: () => void;
     mocks.prepareStaticCatalog.mockImplementationOnce(async () => {
@@ -494,6 +498,8 @@ describe("prepared model runtime snapshots", () => {
     const initialConfig = {};
     const latestConfig = { agents: { defaults: { model: "openai/gpt-5.5" } } };
     await refreshPreparedModelRuntimeSnapshots(initialConfig, { gatewayLifecycle: true });
+    // Gateway lifecycle startup builds the static owner; count only the dynamic owner below.
+    mocks.prepareStaticCatalog.mockClear();
     const finishReplacementGate = createDeferred();
     let finishReplacement!: () => void;
     mocks.prepareStaticCatalog.mockImplementationOnce(async () => {

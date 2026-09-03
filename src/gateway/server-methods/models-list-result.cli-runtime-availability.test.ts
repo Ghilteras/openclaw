@@ -6,13 +6,6 @@ import {
   providerCatalogEntry,
 } from "./models-list-result.openai-routes.test-support.js";
 
-const resolveProviderSyntheticAuthWithPlugin = vi.hoisted(() => vi.fn());
-
-vi.mock("../../plugins/provider-runtime.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../plugins/provider-runtime.js")>()),
-  resolveProviderSyntheticAuthWithPlugin,
-}));
-
 const config = {
   agents: {
     defaults: { model: { primary: "anthropic/claude-opus-5" } },
@@ -28,7 +21,7 @@ async function listClaudeCliModel(
     cfg?: OpenClawConfig;
   } = {},
 ) {
-  const cfg =
+  const cfg: OpenClawConfig =
     params.cfg ??
     (params.pluginDisabled
       ? { ...config, plugins: { entries: { anthropic: { enabled: false } } } }
@@ -38,11 +31,6 @@ async function listClaudeCliModel(
     !params.pluginDisabled &&
     cfg.plugins?.enabled !== false &&
     cfg.plugins?.entries?.anthropic?.enabled !== false;
-  resolveProviderSyntheticAuthWithPlugin.mockReturnValue(
-    nativeLoginEnabled
-      ? { apiKey: "native-login", source: "native login", mode: "api-key" }
-      : undefined,
-  );
   return await listModels({
     catalog: [],
     staticEntries: [
@@ -79,7 +67,6 @@ describe("models.list CLI runtime availability", () => {
 
   afterEach(() => {
     cliBackendsTesting.resetDepsForTest();
-    resolveProviderSyntheticAuthWithPlugin.mockReset();
     vi.unstubAllEnvs();
   });
 
@@ -88,8 +75,8 @@ describe("models.list CLI runtime availability", () => {
       authenticated: true,
       providerApiKey: false,
       pluginDisabled: false,
-      available: false,
-      reason: "missing-auth",
+      available: true,
+      reason: undefined,
     },
     {
       authenticated: false,
@@ -147,13 +134,6 @@ describe("models.list CLI runtime availability", () => {
   });
 
   it("shows OpenAI rows as available through a native Codex login", async () => {
-    resolveProviderSyntheticAuthWithPlugin.mockReturnValue({
-      apiKey: "codex-app-server",
-      source: "Codex CLI native auth",
-      mode: "oauth",
-      runtime: "codex",
-    });
-
     const result = await listModels({
       catalog: [
         {

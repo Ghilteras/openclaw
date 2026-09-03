@@ -5,6 +5,8 @@ import type {
 } from "../../../packages/gateway-protocol/src/index.js";
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../../agents/agent-scope-config.js";
 import type { ModelCatalogEntry, ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
+import { setPreparedModelFullCatalogAuth } from "../../agents/prepared-model-runtime-auth.js";
+import { markPreparedModelCatalogFull } from "../../agents/prepared-model-runtime.full-catalog.js";
 import * as preparedRuntime from "../../agents/prepared-model-runtime.js";
 import type { PreparedModelRuntimeSnapshot } from "../../agents/prepared-model-runtime.types.js";
 import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
@@ -129,7 +131,6 @@ function preparedOwner(params: {
     agentDir: resolveAgentDir(params.config, params.agentId),
     workspaceDir,
     config: params.config,
-    observationConfig: params.config,
     isCurrent: () => true,
     activeProjectKeys: [],
     providerAuth: {},
@@ -317,7 +318,15 @@ describe("sessions.list catalog scoping", () => {
         "low",
       ]);
 
-      completed.catalog = { entries: [{ ...entries[0]!, reasoning: false }], routeVariants: [] };
+      // Completed catalogs cross the worker boundary paired with their auth generation.
+      completed.catalog = markPreparedModelCatalogFull({
+        entries: [{ ...entries[0]!, reasoning: false }],
+        routeVariants: [],
+      });
+      setPreparedModelFullCatalogAuth(completed.catalog, {
+        authStore: { version: 1, profiles: {} },
+        providerAuth: {},
+      });
       const promoted = await listSessions(request);
       expect(promoted).not.toBe(replaced);
       expect(promoted.sessions.find((row) => row.agentId === "main")?.thinkingOptions).toEqual([
