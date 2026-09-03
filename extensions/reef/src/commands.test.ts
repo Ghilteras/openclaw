@@ -29,7 +29,12 @@ const mocks = vi.hoisted(() => {
     proposeFederatedPrompt: vi.fn(async () => "proposal-1"),
   };
   const trust = {
-    get: vi.fn(() => ({ keyEpoch: 1, safetyNumberChanged: false })),
+    get: vi.fn(() => ({
+      ed25519PublicKey: "A".repeat(43),
+      x25519PublicKey: "B".repeat(43),
+      keyEpoch: 1,
+      safetyNumberChanged: false,
+    })),
   };
   const gatewayRequest = vi.fn(async () => ({
     sessions: [{ key: "agent:main:shared", sessionId: "session-1" }],
@@ -66,7 +71,7 @@ describe("Reef session commands", () => {
     const mount = mocks.federation.createMount.mock.calls[0]![0];
     expect(mount).toMatchObject({
       peer: "guest",
-      peerKeyEpoch: 1,
+      peerIdentity: expect.objectContaining({ keyEpoch: 1 }),
       role: "host",
       sessionKey: "agent:main:shared",
       sessionId: "session-1",
@@ -100,7 +105,11 @@ describe("Reef session commands", () => {
     const mount = {
       mountId: "mount-1",
       peer: "host",
-      peerKeyEpoch: 1,
+      peerIdentity: {
+        ed25519PublicKey: "A".repeat(43),
+        x25519PublicKey: "B".repeat(43),
+        keyEpoch: 1,
+      },
       role: "guest",
       sessionKey: "agent:main:shared",
       sessionId: "session-1",

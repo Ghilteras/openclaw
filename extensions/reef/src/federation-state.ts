@@ -6,6 +6,7 @@ import {
   validateReefFederationBody,
   type ReefFederationFrame,
 } from "../protocol/federation.js";
+import { ReefPeerIdentitySchema, type ReefPeerIdentity } from "./friend-types.js";
 
 const REEF_FEDERATION_MOUNTS_NAMESPACE = "federation-mounts";
 const REEF_FEDERATION_PROPOSALS_NAMESPACE = "federation-proposals";
@@ -18,7 +19,7 @@ const REEF_FEDERATION_PROPOSAL_TTL_MS = 30 * 24 * 60 * 60_000;
 export type ReefFederationMount = {
   mountId: string;
   peer: string;
-  peerKeyEpoch: number;
+  peerIdentity: ReefPeerIdentity;
   role: "host" | "guest";
   sessionKey: string;
   sessionId: string;
@@ -31,7 +32,7 @@ export type ReefFederationPromptRequest = {
   from: string;
   to: string;
   peer: string;
-  peerKeyEpoch: number;
+  peerIdentity: ReefPeerIdentity;
   frame: Extract<ReefFederationFrame, { type: "session.prompt.propose" }>;
 };
 
@@ -252,8 +253,7 @@ function validateMount(value: ReefFederationMount): ReefFederationMount {
     !value ||
     typeof value.mountId !== "string" ||
     typeof value.peer !== "string" ||
-    !Number.isSafeInteger(value.peerKeyEpoch) ||
-    value.peerKeyEpoch < 1 ||
+    !ReefPeerIdentitySchema.safeParse(value.peerIdentity).success ||
     !["host", "guest"].includes(value.role) ||
     typeof value.sessionKey !== "string" ||
     typeof value.sessionId !== "string" ||
@@ -278,8 +278,7 @@ function validateProposal(value: ReefFederationProposal): ReefFederationProposal
     typeof value.request.from !== "string" ||
     typeof value.request.to !== "string" ||
     typeof value.request.peer !== "string" ||
-    !Number.isSafeInteger(value.request.peerKeyEpoch) ||
-    value.request.peerKeyEpoch < 1 ||
+    !ReefPeerIdentitySchema.safeParse(value.request.peerIdentity).success ||
     (value.outcomeSentAt !== undefined && !Number.isFinite(value.outcomeSentAt))
   ) {
     throw new Error("invalid Reef federation proposal");

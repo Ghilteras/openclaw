@@ -1,5 +1,5 @@
 import { prepareReefMessageId } from "./flow.js";
-import { ReefAutonomySchema } from "./friend-types.js";
+import { reefPeerIdentity, ReefAutonomySchema } from "./friend-types.js";
 import { getActiveReef, getReefRuntime } from "./runtime.js";
 
 export async function handleReefCommand({
@@ -72,7 +72,7 @@ export async function handleReefCommand({
     const mount = {
       mountId,
       peer,
-      peerKeyEpoch: friend.keyEpoch,
+      peerIdentity: reefPeerIdentity(friend),
       role: "host" as const,
       sessionKey,
       sessionId: session.sessionId,

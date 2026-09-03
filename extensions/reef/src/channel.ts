@@ -25,6 +25,7 @@ import {
 import { ReefFederationCoordinator } from "./federation-coordinator.js";
 import { ReefFederationState, type ReefFederationPromptRequest } from "./federation-state.js";
 import { createConfiguredGuard, ReefMessageFlow } from "./flow.js";
+import { reefPeerIdentity } from "./friend-types.js";
 import { ReefFriendManager } from "./friends.js";
 import { resolveReefInboundDispatchContent } from "./inbound.js";
 import { reefMessageAdapter, reefOutboundAdapter } from "./outbound.js";
@@ -363,7 +364,7 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
       const federation = new ReefFederationState(runtime);
       const federationCoordinator = new ReefFederationCoordinator(runtime, federation, (peer) => {
         const friend = trust.get(peer);
-        return friend && !friend.safetyNumberChanged ? friend.keyEpoch : undefined;
+        return friend && !friend.safetyNumberChanged ? reefPeerIdentity(friend) : undefined;
       });
       const federationTasks = new Map<string, Promise<void>>();
       const startFederatedPrompt = (
@@ -423,7 +424,7 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
             const created = federation.createMount({
               mountId: frame.mountId,
               peer,
-              peerKeyEpoch: friend.keyEpoch,
+              peerIdentity: reefPeerIdentity(friend),
               role: "guest",
               sessionKey: frame.sessionKey,
               sessionId: frame.sessionId,
@@ -449,7 +450,7 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
               from,
               to,
               peer,
-              peerKeyEpoch: friend.keyEpoch,
+              peerIdentity: reefPeerIdentity(friend),
               frame,
             });
             return;

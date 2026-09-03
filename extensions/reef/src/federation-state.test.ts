@@ -25,7 +25,11 @@ function createRuntime(stateDir: string) {
 const mount: ReefFederationMount = {
   mountId: "mount-1",
   peer: "guest",
-  peerKeyEpoch: 1,
+  peerIdentity: {
+    ed25519PublicKey: "A".repeat(43),
+    x25519PublicKey: "B".repeat(43),
+    keyEpoch: 1,
+  },
   role: "host",
   sessionKey: "agent:main:shared",
   sessionId: "session-1",
@@ -45,7 +49,7 @@ function pendingProposal(overrides: Partial<ReefFederationProposal> = {}): ReefF
       from: "guest#1",
       to: "host#1",
       peer: "guest",
-      peerKeyEpoch: 1,
+      peerIdentity: mount.peerIdentity,
       frame: {
         type: "session.prompt.propose",
         mountId: mount.mountId,

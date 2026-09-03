@@ -9,13 +9,18 @@ import type {
   ReefFederationProposal,
   ReefFederationProposalResolution,
 } from "./federation-state.js";
+import type { ReefPeerIdentity } from "./friend-types.js";
 
 const from = "guest#1";
 const to = "host#1";
 const mount: ReefFederationMount = {
   mountId: "mount-1",
   peer: "guest",
-  peerKeyEpoch: 1,
+  peerIdentity: {
+    ed25519PublicKey: "A".repeat(43),
+    x25519PublicKey: "B".repeat(43),
+    keyEpoch: 1,
+  },
   role: "host",
   sessionKey: "agent:main:shared",
   sessionId: "session-1",
@@ -49,7 +54,7 @@ function promptFrame(
 }
 
 function fixture(fixtureOptions?: { allowAlways?: boolean; role?: ReefFederationMount["role"] }) {
-  let currentPeerKeyEpoch = 1;
+  let currentPeerIdentity = { ...mount.peerIdentity };
   let currentMount = {
     ...mount,
     allowAlways: fixtureOptions?.allowAlways ?? false,
@@ -107,27 +112,27 @@ function fixture(fixtureOptions?: { allowAlways?: boolean; role?: ReefFederation
   const coordinator = new ReefFederationCoordinator(
     { gateway: { isAvailable: async () => true, request: gatewayRequest } },
     state,
-    () => currentPeerKeyEpoch,
+    () => ({ ...currentPeerIdentity }),
   );
   const updateMount = (patch: Partial<ReefFederationMount>) => {
     currentMount = { ...currentMount, ...patch };
   };
-  const updatePeerKeyEpoch = (keyEpoch: number) => {
-    currentPeerKeyEpoch = keyEpoch;
+  const updatePeerIdentity = (patch: Partial<ReefPeerIdentity>) => {
+    currentPeerIdentity = { ...currentPeerIdentity, ...patch };
   };
-  return { coordinator, request, state, proposals, updateMount, updatePeerKeyEpoch };
+  return { coordinator, request, state, proposals, updateMount, updatePeerIdentity };
 }
 
 async function handle(
   coordinator: ReefFederationCoordinator,
   frame = promptFrame(),
-  overrides: Partial<{ peer: string; peerKeyEpoch: number }> = {},
+  overrides: Partial<{ peer: string; peerIdentity: ReefPeerIdentity }> = {},
 ) {
   return await coordinator.handlePrompt({
     from,
     to,
     peer: "guest",
-    peerKeyEpoch: 1,
+    peerIdentity: mount.peerIdentity,
     frame,
     ...overrides,
   });
@@ -222,7 +227,7 @@ describe("Reef federation coordinator", () => {
 
     const rotated = fixture();
     rotated.request.mockImplementationOnce(async () => {
-      rotated.updatePeerKeyEpoch(2);
+      rotated.updatePeerIdentity({ ed25519PublicKey: "C".repeat(43) });
       return { id: "plugin:approval-2", decision: "allow-once" };
     });
     await expect(handle(rotated.coordinator)).resolves.toMatchObject({

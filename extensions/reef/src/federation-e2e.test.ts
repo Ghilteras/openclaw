@@ -21,6 +21,7 @@ import {
   transport,
   trust,
 } from "./flow.test-helpers.js";
+import { reefPeerIdentity } from "./friend-types.js";
 import type { ReefTransportClient } from "./transport.js";
 import type { InboxEntry } from "./types.js";
 
@@ -90,7 +91,10 @@ describe("Reef federated prompt E2E", () => {
         },
       },
       hostState,
-      (peer) => hostTrust.values.get(peer)?.keyEpoch,
+      (peer) => {
+        const trust = hostTrust.values.get(peer);
+        return trust ? reefPeerIdentity(trust) : undefined;
+      },
     );
     const outcomes: string[] = [];
     let sequence = 0;
@@ -140,7 +144,7 @@ describe("Reef federated prompt E2E", () => {
           peer,
           from,
           to,
-          peerKeyEpoch: 1,
+          peerIdentity: reefPeerIdentity(hostTrust.values.get(peer)!),
           frame,
         });
         await hostFlow.sendFederation(peer, outcome);
@@ -162,7 +166,7 @@ describe("Reef federated prompt E2E", () => {
           guestState.createMount({
             mountId: frame.mountId,
             peer,
-            peerKeyEpoch: 1,
+            peerIdentity: reefPeerIdentity(guestTrust.values.get(peer)!),
             role: "guest",
             sessionKey: frame.sessionKey,
             sessionId: frame.sessionId,
@@ -184,7 +188,7 @@ describe("Reef federated prompt E2E", () => {
     const hostMount: ReefFederationMount = {
       mountId: "mount-1",
       peer: "guest",
-      peerKeyEpoch: 1,
+      peerIdentity: reefPeerIdentity(hostTrust.values.get("guest")!),
       role: "host",
       sessionKey: "agent:main:shared",
       sessionId: "session-1",

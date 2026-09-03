@@ -8,6 +8,7 @@ import type {
   ReefFederationProposal,
   ReefFederationProposalResolution,
 } from "./federation-state.js";
+import { sameReefPeerIdentity, type ReefPeerIdentity } from "./friend-types.js";
 
 const REEF_FEDERATION_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 
@@ -39,7 +40,7 @@ export class ReefFederationCoordinator {
   constructor(
     private readonly runtime: Pick<PluginRuntime, "gateway">,
     private readonly state: FederationState,
-    private readonly currentPeerKeyEpoch: (peer: string) => number | undefined,
+    private readonly currentPeerIdentity: (peer: string) => ReefPeerIdentity | undefined,
   ) {}
 
   /** Validate, approve, and dispatch one remote prompt through canonical agent admission. */
@@ -47,7 +48,7 @@ export class ReefFederationCoordinator {
     from: string;
     to: string;
     peer: string;
-    peerKeyEpoch: number;
+    peerIdentity: ReefPeerIdentity;
     frame: Extract<ReefFederationFrame, { type: "session.prompt.propose" }>;
   }): Promise<Exclude<ReefFederationFrame, { type: "session.prompt.propose" }>> {
     const { frame } = params;
@@ -124,11 +125,11 @@ export class ReefFederationCoordinator {
     }
 
     const currentMount = this.state.getMount(frame.mountId);
-    const currentPeerKeyEpoch = this.currentPeerKeyEpoch(params.peer);
+    const currentPeerIdentity = this.currentPeerIdentity(params.peer);
     const staleAuthority = this.validateMount({
       ...params,
-      peerKeyEpoch: currentPeerKeyEpoch ?? -1,
-      mount: currentMount,
+      peerIdentity: currentPeerIdentity ?? params.peerIdentity,
+      mount: currentPeerIdentity ? currentMount : undefined,
     });
     if (staleAuthority) {
       const denied = this.denied(frame, staleAuthority);
@@ -186,7 +187,7 @@ export class ReefFederationCoordinator {
 
   private validateMount(params: {
     peer: string;
-    peerKeyEpoch: number;
+    peerIdentity: ReefPeerIdentity;
     frame: Extract<ReefFederationFrame, { type: "session.prompt.propose" }>;
     mount: ReefFederationMount | undefined;
   }): "grant-revoked" | "stale-session" | undefined {
@@ -196,7 +197,7 @@ export class ReefFederationCoordinator {
       mount.role !== "host" ||
       mount.revoked ||
       mount.peer !== params.peer ||
-      mount.peerKeyEpoch !== params.peerKeyEpoch ||
+      !sameReefPeerIdentity(mount.peerIdentity, params.peerIdentity) ||
       mount.grantGeneration !== frame.grantGeneration
     ) {
       return "grant-revoked";
