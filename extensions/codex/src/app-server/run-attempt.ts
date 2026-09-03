@@ -36,6 +36,8 @@ async function retryPendingCodexNativeCompaction(
   const outcome = await synchronizePendingCodexNativeCompaction(
     {
       ...connection.params,
+      model: connection.params.modelId,
+      runtimeModel: connection.params.model,
       senderId: connection.params.senderId ?? undefined,
       senderName: connection.params.senderName ?? undefined,
       senderUsername: connection.params.senderUsername ?? undefined,
