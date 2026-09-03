@@ -842,6 +842,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
       { persistedThreads: ["thread-1"] },
     );
     const params = createParams(sessionFile, workspaceDir);
+    params.senderId = null;
 
     const run = runCodexAppServerAttempt(params);
     await harness.waitForMethod("turn/start");

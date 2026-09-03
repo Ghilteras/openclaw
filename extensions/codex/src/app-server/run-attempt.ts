@@ -29,15 +29,18 @@ async function retryPendingCodexNativeCompaction(
   if (pendingBinding?.nativeCompactionRetryPending !== true) {
     return;
   }
-  await maybeCompactCodexAppServerSession(connection.params, {
-    bindingStore: connection.bindingStore,
-    pluginConfig: connection.options.pluginConfig,
-    ...(connection.options.clientFactory
-      ? { clientFactory: connection.options.clientFactory }
-      : {}),
-    allowNonManualNativeRequest: true,
-    nativeCompactionRequest: "after_context_engine",
-  });
+  await maybeCompactCodexAppServerSession(
+    { ...connection.params, senderId: connection.params.senderId ?? undefined },
+    {
+      bindingStore: connection.bindingStore,
+      pluginConfig: connection.options.pluginConfig,
+      ...(connection.options.clientFactory
+        ? { clientFactory: connection.options.clientFactory }
+        : {}),
+      allowNonManualNativeRequest: true,
+      nativeCompactionRequest: "after_context_engine",
+    },
+  );
   const currentBinding = connection.bindingStore.read(connection.bindingIdentity);
   connection.mutable.startupBinding = currentBinding;
   connection.mutable.startupContextTokens = undefined;
