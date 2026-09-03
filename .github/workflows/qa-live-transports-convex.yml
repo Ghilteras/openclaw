@@ -710,6 +710,29 @@ jobs:
           require_var OPENCLAW_QA_CONVEX_SITE_URL
           require_var OPENCLAW_QA_CONVEX_SECRET_CI
 
+      - name: Prepare Telegram QA output
+        id: telegram_output
+        shell: bash
+        run: |
+          output_dir=".artifacts/qa-e2e/telegram-live-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${output_dir}"
+          echo "output_dir=${output_dir}" >> "$GITHUB_OUTPUT"
+
+      - name: Preflight custom Telegram proof
+        if: github.event_name == 'workflow_dispatch' && inputs.scenario == 'issue-137037-model-reload'
+        shell: bash
+        env:
+          OPENCLAW_QA_CONVEX_SITE_URL: ${{ secrets.OPENCLAW_QA_CONVEX_SITE_URL }}
+          OPENCLAW_QA_CONVEX_SECRET_CI: ${{ secrets.OPENCLAW_QA_CONVEX_SECRET_CI }}
+          OPENCLAW_QA_CREDENTIAL_ACQUIRE_TIMEOUT_MS: "1800000"
+          OPENCLAW_QA_REDACT_PUBLIC_METADATA: "1"
+        run: |
+          proof_dir="${{ steps.telegram_output.outputs.output_dir }}/issue-137037"
+          mkdir -p "${proof_dir}"
+          export TELEGRAM_E2E_SKILL_DIR="$PWD/.agents/skills/telegram-e2e-userbot"
+          node "${TELEGRAM_E2E_SKILL_DIR}/scripts/telegram-test-doctor.mjs" \
+            >"${proof_dir}/doctor.json"
+
       - name: Build private QA runtime
         env:
           NODE_OPTIONS: --max-old-space-size=12288
@@ -729,7 +752,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          output_dir=".artifacts/qa-e2e/telegram-live-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          output_dir="${{ steps.telegram_output.outputs.output_dir }}"
           scenario_args=()
 
           if [[ "${INPUT_SCENARIO}" == "issue-137037-model-reload" ]]; then
@@ -924,8 +947,6 @@ jobs:
           JSON
 
             export TELEGRAM_E2E_SKILL_DIR="$PWD/.agents/skills/telegram-e2e-userbot"
-            node "${TELEGRAM_E2E_SKILL_DIR}/scripts/telegram-test-doctor.mjs" \
-              >"${proof_dir}/doctor.json"
             E2E_MOCK_SERVER_PATH="${proof_dir}/mock-catalog-server.mjs" \
               node "${TELEGRAM_E2E_SKILL_DIR}/scripts/run-mock-sut-user-e2e.mjs" \
                 --gateway-port 19931 \
@@ -998,8 +1019,6 @@ jobs:
             done
           fi
 
-          echo "output_dir=${output_dir}" >> "$GITHUB_OUTPUT"
-
           pnpm openclaw qa telegram \
             --repo-root . \
             --output-dir "${output_dir}" \
@@ -1016,7 +1035,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: qa-live-telegram-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.run_lane.outputs.output_dir }}
+          path: ${{ steps.telegram_output.outputs.output_dir }}
           retention-days: 14
           if-no-files-found: error
 
