@@ -1,7 +1,6 @@
 // Control UI tests cover the responsive disconnected login gate.
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { BrowserContext, Page } from "playwright";
 import { beforeEach, expect, it } from "vitest";
 import { ConnectErrorDetailCodes } from "../../../packages/gateway-protocol/src/connect-error-details.js";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
@@ -14,257 +13,38 @@ import {
   waitForControlUiRoute,
 } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
+import {
+  closeContext,
+  installPhoneRecoveryRequestObserver,
+  observeGatewayRequests,
+  observeInstalledArtifact,
+  observePhoneProofServiceWorker,
+  phoneProofIdentity,
+  renderLoginGate,
+  startPhoneProofServer,
+  type PhoneRecoveryObservation,
+  waitForObservedGatewayRequest,
+  waitForPhoneProofServiceWorker,
+} from "./login-gate-e2e.test-support.ts";
 
+const proofIdentity = phoneProofIdentity();
+const proofBuildId = proofIdentity.expectedRevisionSha
+  ? `phone-proof-${proofIdentity.expectedRevisionSha.slice(0, 12)}-${proofIdentity.expectedRevisionSha.slice(12)}-artifact`
+  : "phone-proof-local-artifact";
 const suite = createControlUiE2eSuite({
   name: "Control UI responsive login gate E2E",
+  startServer: () => startPhoneProofServer(proofBuildId),
   startServerBeforeBrowser: true,
   unavailableMessage: (executablePath) =>
     `Playwright Chromium is not installed or cannot start at ${executablePath}. Run \`pnpm --dir ui exec playwright install --with-deps chromium\`, or set OPENCLAW_UI_E2E_ALLOW_MISSING_CHROMIUM=1 only when intentionally skipping this lane.`,
 });
 let RECOVERY_ARTIFACT_DIR: string;
-const RECORDED_GATEWAY_REQUESTS_KEY = "openclaw.control-ui-e2e.phone-recovery-requests";
-
-type ObservedAssetLink = {
-  elementId: string | null;
-  pathname: string | null;
-  url: string | null;
-  version: string | null;
-};
-
-type InstalledArtifactObservation = {
-  bodyDisplay: string;
-  buildId: string | null;
-  font: ObservedAssetLink;
-  icon: ObservedAssetLink;
-  theme: ObservedAssetLink;
-};
-
-type ObservedGatewayRequest = {
-  documentOrdinal: number;
-  method: "chat.send" | "connect";
-  requestId: string;
-};
-
-type PhoneRecoveryObservation = {
-  schemaVersion: 2;
-  proofRevision: "base" | "head" | "local";
-  serviceWorker: "normal" | "blocked";
-  targetPath: string;
-  scenarioCompleted: boolean;
-  documentRequests: Array<{
-    method: string;
-    pathname: string;
-    recoveryMarker: boolean;
-    url: string;
-  }>;
-  documentResponses: Array<{
-    cacheControl: string | undefined;
-    fromWorker: boolean;
-    requestUrl: string;
-    status: number;
-  }>;
-  expectedRevisionSha: string | null;
-  gatewayRequests: ObservedGatewayRequest[];
-  installedArtifacts: Array<
-    InstalledArtifactObservation & {
-      documentOrdinal: number;
-    }
-  >;
-  reloadRequired?: {
-    actionCount: number;
-    access: {
-      ariaLive: string | null | undefined;
-      disabled: boolean;
-      height: number;
-      insideFencedOutlet: boolean;
-      tabIndex: number;
-      width: number;
-    };
-    focused: boolean;
-    terminalInvocationCount: number;
-  };
-  recovered?: {
-    actionCount: number;
-    routePath: string;
-  };
-  assignment?: {
-    modelWakeCount: number;
-    visible: boolean;
-  };
-  final?: {
-    appShellCount: number;
-    connectRequestCount: number;
-    loginGateCount: number;
-    mainInert: boolean | null;
-    modelWakeCount: number;
-    recoveryActionCount: number;
-    reloadCount: number | null;
-    routePath: string;
-    routerOutletInert: boolean | null;
-    terminalInvocationCount: number;
-  };
-};
-
-function phoneProofRevision(): PhoneRecoveryObservation["proofRevision"] {
-  const revision = process.env.OPENCLAW_PHONE_PROOF_REVISION;
-  return revision === "base" || revision === "head" ? revision : "local";
-}
-
-function phoneProofExpectedSha(): string | null {
-  const expectedSha = process.env.OPENCLAW_PHONE_PROOF_EXPECTED_SHA?.trim() ?? "";
-  if (!expectedSha) {
-    return null;
-  }
-  if (!/^[a-f0-9]{40}$/u.test(expectedSha)) {
-    throw new Error("OPENCLAW_PHONE_PROOF_EXPECTED_SHA must be a full lowercase commit SHA");
-  }
-  return expectedSha;
-}
-
-async function observeInstalledArtifact(page: Page): Promise<InstalledArtifactObservation> {
-  return page.evaluate(async () => {
-    await document.fonts.ready;
-    const observeLink = (selector: string) => {
-      const link = document.querySelector<HTMLLinkElement>(selector);
-      const url = link ? new URL(link.href) : null;
-      return {
-        elementId: link?.id || null,
-        pathname: url?.pathname ?? null,
-        url: url?.href ?? null,
-        version: url?.searchParams.get("v") ?? null,
-      };
-    };
-    return {
-      bodyDisplay: getComputedStyle(document.body).display,
-      buildId: document.documentElement.getAttribute("data-openclaw-control-ui-build-id"),
-      font: observeLink('link[id^="openclaw-typeface-"]'),
-      icon: observeLink('link[rel="icon"][type="image/svg+xml"]'),
-      theme: observeLink("#openclaw-theme-palette-absolutely"),
-    };
-  });
-}
-
-async function observeGatewayRequests(page: Page): Promise<ObservedGatewayRequest[]> {
-  return (await page.evaluate((key) => {
-    const value = JSON.parse(sessionStorage.getItem(key) ?? "[]") as unknown;
-    return Array.isArray(value) ? value : [];
-  }, RECORDED_GATEWAY_REQUESTS_KEY)) as ObservedGatewayRequest[];
-}
 
 beforeEach(() => {
   RECOVERY_ARTIFACT_DIR = createControlUiE2eArtifactDir("zombie-reload");
 });
 
-async function renderLoginGate(page: Page): Promise<void> {
-  const gateway = await installMockGateway(page, { deferredMethods: ["connect"] });
-  const response = await page.goto(suite.server.baseUrl);
-  expect(response?.status()).toBe(200);
-  await gateway.waitForRequest("connect");
-  await gateway.rejectDeferred("connect", {
-    code: "INVALID_REQUEST",
-    message: "token missing",
-    details: { code: ConnectErrorDetailCodes.AUTH_TOKEN_MISSING },
-  });
-  await page.locator(".login-gate").waitFor();
-  await mountLoginGate(page);
-}
-
-async function mountLoginGate(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    await customElements.whenDefined("openclaw-login-gate");
-    const gate = document.createElement("openclaw-login-gate") as HTMLElement & {
-      props: Record<string, unknown>;
-      updateComplete: Promise<unknown>;
-    };
-    document.body.dataset.connectCount = "0";
-    gate.props = {
-      resourceBasePath: "",
-      connected: false,
-      lastError: "unauthorized: gateway token required",
-      lastErrorCode: null,
-      hasToken: false,
-      hasPassword: false,
-      gatewayUrl: "ws://127.0.0.1:18789",
-      token: "",
-      password: "",
-      showGatewayToken: false,
-      showGatewayPassword: false,
-      onGatewayUrlChange: () => {},
-      onTokenChange: () => {},
-      onPasswordChange: () => {},
-      onToggleGatewayToken: () => {},
-      onToggleGatewayPassword: () => {},
-      onConnect: () => {
-        const current = Number.parseInt(document.body.dataset.connectCount ?? "0", 10);
-        document.body.dataset.connectCount = String(current + 1);
-      },
-    };
-    document.body.replaceChildren(gate);
-    await gate.updateComplete;
-  });
-}
-
-async function closeContext(context: BrowserContext): Promise<void> {
-  await context.close().catch(() => {});
-}
-
 suite.define(() => {
-  it("cache-busts stale-build recovery on a first dashboard navigation", async () => {
-    const context = await suite.browser.newContext({
-      serviceWorkers: "block",
-      viewport: { height: 900, width: 1280 },
-    });
-    const page = await context.newPage();
-    const documentRequests: Array<{ fresh: boolean; pathname: string }> = [];
-    const appOrigin = new URL(suite.server.baseUrl).origin;
-    await page.route(`${appOrigin}/**`, async (route) => {
-      const request = route.request();
-      if (request.resourceType() === "document") {
-        const url = new URL(request.url());
-        documentRequests.push({
-          fresh: url.searchParams.has("openclaw_mount_recovery"),
-          pathname: url.pathname,
-        });
-      }
-      await route.continue();
-    });
-    const gateway = await installMockGateway(page, {
-      deferredMethods: ["connect"],
-      sessionKey: "agent:example-agent:example-session",
-    });
-    const mismatch = {
-      code: "UNAVAILABLE",
-      message: "Control UI updated; reload this page to continue",
-      details: {
-        code: ConnectErrorDetailCodes.PROTOCOL_MISMATCH,
-        gatewayBuildId: "replacement-build",
-        reloadRequired: true,
-      },
-      retryable: false,
-    };
-    const target = new URL("dashboard/example-agent/example-session", suite.server.baseUrl);
-
-    try {
-      await page.goto(target.href);
-      await gateway.waitForRequest("connect");
-      await gateway.rejectDeferred("connect", mismatch);
-
-      await expect.poll(() => documentRequests.length).toBe(2);
-      await gateway.waitForRequest("connect");
-      expect(documentRequests).toEqual([
-        { fresh: false, pathname: target.pathname },
-        { fresh: true, pathname: target.pathname },
-      ]);
-      await gateway.resolveDeferred("connect");
-
-      await page.locator("openclaw-app-shell").waitFor();
-      expect(await page.locator("openclaw-login-gate").count()).toBe(0);
-      await expect.poll(() => page.url()).toBe(target.href);
-    } finally {
-      await closeContext(context);
-    }
-  });
-
   it.each([
     { serviceWorker: "normal", serviceWorkers: "allow" as const },
     { serviceWorker: "blocked", serviceWorkers: "block" as const },
@@ -305,72 +85,16 @@ suite.define(() => {
           });
         }
       });
-      await page.addInitScript(
-        ({ gatewayUrl, requestLedgerKey }) => {
-          const key = "openclaw.control-ui-e2e.build-rejection-loads";
-          const count = Number.parseInt(sessionStorage.getItem(key) ?? "0", 10);
-          const documentOrdinal = count + 1;
-          sessionStorage.setItem(key, String(documentOrdinal));
-          localStorage.setItem(
-            `openclaw.control.settings.v1:${gatewayUrl}`,
-            JSON.stringify({ gatewayUrl, theme: "absolutely", themeMode: "dark" }),
-          );
-          const instrumentedPrototypes = new WeakSet<object>();
-          const instrument = (constructor: typeof WebSocket) => {
-            const prototype = constructor.prototype;
-            if (instrumentedPrototypes.has(prototype)) {
-              return constructor;
-            }
-            instrumentedPrototypes.add(prototype);
-            const originalSend = prototype.send;
-            prototype.send = function (data) {
-              if (typeof data === "string") {
-                try {
-                  const frame = JSON.parse(data) as {
-                    id?: unknown;
-                    method?: unknown;
-                    type?: unknown;
-                  };
-                  if (
-                    frame.type === "req" &&
-                    typeof frame.id === "string" &&
-                    (frame.method === "connect" || frame.method === "chat.send")
-                  ) {
-                    const existing = JSON.parse(
-                      sessionStorage.getItem(requestLedgerKey) ?? "[]",
-                    ) as ObservedGatewayRequest[];
-                    existing.push({
-                      documentOrdinal,
-                      method: frame.method,
-                      requestId: frame.id,
-                    });
-                    sessionStorage.setItem(requestLedgerKey, JSON.stringify(existing));
-                  }
-                } catch {
-                  // Non-JSON WebSocket traffic is outside this mock Gateway proof.
-                }
-              }
-              return Reflect.apply(originalSend, this, [data]);
-            };
-            return constructor;
-          };
-          let currentWebSocket = instrument(window.WebSocket);
-          Object.defineProperty(window, "WebSocket", {
-            configurable: true,
-            get: () => currentWebSocket,
-            set: (nextConstructor: typeof WebSocket) => {
-              currentWebSocket = instrument(nextConstructor);
-            },
-          });
-        },
-        {
-          gatewayUrl: controlUiBundledGatewayUrl(suite.server.baseUrl),
-          requestLedgerKey: RECORDED_GATEWAY_REQUESTS_KEY,
-        },
+      await installPhoneRecoveryRequestObserver(
+        page,
+        controlUiBundledGatewayUrl(suite.server.baseUrl),
       );
       const config = { ui: { prefs: { theme: "absolutely", themeMode: "dark" } } };
+      const sessionKey = "agent:main:main";
       const gateway = await installMockGateway(page, {
         deferredMethods: ["connect"],
+        featureMethods: ["chat.startup", "sessions.assignOwner", "users.list"],
+        serverBuildId: proofBuildId,
         methodResponses: {
           "config.get": {
             config,
@@ -379,10 +103,49 @@ suite.define(() => {
             raw: JSON.stringify(config),
             valid: true,
           },
+          "users.list": {
+            profiles: [
+              {
+                id: "profile-ada",
+                displayName: "Ada",
+                avatarMime: null,
+                mergedInto: null,
+                createdAt: 1,
+                updatedAt: 1,
+                emails: [],
+                githubIdentity: null,
+                hasAvatar: false,
+              },
+              {
+                id: "profile-bob",
+                displayName: "Bob",
+                avatarMime: null,
+                mergedInto: null,
+                createdAt: 1,
+                updatedAt: 1,
+                emails: [],
+                githubIdentity: null,
+                hasAvatar: false,
+              },
+            ],
+          },
         },
+        presenceUsers: [{ self: true, id: "profile-ada", name: "Ada" }],
+        sessionKey,
+        sessions: [
+          {
+            key: sessionKey,
+            kind: "direct",
+            label: "Main",
+            createdActor: { type: "human", id: "profile-bob", label: "Bob" },
+            owner: { actor: { type: "human", id: "profile-bob", label: "Bob" } },
+            updatedAt: 1,
+          },
+        ],
       });
-      const expectedRevisionSha = phoneProofExpectedSha();
+      const expectedRevisionSha = proofIdentity.expectedRevisionSha;
       const installedArtifacts: PhoneRecoveryObservation["installedArtifacts"] = [];
+      let expectedConnectOrdinal = 1;
       const observeCurrentArtifact = async () => {
         const documentOrdinal = documentRequests.length;
         const installedArtifact = await observeInstalledArtifact(page);
@@ -406,7 +169,9 @@ suite.define(() => {
         return installedArtifact;
       };
       const waitForConnect = async () => {
+        await waitForObservedGatewayRequest(page, expectedConnectOrdinal, "connect");
         await gateway.waitForRequest("connect");
+        expectedConnectOrdinal += 1;
         await observeCurrentArtifact();
       };
       const mismatch = {
@@ -423,7 +188,7 @@ suite.define(() => {
 
       const observation: PhoneRecoveryObservation = {
         schemaVersion: 2,
-        proofRevision: phoneProofRevision(),
+        proofRevision: proofIdentity.proofRevision,
         serviceWorker,
         targetPath: target.pathname,
         scenarioCompleted: false,
@@ -436,6 +201,20 @@ suite.define(() => {
 
       try {
         await page.goto(target.href);
+        const initialServiceWorker = await waitForPhoneProofServiceWorker(page, serviceWorker);
+        observation.serviceWorkerState = {
+          initial: initialServiceWorker,
+          final: initialServiceWorker,
+        };
+        if (serviceWorker === "normal") {
+          expect(initialServiceWorker.controlled).toBe(true);
+          expect(initialServiceWorker.controllerState).toBe("activated");
+          expect(initialServiceWorker.registrations).toHaveLength(1);
+        } else {
+          expect(initialServiceWorker.controlled).toBe(false);
+          expect(initialServiceWorker.controllerState).toBeNull();
+          expect(initialServiceWorker.registrations).toHaveLength(0);
+        }
         await waitForConnect();
         await gateway.rejectDeferred("connect", mismatch);
         await page.waitForFunction(
@@ -565,6 +344,21 @@ suite.define(() => {
         await actions.tap();
         const assignment = page.getByRole("menuitem", { name: "Assign to…", exact: true });
         await assignment.waitFor();
+        await assignment.tap();
+        const selectedOwner = page.getByRole("menuitemradio", {
+          checked: true,
+          exact: true,
+          name: "Bob",
+        });
+        await selectedOwner.waitFor();
+        const selectedOwners = await page
+          .getByRole("menuitemradio", { checked: true })
+          .evaluateAll((owners) =>
+            owners.map(
+              (owner) => owner.querySelector(".session-menu__text")?.textContent?.trim() ?? "",
+            ),
+          );
+        expect(selectedOwners).toEqual(["Bob"]);
         const observedGatewayRequests = await observeGatewayRequests(page);
         const connectRequests = observedGatewayRequests.filter(
           (request) => request.method === "connect",
@@ -576,18 +370,31 @@ suite.define(() => {
           (request) => request.method === "chat.send",
         ).length;
         expect(modelWakeCount).toBe(0);
+        const assignmentMutationCount = observedGatewayRequests.filter(
+          (request) => request.method === "sessions.assignOwner",
+        ).length;
+        expect(assignmentMutationCount).toBe(0);
         observation.assignment = {
+          assignmentMutationCount,
+          expectedOwner: "Bob",
           modelWakeCount,
-          visible: await assignment.isVisible(),
+          selectedOwners,
+          visible: await selectedOwner.isVisible(),
         };
         await writeFile(
           path.join(RECOVERY_ARTIFACT_DIR, `03-${serviceWorker}-assignment-menu.png`),
-          await takeControlUiViewportScreenshot(page, page.locator(".shell"), [assignment]),
+          await takeControlUiViewportScreenshot(page, page.locator(".shell"), [selectedOwner]),
         );
         observation.scenarioCompleted = true;
       } finally {
         if (!page.isClosed()) {
           await observeCurrentArtifact().catch(() => undefined);
+          const finalServiceWorker = await observePhoneProofServiceWorker(page).catch(
+            () => undefined,
+          );
+          if (observation.serviceWorkerState && finalServiceWorker) {
+            observation.serviceWorkerState.final = finalServiceWorker;
+          }
           observation.gatewayRequests = await observeGatewayRequests(page).catch(() => []);
           const connectRequestCount = observation.gatewayRequests.filter(
             (request) => request.method === "connect",
@@ -1054,7 +861,7 @@ suite.define(() => {
     const page = await context.newPage();
 
     try {
-      await renderLoginGate(page);
+      await renderLoginGate(page, suite.server.baseUrl);
       const gatewayInput = page.locator(".login-gate__form .field input").first();
       expect(await gatewayInput.getAttribute("inputmode")).toBe("url");
       expect(await gatewayInput.getAttribute("autocapitalize")).toBe("none");
@@ -1142,7 +949,7 @@ suite.define(() => {
     const page = await context.newPage();
 
     try {
-      await renderLoginGate(page);
+      await renderLoginGate(page, suite.server.baseUrl);
       const failure = page.locator(".login-gate__failure");
       expect(await failure.evaluate((element) => element.tagName)).toBe("DIV");
       expect(await page.locator(".login-gate__failure-summary").isVisible()).toBe(true);
@@ -1167,7 +974,7 @@ suite.define(() => {
     const page = await context.newPage();
 
     try {
-      await renderLoginGate(page);
+      await renderLoginGate(page, suite.server.baseUrl);
       const metrics = await page.evaluate(() => {
         const root = document.documentElement;
         root.style.setProperty("--safe-area-top", "34px");
