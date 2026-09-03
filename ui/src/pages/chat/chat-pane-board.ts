@@ -66,6 +66,10 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
     return this.canvasAnnotationsByTarget[target] ?? [];
   }
 
+  protected canvasAnnotationEpoch(target: string): number {
+    return this.canvasAnnotationEpochByTarget[target] ?? 0;
+  }
+
   protected toggleCanvasAnnotationMode(target: string): void {
     this.canvasCommentTarget = this.canvasCommentTarget === target ? "" : target;
   }
@@ -79,6 +83,12 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
   protected discardCanvasAnnotations(target: string): void {
     const { [target]: _discarded, ...remaining } = this.canvasAnnotationsByTarget;
     this.canvasAnnotationsByTarget = remaining;
+    // Clear and Send synchronously retire captures started against the prior batch;
+    // otherwise their async snapshots could repopulate an intentionally empty target.
+    this.canvasAnnotationEpochByTarget = {
+      ...this.canvasAnnotationEpochByTarget,
+      [target]: this.canvasAnnotationEpoch(target) + 1,
+    };
   }
 
   protected receiveCanvasAnnotation(target: string, event: CanvasElementAnnotationEvent): void {
@@ -92,7 +102,8 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
       !this.visuallyPresented ||
       board.face !== "dashboard" ||
       this.canvasCommentTarget !== target ||
-      currentTarget !== target
+      currentTarget !== target ||
+      event.detail.captureEpoch !== this.canvasAnnotationEpoch(target)
     ) {
       return;
     }
@@ -464,6 +475,7 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
     const sessionKey = this.resolveBoardSessionKey(board.snapshot.sessionKey);
     const commentTarget = this.canvasAnnotationTarget(board);
     const commentAnnotations = this.canvasAnnotations(commentTarget);
+    const commentEpoch = this.canvasAnnotationEpoch(commentTarget);
     const shouldRender =
       board.hasBoard &&
       Boolean(sessionKey) &&
@@ -482,6 +494,7 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
         canGrant: board.provider.canGrant,
         commentMode: this.canvasCommentTarget === commentTarget,
         commentAnnotations,
+        commentEpoch,
         onAnnotationAdded: (event) => this.receiveCanvasAnnotation(commentTarget, event),
         callbacks: {
           appViewGeneration: board.provider.appViewGeneration,

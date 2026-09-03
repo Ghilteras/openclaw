@@ -70,6 +70,7 @@ class OpenClawBoardView extends OpenClawLightDomElement {
   @property({ type: Boolean }) fitAutoContent = false;
   @property({ type: Boolean }) commentMode = false;
   @property({ attribute: false }) commentAnnotations: readonly CanvasElementAnnotation[] = [];
+  @property({ type: Number }) commentEpoch = 0;
 
   @state() private previewItems: BoardGridItem[] | null = null;
   @state() private gestureName = "";
@@ -683,6 +684,7 @@ class OpenClawBoardView extends OpenClawLightDomElement {
                 .commentAnnotations=${this.commentAnnotations.filter(
                   (annotation) => annotation.widgetName === widget.name,
                 )}
+                .commentEpoch=${this.commentEpoch}
               ></openclaw-board-widget-cell>
             `;
           },

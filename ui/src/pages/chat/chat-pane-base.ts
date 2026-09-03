@@ -316,6 +316,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     string,
     readonly CanvasElementAnnotation[]
   > = {};
+  @litState() protected canvasAnnotationEpochByTarget: Record<string, number> = {};
   @litState() protected resetConfirmationOpen = false;
   protected deferredSessionHydrationRequestVersion = 0;
   protected sessionCompanionHydrationKey = "";

@@ -84,6 +84,7 @@ class OpenClawBoardWidgetCell extends OpenClawLightDomElement {
   @property({ type: Boolean }) canGrant = true;
   @property({ type: Boolean }) commentMode = false;
   @property({ attribute: false }) commentAnnotations: readonly CanvasElementAnnotation[] = [];
+  @property({ type: Number }) commentEpoch = 0;
 
   @state() private actionError = "";
   @state() private actionPending = false;
@@ -499,6 +500,7 @@ class OpenClawBoardWidgetCell extends OpenClawLightDomElement {
             ? html`<openclaw-board-widget-commenter
                 active
                 .annotations=${this.commentAnnotations}
+                .captureEpoch=${this.commentEpoch}
                 .sessionKey=${this.sessionKey}
                 .title=${label}
                 .widgetName=${widget.name}

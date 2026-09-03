@@ -35,7 +35,9 @@ export type CanvasElementAnnotation = {
   draft: BrowserAnnotationDraft;
 };
 
-export type CanvasElementAnnotationEvent = CustomEvent<CanvasElementAnnotation>;
+export type CanvasElementAnnotationEvent = CustomEvent<
+  CanvasElementAnnotation & { captureEpoch: number }
+>;
 
 function finite(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -203,6 +205,7 @@ const COMMENT_EDITOR_GAP_PX = 8;
 class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
   @property({ type: Boolean }) active = false;
   @property({ attribute: false }) annotations: readonly CanvasElementAnnotation[] = [];
+  @property({ type: Number }) captureEpoch = 0;
   @property() sessionKey = "";
   @property() override title = "";
   @property() widgetName = "";
@@ -221,7 +224,8 @@ class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
       (changed.has("active") && !this.active) ||
       changed.has("sessionKey") ||
       changed.has("widgetName") ||
-      changed.has("widgetRevision")
+      changed.has("widgetRevision") ||
+      changed.has("captureEpoch")
     ) {
       this.resetInteraction();
     }
@@ -296,6 +300,7 @@ class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
     sessionKey: string;
     widgetName: string;
     widgetRevision: number;
+    captureEpoch: number;
   }): boolean {
     return (
       this.isConnected &&
@@ -304,7 +309,8 @@ class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
       source.generation === this.requestGeneration &&
       source.sessionKey === this.sessionKey &&
       source.widgetName === this.widgetName &&
-      source.widgetRevision === this.widgetRevision
+      source.widgetRevision === this.widgetRevision &&
+      source.captureEpoch === this.captureEpoch
     );
   }
 
@@ -315,6 +321,7 @@ class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
       sessionKey: this.sessionKey,
       widgetName: this.widgetName,
       widgetRevision: this.widgetRevision,
+      captureEpoch: this.captureEpoch,
     };
   }
 
@@ -372,11 +379,20 @@ class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
       if (!this.sourceIsCurrent(source)) {
         return;
       }
-      const event = new CustomEvent<CanvasElementAnnotation>("canvas-annotation-added", {
-        bubbles: true,
-        cancelable: true,
-        detail: { id: crypto.randomUUID(), widgetName: this.widgetName, node, draft },
-      });
+      const event = new CustomEvent<CanvasElementAnnotation & { captureEpoch: number }>(
+        "canvas-annotation-added",
+        {
+          bubbles: true,
+          cancelable: true,
+          detail: {
+            id: crypto.randomUUID(),
+            widgetName: this.widgetName,
+            node,
+            draft,
+            captureEpoch: source.captureEpoch,
+          },
+        },
+      );
       this.dispatchEvent(event);
       if (!event.defaultPrevented) {
         showToast({ message: t("browser.annotationLimitReached") });

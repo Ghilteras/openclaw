@@ -1,4 +1,5 @@
 import type { ChatAttachment } from "../../lib/chat/chat-types.ts";
+import { composeBrowserAnnotationEnvelope } from "./browser-annotation-context.ts";
 
 const MAX_BROWSER_ANNOTATION_ATTACHMENTS = 4;
 const MAX_BROWSER_ANNOTATION_CONTEXT_CHARS = 8_000;
@@ -17,8 +18,8 @@ export function canAdmitBrowserAnnotations(
   modelContexts: readonly string[],
 ): boolean {
   let annotationCount = modelContexts.length;
-  let contextLength = modelContexts.reduce((total, context) => total + context.length, 0);
-  if (contextLength > MAX_BROWSER_ANNOTATION_CONTEXT_CHARS) {
+  const contexts = [...modelContexts];
+  if (annotationCount > MAX_BROWSER_ANNOTATION_ATTACHMENTS) {
     return false;
   }
   for (const attachment of attachments) {
@@ -27,13 +28,10 @@ export function canAdmitBrowserAnnotations(
       continue;
     }
     annotationCount += 1;
-    contextLength += annotation.modelContext.length;
-    if (
-      annotationCount > MAX_BROWSER_ANNOTATION_ATTACHMENTS ||
-      contextLength > MAX_BROWSER_ANNOTATION_CONTEXT_CHARS
-    ) {
+    contexts.push(annotation.modelContext);
+    if (annotationCount > MAX_BROWSER_ANNOTATION_ATTACHMENTS) {
       return false;
     }
   }
-  return true;
+  return composeBrowserAnnotationEnvelope(contexts).length <= MAX_BROWSER_ANNOTATION_CONTEXT_CHARS;
 }

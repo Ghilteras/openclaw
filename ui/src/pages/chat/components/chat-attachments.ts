@@ -42,7 +42,7 @@ export type ChatAttachmentControlsProps = {
   draft?: string;
   getDraft?: () => string;
   onAttachmentsChange?: (attachments: ChatAttachment[]) => void;
-  onRemoveAttachment?: (attachment: ChatAttachment) => void;
+  onRemoveAnnotations?: (attachments: readonly ChatAttachment[]) => void;
   onDraftChange?: (next: string) => void;
   onPendingReadsChange?: (delta: 1 | -1) => void;
   onOpenImage?: (item: ImageLightboxItem) => void;
@@ -609,9 +609,8 @@ function removeBrowserAnnotationGroup(
   annotations: readonly ChatAttachment[],
   props: ChatAttachmentControlsProps,
 ): void {
-  if (annotations.length === 1 && annotations[0] && props.onRemoveAttachment) {
-    props.onRemoveAttachment(annotations[0]);
-    return;
+  if (props.onRemoveAnnotations) {
+    return props.onRemoveAnnotations(annotations);
   }
   const ids = new Set(annotations.map((attachment) => attachment.id));
   for (const attachment of annotations) {
@@ -621,7 +620,6 @@ function removeBrowserAnnotationGroup(
     currentAttachments(props).filter((attachment) => !ids.has(attachment.id)),
   );
 }
-
 function renderBrowserAnnotationGroup(
   attachments: readonly ChatAttachment[],
   props: ChatAttachmentControlsProps,

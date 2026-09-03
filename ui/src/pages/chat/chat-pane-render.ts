@@ -559,7 +559,7 @@ export class ChatPane extends ChatPaneLayoutRender {
         state.chatAttachments = next;
         state.requestUpdate?.();
       },
-      onRemoveAttachment: this.removeBrowserAnnotation,
+      onRemoveAnnotations: this.removeBrowserAnnotations,
       onSend: (followUpModeOverride, submissionAction) =>
         catalogKey
           ? void this.continueCatalogSession(catalogKey)

@@ -231,8 +231,18 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
     expect(await page.locator(".chat-browser-annotation-group").count()).toBe(0);
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Annotate page" }).click();
-    await page.getByRole("button", { name: "Clear" }).click();
+    await page.mouse.click(
+      targetBounds!.x + targetBounds!.width / 2,
+      targetBounds!.y + targetBounds!.height / 2,
+    );
+    await commentInput.fill("This in-flight capture must be discarded.");
+    await page.evaluate(() => {
+      document.querySelector<HTMLButtonElement>(".board-widget__comment-submit")?.click();
+      document.querySelector<HTMLButtonElement>('[aria-label="Clear"]')?.click();
+    });
     await expect.poll(() => page.locator(".board-widget__comment-marker").count()).toBe(0);
+    await page.waitForTimeout(100);
+    expect(await page.locator(".board-widget__comment-marker").count()).toBe(0);
 
     await page.mouse.click(
       targetBounds!.x + targetBounds!.width / 2,
