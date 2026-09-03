@@ -268,7 +268,9 @@ export async function proveHotReloadChannels({
             },
             40_000,
           );
-          assert.equal(event.status, "ok-token", JSON.stringify(event));
+          // Reply normalization removes plain HEARTBEAT_OK before the heartbeat owner,
+          // which receives an empty successful result and still applies showOk.
+          assert.equal(event.status, "ok-empty", JSON.stringify(event));
           assert.equal(event.channel, CHANNEL);
           assert.equal(event.silent, !showOk);
           const requests = (await providerRequests()).filter((request) => request.cursor > cursor);
