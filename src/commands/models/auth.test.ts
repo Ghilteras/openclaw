@@ -1307,14 +1307,14 @@ describe("modelsAuthLoginCommand", () => {
     const runtime = createRuntime();
     const abortController = new AbortController();
     const cancellation = new Error("Login was replaced");
-    runProviderAuth.mockImplementationOnce(() => {
+    runProviderAuth.mockImplementationOnce(async () => {
       abortController.abort(cancellation);
       return {
         profiles: [
           {
             profileId: "openai:late@example.com",
             credential: {
-              type: "oauth",
+              type: "oauth" as const,
               provider: "openai",
               access: "late-access-token",
               refresh: "late-refresh-token",
