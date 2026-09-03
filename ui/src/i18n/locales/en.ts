@@ -3004,6 +3004,7 @@ export const en: TranslationMap & {
     hubTablistLabel: "Session sections",
   },
   pluginsPage: {
+    breadcrumb: "Breadcrumb",
     settingsDescription: "Configure installed plugins, access, and lifecycle.",
     settingsTabs: "Plugin settings sections",
     settingsInstalled: "Installed",

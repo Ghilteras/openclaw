@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { i18n } from "../../i18n/index.ts";
+import { i18n, t } from "../../i18n/index.ts";
 import {
   createClient,
   createContext,
@@ -81,6 +81,9 @@ describe("PluginsPage routing", () => {
 
     expect(context.replace).not.toHaveBeenCalled();
     expect(page.querySelector('.plugins-settings-search input[type="search"]')).not.toBeNull();
+    expect(page.querySelector(".plugins-settings-tabs")?.classList.contains("oc-segmented")).toBe(
+      true,
+    );
   });
 
   it.each([
@@ -89,12 +92,14 @@ describe("PluginsPage routing", () => {
       route: "/settings/plugins/workboard",
       target: "plugin-settings" as const,
       pathname: "/settings/plugins",
+      href: "/settings/plugins",
     },
     {
       label: "Plugins",
       route: "/settings/plugins/workboard?from=plugins",
       target: "plugins" as const,
       pathname: "/plugins",
+      href: "/plugins",
     },
   ])("opens a settings detail with its $label breadcrumb", async (testCase) => {
     const { client, request } = createClient(async (method) =>
@@ -119,6 +124,15 @@ describe("PluginsPage routing", () => {
       ".plugins-settings-breadcrumb__parent",
     );
     expect(breadcrumb?.textContent).toBe(testCase.label);
+    expect(breadcrumb?.getAttribute("href")).toBe(testCase.href);
+    expect(page.querySelector('[aria-current="page"]')?.textContent).toBe("Workboard");
+    const hero = page.querySelector(".plugins-settings-detail-hero");
+    expect(hero?.querySelector(".plugins-tile")).not.toBeNull();
+    expect(hero?.querySelector("h1")?.textContent).toBe("Workboard");
+    expect(hero?.querySelector(".plugins-settings-detail-description")?.textContent).toBe(
+      t("subtitles.workboard"),
+    );
+    expect(hero?.querySelector("wa-switch")).not.toBeNull();
     breadcrumb?.click();
     await page.updateComplete;
     expect(context.navigate).toHaveBeenCalledWith(testCase.target, {

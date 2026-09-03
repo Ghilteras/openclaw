@@ -242,6 +242,48 @@ async function openWorkboard(page: Parameters<typeof waitForControlUiRoute>[0], 
   await page.getByRole("tab", { name: "Advanced", exact: true }).waitFor();
   const search = page.getByRole("searchbox", { name: "Search installed plugins", exact: true });
   await search.waitFor();
+  const inventoryGeometry = await page.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>(".settings-page.oc-app-surface");
+    const header = surface?.querySelector<HTMLElement>(".content-header--settings");
+    const tabs = surface?.querySelector<HTMLElement>(".plugins-settings-tabs.oc-segmented");
+    const searchField = surface?.querySelector<HTMLElement>(".plugins-settings-search");
+    const section = surface?.querySelector<HTMLElement>(".settings-section");
+    if (!surface || !header || !tabs || !searchField || !section) {
+      return null;
+    }
+    const surfaceRect = surface.getBoundingClientRect();
+    const headerRect = header.getBoundingClientRect();
+    const tabsRect = tabs.getBoundingClientRect();
+    const searchRect = searchField.getBoundingClientRect();
+    const sectionRect = section.getBoundingClientRect();
+    return {
+      headerLeft: headerRect.left,
+      searchLeft: searchRect.left,
+      sectionLeft: sectionRect.left,
+      surfaceWidth: surfaceRect.width,
+      tabsWidth: tabsRect.width,
+      tabsToSearch: searchRect.top - tabsRect.bottom,
+      searchToSection: sectionRect.top - searchRect.bottom,
+    };
+  });
+  expect(inventoryGeometry).not.toBeNull();
+  expect(inventoryGeometry?.tabsWidth ?? Infinity).toBeLessThan(
+    (inventoryGeometry?.surfaceWidth ?? 0) / 2,
+  );
+  expect(
+    Math.abs((inventoryGeometry?.headerLeft ?? 0) - (inventoryGeometry?.searchLeft ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs((inventoryGeometry?.searchLeft ?? 0) - (inventoryGeometry?.sectionLeft ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  expect(inventoryGeometry?.tabsToSearch ?? 0).toBeGreaterThan(0);
+  expect(inventoryGeometry?.searchToSection ?? 0).toBeGreaterThan(0);
+  expect(
+    Math.abs(
+      (inventoryGeometry?.tabsToSearch ?? Infinity) -
+        (inventoryGeometry?.searchToSection ?? -Infinity),
+    ),
+  ).toBeLessThanOrEqual(1);
   await search.fill("calendar");
   await page.locator('[data-plugin-id="calendar"]').waitFor();
   await expect.poll(() => page.locator('[data-plugin-id="workboard"]').count()).toBe(0);
@@ -291,6 +333,76 @@ suite.define(() => {
         await openWorkboard(page, suite.server.baseUrl);
         await page.getByRole("heading", { level: 1, name: "Workboard", exact: true }).waitFor();
         await page.getByRole("link", { name: "Settings", exact: true }).waitFor();
+        const detailGeometry = await page.evaluate(() => {
+          const breadcrumb = document.querySelector<HTMLElement>(".plugins-settings-breadcrumb");
+          const parent = breadcrumb?.querySelector<HTMLElement>(
+            ".plugins-settings-breadcrumb__parent",
+          );
+          const current = breadcrumb?.querySelector<HTMLElement>(
+            ".plugins-settings-breadcrumb__current",
+          );
+          const hero = document.querySelector<HTMLElement>(".plugins-settings-detail-hero");
+          const tile = hero?.querySelector<HTMLElement>(".plugins-tile");
+          const title = hero?.querySelector<HTMLElement>("h1");
+          const description = hero?.querySelector<HTMLElement>(
+            ".plugins-settings-detail-description",
+          );
+          const toggle = hero?.querySelector<HTMLElement>("wa-switch");
+          const surface = hero?.closest<HTMLElement>(".settings-page");
+          const firstSection = surface?.querySelector<HTMLElement>(".settings-section");
+          if (
+            !breadcrumb ||
+            !parent ||
+            !current ||
+            !hero ||
+            !tile ||
+            !title ||
+            !description ||
+            !toggle ||
+            !surface ||
+            !firstSection
+          ) {
+            return null;
+          }
+          const breadcrumbRect = breadcrumb.getBoundingClientRect();
+          const heroRect = hero.getBoundingClientRect();
+          const tileRect = tile.getBoundingClientRect();
+          const toggleRect = toggle.getBoundingClientRect();
+          const accentProbe = document.createElement("span");
+          accentProbe.style.color = "var(--accent)";
+          document.body.append(accentProbe);
+          const accentColor = getComputedStyle(accentProbe).color;
+          accentProbe.remove();
+          return {
+            breadcrumbAboveHero: breadcrumbRect.bottom <= heroRect.top,
+            colorsMatch: getComputedStyle(parent).color === getComputedStyle(current).color,
+            currentColor: getComputedStyle(current).color,
+            accentColor,
+            breadcrumbFontSize: Number.parseFloat(getComputedStyle(current).fontSize),
+            titleFontSize: Number.parseFloat(getComputedStyle(title).fontSize),
+            description: description.textContent,
+            legacySubtitleCount: surface.querySelectorAll(".page-subtitle").length,
+            heroLeft: heroRect.left,
+            sectionLeft: firstSection.getBoundingClientRect().left,
+            tileTop: tileRect.top,
+            toggleTop: toggleRect.top,
+          };
+        });
+        expect(detailGeometry).not.toBeNull();
+        expect(detailGeometry?.breadcrumbAboveHero).toBe(true);
+        expect(detailGeometry?.colorsMatch).toBe(true);
+        expect(detailGeometry?.currentColor).not.toBe(detailGeometry?.accentColor);
+        expect(detailGeometry?.breadcrumbFontSize ?? Infinity).toBeLessThan(
+          detailGeometry?.titleFontSize ?? 0,
+        );
+        expect(detailGeometry?.description).toBe("Plan and track agent-owned work.");
+        expect(detailGeometry?.legacySubtitleCount).toBe(0);
+        expect(
+          Math.abs((detailGeometry?.heroLeft ?? 0) - (detailGeometry?.sectionLeft ?? 0)),
+        ).toBeLessThanOrEqual(1);
+        expect(
+          Math.abs((detailGeometry?.toggleTop ?? 0) - (detailGeometry?.tileTop ?? 0)),
+        ).toBeLessThanOrEqual(1);
         expect(await page.getByRole("status").filter({ hasText: "Enabled" }).count()).toBe(0);
         await page.getByRole("heading", { name: "Configuration", exact: true }).waitFor();
         const refresh = page.getByRole("button", { name: "Reload", exact: true });
@@ -323,6 +435,16 @@ suite.define(() => {
             path: path.join(proofDir, "02-plugin-detail.png"),
           });
         }
+        await page.reload();
+        await waitForControlUiRoute(page, {
+          pathname: "/settings/plugins/workboard",
+          routeId: "plugin-settings",
+        });
+        await page.getByRole("link", { name: "Settings", exact: true }).click();
+        await waitForControlUiRoute(page, {
+          pathname: "/settings/plugins",
+          routeId: "plugin-settings",
+        });
       },
     );
   });
