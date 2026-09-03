@@ -81,12 +81,12 @@ export async function runSkillCollectionReviewForAgent(params: {
       recordSkillCollectionReviewStatus(params.agentId, { attemptedAtMs }, stateOptions);
       assertCurrent(lease);
       await fs.mkdir(skillsRoot, { recursive: true });
-      const before = await resolveReviewSkills(params.config, params.agentId, params.env);
       const beforeFiles = await snapshotWorkshopSkillFiles(skillsRoot).catch((error: unknown) => {
         assertCurrent(lease);
         recordSkillCollectionReviewStatus(params.agentId, { attemptedAtMs, error }, stateOptions);
         throw error;
       });
+      const before = await resolveReviewSkills(params.config, params.agentId, params.env);
       const backup = await createCollectionBackup({
         skillsRoot,
         skillDirs: before.map((skill) => path.relative(skillsRoot, skill.baseDir)),

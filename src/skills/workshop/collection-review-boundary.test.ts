@@ -6,6 +6,7 @@ import type { CronStoredJob } from "../../cron/types.js";
 import type { PluginHookSkillChangedEvent } from "../../plugins/hook-types.js";
 import { createOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createTrackedTempDirs } from "../../test-utils/tracked-temp-dirs.js";
+import * as skillLoader from "../loading/workspace-skill-loader.js";
 import { getSkillsSnapshotVersion } from "../runtime/refresh-state.js";
 import { latestCommittedBackupId } from "./collection-backup.js";
 import { resolveSkillCollectionBackupRoot } from "./collection-paths.js";
@@ -535,6 +536,39 @@ describe("skill collection review boundary", () => {
         expect.objectContaining({ error: expect.stringContaining("Skill evaluation bundle") }),
       );
     } finally {
+      await testState.cleanup();
+    }
+  });
+
+  it("rejects an oversized inventory before loading any skills", async () => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-inventory-bound-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
+    const loadSkillRootRecords = vi.spyOn(skillLoader, "loadSkillRootRecords");
+    try {
+      await fs.mkdir(skillsRoot, { recursive: true });
+      await Promise.all(
+        Array.from({ length: 10_001 }, (_, index) =>
+          fs.writeFile(path.join(skillsRoot, `inventory-${index.toString()}.txt`), "entry\n"),
+        ),
+      );
+      const result = await runSkillCollectionReviewForAgent({
+        config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
+        agentId: "main",
+        job: createReviewJob("skill-review-inventory-bound"),
+        env: testState.env,
+        runTurn: async () => ({ status: "ok", summary: "reviewed", outputText: "" }),
+      });
+
+      expect(result).toMatchObject({
+        status: "error",
+        error: expect.stringContaining("inventory exceeds 10,000 files"),
+      });
+      expect(loadSkillRootRecords).not.toHaveBeenCalled();
+    } finally {
+      loadSkillRootRecords.mockRestore();
       await testState.cleanup();
     }
   });
