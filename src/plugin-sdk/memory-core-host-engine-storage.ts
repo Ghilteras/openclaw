@@ -78,7 +78,7 @@ export {
   type OpenClawAgentDatabaseReadOnlyOpenResult,
   type OpenClawAgentReadOnlyDatabase,
   type OpenClawAgentReadOnlyDatabaseHandle,
-} from "../state/openclaw-agent-db-readonly.js";
+} from "../state/openclaw-agent-db-readonly-fresh.js";
 
 /** Health probe result for embedding provider availability checks. */
 export type MemoryEmbeddingProbeResult = {

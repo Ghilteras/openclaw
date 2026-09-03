@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { SessionEntry } from "../config/sessions.js";
 import { buildAgentMainSessionKey } from "../routing/session-key.js";
-import { readExistingAgentSchemaMeta } from "../state/openclaw-agent-db-schema-helpers.js";
+import { readExistingAgentSchemaMeta } from "../state/openclaw-agent-db-schema-identity.js";
 import { isErrno } from "./errors.js";
 import { openNodeSqliteDatabase } from "./node-sqlite.js";
 import { resolveSqliteDatabaseFilePaths } from "./sqlite-files.js";

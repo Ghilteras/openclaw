@@ -7,12 +7,12 @@ import {
 } from "../infra/sqlite-user-version.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { OPENCLAW_AGENT_SCHEMA_VERSION } from "./openclaw-agent-db-contract.js";
+import { assertOpenClawAgentSchemaContains } from "./openclaw-agent-db-schema-helpers.js";
 import {
   assertExistingAgentSchemaOwner,
-  assertOpenClawAgentSchemaContains,
   assertSupportedAgentSchemaVersion,
   readExistingAgentSchemaMeta,
-} from "./openclaw-agent-db-schema-helpers.js";
+} from "./openclaw-agent-db-schema-identity.js";
 import { ensureOpenClawAgentDatabaseSchema } from "./openclaw-agent-db-schema.js";
 import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.js";
 import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "./openclaw-state-db.js";

@@ -11,11 +11,11 @@ import {
   type OpenClawAgentDatabase,
   type OpenClawAgentDatabaseOptions,
 } from "../../state/openclaw-agent-db.js";
-import { persistSessionTranscriptArchive } from "./session-accessor.sqlite-archive-store.js";
 import type {
   MaterializedSessionStateDeletePlan,
   SessionStateDeletePlan,
-} from "./session-accessor.sqlite-archive.js";
+} from "./session-accessor.sqlite-archive-files.js";
+import { persistSessionTranscriptArchive } from "./session-accessor.sqlite-archive-store.js";
 import type {
   SessionEntryLifecycleRemoval,
   SessionEntryLifecycleUpsert,

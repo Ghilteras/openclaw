@@ -10,11 +10,9 @@ import {
   resolveOpenClawAgentSqlitePath,
   type OpenClawAgentDatabase,
 } from "../../state/openclaw-agent-db.js";
+import type { SessionStateDeletePlan } from "./session-accessor.sqlite-archive-files.js";
 import { publishSessionStateArchives } from "./session-accessor.sqlite-archive-store.js";
-import {
-  materializeSessionStateDeletePlans,
-  type SessionStateDeletePlan,
-} from "./session-accessor.sqlite-archive.js";
+import { materializeSessionStateDeletePlans } from "./session-accessor.sqlite-archive.js";
 import type { SessionLifecycleArchivedTranscript } from "./session-accessor.sqlite-contract.js";
 import {
   runSqliteSessionDeletionTransaction as runOpenClawAgentWriteTransaction,

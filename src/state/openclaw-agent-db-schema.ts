@@ -32,18 +32,20 @@ import * as maintenanceAuthority from "./openclaw-agent-db-lease.js";
 import { ensureOpenClawAgentDatabasePermissions } from "./openclaw-agent-db-permissions.js";
 import { registerOpenClawAgentDatabase } from "./openclaw-agent-db-registry.js";
 import {
-  assertExistingAgentSchemaOwner,
   assertOpenClawAgentCurrentRuntimeSchema,
-  assertSupportedAgentSchemaVersion,
   assertAgentSchemaVersion,
   hasRetiredAgentStateLeaseSchema,
   hasPendingMemoryChunkMetadataMigration,
   migrateRetiredAgentStateLeaseSchema,
   migratedSessionColumn,
   ensureSessionKeyContractSchemaInTransaction,
-  readExistingAgentSchemaMeta,
   repairAndAssertOpenClawAgentV14SchemaForMigration,
 } from "./openclaw-agent-db-schema-helpers.js";
+import {
+  assertExistingAgentSchemaOwner,
+  assertSupportedAgentSchemaVersion,
+  readExistingAgentSchemaMeta,
+} from "./openclaw-agent-db-schema-identity.js";
 import {
   backfillSessionConversations,
   ensureSessionAdditiveColumns,
@@ -96,8 +98,7 @@ function dropLegacyMemoryIndexSchema(db: DatabaseSync): void {
   const columns = db.prepare("PRAGMA table_info(memory_index_sources)").all() as Array<{
     name?: unknown;
   }>;
-  const hasLegacySourceColumns = columns.some((row) => row.name === "source_kind");
-  if (!hasLegacySourceColumns) {
+  if (!columns.some((row) => row.name === "source_kind")) {
     return;
   }
   // Memory indexes are derived cache data; v1 used a different key shape.
@@ -742,8 +743,7 @@ export function migrateOpenClawAgentDatabaseToMediaPrerequisiteSchema(
   options: OpenClawAgentDatabaseOptions,
 ): void {
   const targetVersion = AGENT_MEDIA_SCHEMA_VERSION - 1;
-  const userVersion = readSqliteUserVersion(db);
-  if (userVersion > targetVersion) {
+  if (readSqliteUserVersion(db) > targetVersion) {
     return;
   }
   const agentId = normalizeAgentId(options.agentId);

@@ -14,7 +14,7 @@ import { appendTranscriptEventsInTransaction } from "../../src/config/sessions/s
 import { enforceSqliteSessionHistoryDiskBudget } from "../../src/config/sessions/session-history-eviction.js";
 import type { SessionEntry } from "../../src/config/sessions/types.js";
 import { beginSessionWorkAdmission } from "../../src/sessions/session-lifecycle-admission.js";
-import { openOpenClawAgentDatabaseReadOnly } from "../../src/state/openclaw-agent-db-readonly.js";
+import { openOpenClawAgentDatabaseReadOnly } from "../../src/state/openclaw-agent-db-readonly-fresh.js";
 import { runOpenClawAgentWriteTransaction } from "../../src/state/openclaw-agent-db.js";
 
 const RETENTION_DAY_MS = 86_400_000;

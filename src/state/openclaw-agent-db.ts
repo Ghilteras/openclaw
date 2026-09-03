@@ -53,7 +53,7 @@ import {
   assertExistingAgentSchemaOwner,
   assertSupportedAgentSchemaVersion,
   readExistingAgentSchemaMeta,
-} from "./openclaw-agent-db-schema-helpers.js";
+} from "./openclaw-agent-db-schema-identity.js";
 import {
   assertAgentDatabaseIntegrityBeforeMutation,
   ensureOpenClawAgentSchema,

@@ -12,9 +12,9 @@ import {
 import { ensureSessionTranscriptArchiveSchema } from "../../state/openclaw-agent-session-transcript-archive-schema.js";
 import {
   resolveRegisteredSqliteTranscriptArchiveName,
-  runSqliteTranscriptArchivePublishWorker,
   type MaterializedSessionStateDeletePlan,
-} from "./session-accessor.sqlite-archive.js";
+} from "./session-accessor.sqlite-archive-files.js";
+import { runSqliteTranscriptArchivePublishWorker } from "./session-accessor.sqlite-archive.js";
 import type { SessionLifecycleArchivedTranscript } from "./session-accessor.sqlite-contract.js";
 import { emitArchivedTranscriptUpdates } from "./session-accessor.sqlite-events.js";
 import {

@@ -13,14 +13,12 @@ import {
   SessionEntryLifecycleUpsertConflictError,
   type SessionArchivedTranscriptCleanupRule,
 } from "./session-accessor.lifecycle-types.js";
+import type { MaterializedSessionStateDeletePlan } from "./session-accessor.sqlite-archive-files.js";
 import {
   prunePublishedSessionArchivesByRetention,
   publishSessionStateArchives,
 } from "./session-accessor.sqlite-archive-store.js";
-import {
-  materializeSessionStateDeletePlans,
-  type MaterializedSessionStateDeletePlan,
-} from "./session-accessor.sqlite-archive.js";
+import { materializeSessionStateDeletePlans } from "./session-accessor.sqlite-archive.js";
 import { readExactSessionEntryRowForCanonicalRepair } from "./session-accessor.sqlite-canonical-repair.js";
 import type {
   SessionLifecycleArchivedTranscript,
