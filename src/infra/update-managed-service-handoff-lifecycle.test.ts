@@ -4,12 +4,10 @@
 import { EventEmitter } from "node:events";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
-import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeTriageUpdateFailure } from "../commands/triage-update.js";
 import { getFileLockProcessStartTime } from "../shared/pid-alive.js";
@@ -39,6 +37,7 @@ import {
   createManagedServiceManagerFixtureScript,
   registerManagedSystemdHandoffConvergenceTests,
   registerManagedHandoffOwnerTests,
+  prepareManagedHandoffRecoveryFixture,
   type ManagedServiceCommandTiming,
   type ManagedServiceManagerBoundaryOptions,
   type ManagedServiceManagerBoundaryResult,
@@ -164,34 +163,20 @@ async function runManagedServiceManagerBoundary(
   const updaterPath = path.join(root, "updater-ran");
   const commandTimingsPath = path.join(root, "manager-command-timings.jsonl");
   const recoveryModulePath = path.join(root, "recovery-health.mjs");
+  const configPath = path.join(root, "openclaw.json");
   const stateDatabasePath = resolveOpenClawStateSqlitePath({ OPENCLAW_STATE_DIR: root });
   const consumeNotification = `const db = new (require("node:sqlite").DatabaseSync)(${JSON.stringify(stateDatabasePath)}); const cleared = db.prepare("DELETE FROM gateway_restart_sentinel WHERE sentinel_key = 'current'").run(); db.close(); if (cleared.changes !== 1) throw new Error("expected one published notification before recovery consumed it"); { const state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); state.consumedNotifications = Number(cleared.changes); fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state)); }`;
   if (options?.updaterNotification) {
     openOpenClawStateDatabase({ env: { OPENCLAW_STATE_DIR: root } });
   }
-  await fs.writeFile(
+  await prepareManagedHandoffRecoveryFixture({
     recoveryModulePath,
-    `
-    import fs from "node:fs";
-    import { createRequire } from "node:module";
-    const require = createRequire(import.meta.url);
-    export async function waitForGatewayUpdateRecovery(expectedVersion, expectedBuildId) {
-      const state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8"));
-      state.healthProbed = true;
-      state.healthProbeCount = (state.healthProbeCount || 0) + 1;
-      state.expectedVersion = expectedVersion;
-      state.expectedBuildId = expectedBuildId;
-      fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
-      ${options?.updaterNotification === "consumed" ? consumeNotification : ""}
-      ${options?.diagnosticReadFailure === "after-recovery" ? `{ const db = new (require("node:sqlite").DatabaseSync)(${JSON.stringify(stateDatabasePath)}); db.exec("ALTER TABLE gateway_restart_sentinel RENAME COLUMN thread_id TO unreadable_thread_id"); db.close(); }` : ""}
-      const fault = ${JSON.stringify(options?.gatewayHealth)};
-      return { healthy: !["unready", "wrong-version", "wrong-build", "exited"].includes(fault),
-        runtime: { status: fault === "exited" ? "stopped" : "running" },
-        gatewayVersion: fault === "wrong-version" ? "0.0.1" : expectedVersion,
-        gatewayBuildId: fault === "wrong-build" ? "another-build-same-version" : expectedBuildId };
-    }
-  `,
-  );
+    configPath,
+    statePath,
+    stateDatabasePath,
+    consumeNotification,
+    options,
+  });
   const invocationCwd = options?.relativeInput ? path.join(root, "invoking-directory") : undefined;
   if (invocationCwd) {
     await fs.mkdir(invocationCwd);
@@ -222,32 +207,9 @@ async function runManagedServiceManagerBoundary(
   const env = {
     ...process.env,
     OPENCLAW_STATE_DIR: root,
-    OPENCLAW_CONFIG_PATH: path.join(root, "openclaw.json"),
+    OPENCLAW_CONFIG_PATH: configPath,
     PATH: `${root}${path.delimiter}${process.env.PATH ?? ""}`,
   };
-  if (options?.requester) {
-    await fs.writeFile(
-      env.OPENCLAW_CONFIG_PATH,
-      JSON.stringify({
-        commands: { ownerAllowFrom: ["slack:owner"] },
-        channels: { slack: { enabled: true } },
-      }),
-    );
-    await fs.appendFile(
-      recoveryModulePath,
-      `
-      export async function isManagedUpdateRequesterOwner(requester) {
-        const state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8"));
-        state.ownerChecked = true;
-        fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
-        const { register } = await import(${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm/api")).href)});
-        register();
-        const runtime = await import(${JSON.stringify(new URL("../cli/daemon-cli/lifecycle-context.ts", import.meta.url).href)});
-        return runtime.isManagedUpdateRequesterOwner(requester);
-      }
-    `,
-    );
-  }
   let helper: import("node:child_process").ChildProcess | undefined;
   try {
     await startManagedServiceUpdateHandoff({

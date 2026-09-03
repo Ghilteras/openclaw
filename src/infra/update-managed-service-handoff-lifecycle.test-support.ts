@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import type { TriageUpdateFailure } from "../commands/triage-update.js";
 import { buildUpdateRestartSentinelPayload } from "./update-restart-sentinel-payload.js";
 import type { UpdateRunResult } from "./update-runner-types.js";
@@ -430,6 +433,70 @@ export function createManagedServiceLaunchdClockPreload(params: {
     "  return child;",
     "};",
   ].join("\n");
+}
+
+export async function prepareManagedHandoffRecoveryFixture(params: {
+  recoveryModulePath: string;
+  configPath: string;
+  statePath: string;
+  stateDatabasePath: string;
+  consumeNotification: string;
+  options?: ManagedServiceManagerBoundaryOptions;
+}): Promise<void> {
+  const {
+    recoveryModulePath,
+    configPath,
+    statePath,
+    stateDatabasePath,
+    consumeNotification,
+    options,
+  } = params;
+  await fs.writeFile(
+    recoveryModulePath,
+    `
+    import fs from "node:fs";
+    import { createRequire } from "node:module";
+    const require = createRequire(import.meta.url);
+    export async function waitForGatewayUpdateRecovery(expectedVersion, expectedBuildId) {
+      const state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8"));
+      state.healthProbed = true;
+      state.healthProbeCount = (state.healthProbeCount || 0) + 1;
+      state.expectedVersion = expectedVersion;
+      state.expectedBuildId = expectedBuildId;
+      fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+      ${options?.updaterNotification === "consumed" ? consumeNotification : ""}
+      ${options?.diagnosticReadFailure === "after-recovery" ? `{ const db = new (require("node:sqlite").DatabaseSync)(${JSON.stringify(stateDatabasePath)}); db.exec("ALTER TABLE gateway_restart_sentinel RENAME COLUMN thread_id TO unreadable_thread_id"); db.close(); }` : ""}
+      const fault = ${JSON.stringify(options?.gatewayHealth)};
+      return { healthy: !["unready", "wrong-version", "wrong-build", "exited"].includes(fault),
+        runtime: { status: fault === "exited" ? "stopped" : "running" },
+        gatewayVersion: fault === "wrong-version" ? "0.0.1" : expectedVersion,
+        gatewayBuildId: fault === "wrong-build" ? "another-build-same-version" : expectedBuildId };
+    }
+  `,
+  );
+  if (options?.requester) {
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        commands: { ownerAllowFrom: ["slack:owner"] },
+        channels: { slack: { enabled: true } },
+      }),
+    );
+    await fs.appendFile(
+      recoveryModulePath,
+      `
+      export async function isManagedUpdateRequesterOwner(requester) {
+        const state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8"));
+        state.ownerChecked = true;
+        fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+        const { register } = await import(${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm/api")).href)});
+        register();
+        const runtime = await import(${JSON.stringify(new URL("../cli/daemon-cli/lifecycle-context.ts", import.meta.url).href)});
+        return runtime.isManagedUpdateRequesterOwner(requester);
+      }
+    `,
+    );
+  }
 }
 
 export function registerManagedHandoffOwnerTests(
