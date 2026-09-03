@@ -735,8 +735,7 @@ async function compactCodexNativeThread(
                     ...binding,
                     nativeCompactionRetryPending:
                       !threadNotFound &&
-                      (rejectedAfterContextEngine ||
-                        binding.nativeCompactionRetryPending === true)
+                      (rejectedAfterContextEngine || binding.nativeCompactionRetryPending === true)
                         ? true
                         : undefined,
                   },
