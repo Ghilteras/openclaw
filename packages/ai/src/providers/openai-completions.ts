@@ -314,6 +314,8 @@ function createClient(
   if (sessionId && compat.sessionAffinity !== "none") {
     if (compat.sessionAffinity === "openrouter") {
       headers["x-session-id"] = sessionId;
+    } else if (compat.sessionAffinity === "opencode") {
+      headers["x-opencode-session"] = sessionId;
     } else {
       headers.session_id = sessionId;
       headers["x-client-request-id"] = sessionId;

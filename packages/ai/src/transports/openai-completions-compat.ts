@@ -11,7 +11,7 @@ import { resolveProviderRequestCapabilities as resolveModelProviderRequestCapabi
 
 type ProviderEndpointClass = string;
 type ProviderRequestCapabilities = AiProviderRequestCapabilities;
-type OpenAICompletionsSessionAffinity = "none" | "openai" | "openrouter";
+type OpenAICompletionsSessionAffinity = "none" | "openai" | "openrouter" | "opencode";
 
 type OpenAICompletionsCompatDefaultsInput = {
   provider?: string;
@@ -227,9 +227,17 @@ export function detectOpenAICompletionsCompat(
 }
 
 function resolveSessionAffinity(
-  model: Pick<Model<"openai-completions">, "compat">,
+  model: Pick<Model<"openai-completions">, "compat" | "baseUrl">,
   detectedFormat: OpenAICompletionsCompatDefaults["sessionAffinityFormat"],
 ): OpenAICompletionsSessionAffinity {
+  try {
+    const host = new URL(model.baseUrl).hostname;
+    if (host === "opencode.ai" || host.endsWith(".opencode.ai")) {
+      return "opencode";
+    }
+  } catch {
+    // Preserve existing compatibility behavior for malformed base URLs.
+  }
   if (model.compat?.sendSessionAffinityHeaders !== true) {
     return "none";
   }

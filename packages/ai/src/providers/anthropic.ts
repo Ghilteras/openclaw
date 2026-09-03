@@ -1021,10 +1021,20 @@ function createClient(
   if (serverSideFallback) {
     betaFeatures.push(ANTHROPIC_SERVER_SIDE_FALLBACK_BETA);
   }
-  const sessionAffinityHeaders: Record<string, string | null> =
-    sessionId && getAnthropicCompat(model).sendSessionAffinityHeaders
-      ? { "x-session-affinity": sessionId }
-      : {};
+  let isOpenCodeHost = false;
+  try {
+    const host = new URL(model.baseUrl).hostname;
+    isOpenCodeHost = host === "opencode.ai" || host.endsWith(".opencode.ai");
+  } catch {
+    // Preserve existing compatibility behavior for malformed base URLs.
+  }
+  const sessionAffinityHeaders: Record<string, string | null> = sessionId
+    ? isOpenCodeHost
+      ? { "x-opencode-session": sessionId }
+      : getAnthropicCompat(model).sendSessionAffinityHeaders
+        ? { "x-session-affinity": sessionId }
+        : {}
+    : {};
   const defaultHeaders = mergeHeaders(
     {
       accept: "application/json",
