@@ -7,6 +7,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const [mode, root, policyScenario, ...args] = process.argv.slice(2);
+const FIXTURE_RUNTIME_MS = 45_000;
+const FIXTURE_CLEANUP_MS = 4_000;
 const linux = policyScenario.startsWith("linux:");
 const scenario = linux ? policyScenario.slice("linux:".length) : policyScenario;
 const fixture = fileURLToPath(import.meta.url);
@@ -1037,7 +1039,7 @@ async function supervise() {
       if (error) {
         report.error = String(error);
       }
-      const deadline = Date.now() + 4_000;
+      const deadline = Date.now() + FIXTURE_CLEANUP_MS;
       try {
         fs.rmSync(lease, { force: true });
         sentinel?.kill("SIGKILL");
@@ -1143,7 +1145,7 @@ async function supervise() {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.once(signal, () => void stop(`supervisor received ${signal}`));
   }
-  setTimeout(() => void stop("fixture deadline exceeded"), 45_000);
+  setTimeout(() => void stop("fixture deadline exceeded"), FIXTURE_RUNTIME_MS);
   try {
     if (process.platform !== "win32") {
       // A noexec mount can make PATH skip mocks and select real tools. Verify
@@ -1176,7 +1178,7 @@ async function supervise() {
     const actorEnv = process.env.NODE_OPTIONS ? { NODE_OPTIONS: process.env.NODE_OPTIONS } : {};
     if (process.platform === "win32") {
       const token = randomUUID();
-      const deadline = Date.now() + 45_000;
+      const deadline = Date.now() + FIXTURE_RUNTIME_MS;
       const censusCommand =
         scenario === "census-startup-failure" ? "fixture-missing-python" : "python";
       const censusScript = path.join(path.dirname(fixture), "ci-windows-process-census.py");
@@ -1187,6 +1189,7 @@ async function supervise() {
           ...process.env,
           OPENCLAW_CI_CENSUS_TOKEN: token,
           OPENCLAW_CI_CENSUS_PARENT_PID: String(process.pid),
+          OPENCLAW_CI_CENSUS_MAX_LIFETIME_MS: String(FIXTURE_RUNTIME_MS + FIXTURE_CLEANUP_MS),
         },
       });
       report.processDiagnostics.censusService = captureProcessDiagnostic(

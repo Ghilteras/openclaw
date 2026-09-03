@@ -23,6 +23,7 @@ import {
   readCiCheckoutStep,
   renderGitTestClock,
   withCiCheckoutFixture,
+  withWindowsCensusService,
 } from "./ci-checkout.test-support.js";
 import { runCiGitStep } from "./ci-git-owner.test-support.js";
 
@@ -808,46 +809,112 @@ it.skipIf(process.platform === "win32")(
 
 it.skipIf(process.platform !== "win32")(
   "keeps the persistent census protocol bounded and joins authenticated shutdown",
-  () => {
-    const result = spawnSync(
-      "python",
-      [
-        "-I",
-        "-S",
-        "-c",
-        String.raw`
-import json, os, socket, subprocess, sys, uuid
-token = uuid.uuid4().hex
-env = dict(os.environ, OPENCLAW_CI_CENSUS_TOKEN=token, OPENCLAW_CI_CENSUS_PARENT_PID=str(os.getpid()))
-service = subprocess.Popen([sys.executable, "-I", "-S", sys.argv[1]], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-ready = json.loads(service.stdout.readline()); assert list(ready) == ["v", "port"] and ready["v"] == 1
-def exchange(payload):
-    with socket.create_connection(("127.0.0.1", ready["port"]), timeout=5) as connection:
-        connection.sendall(payload); connection.shutdown(socket.SHUT_WR)
-        return json.loads(connection.makefile("rb").readline())
-base = dict(v=1, token=token); shutdown = json.dumps(dict(base, op="shutdown")).encode() + b"\n"
-try:
-    requests = [dict(base, token="wrong", op="census", pids=[]), dict(base, op="census", pids=[], extra=True), dict(base, op="census", pids=[1, 1]), dict(base, op="census", pids=[True]), dict(base, v=True, op="census", pids=[])]
-    invalid = [b"{\n", *(json.dumps(item).encode() + b"\n" for item in requests), b"{" + b"x" * (16 * 1024) + b"}\n"]
-    for payload in invalid: response = exchange(payload); assert response["v"] == 1 and response.get("error")
-    connection = socket.create_connection(("127.0.0.1", ready["port"]), timeout=5); connection.sendall(json.dumps(dict(base, op="census", pids=[])).encode() + b"\n"); connection.close()
-    response = exchange(json.dumps(dict(base, op="census", pids=[os.getpid()])).encode() + b"\n")
-    assert list(response["observations"][0]) == ["pid", "alive", "creationTime"] and response["observations"][0]["alive"]
-    assert exchange(shutdown) == {"v": 1, "ok": True}; assert service.wait(timeout=5) == 0 and service.stderr.read() == ""
-finally:
-    if service.poll() is None:
-        try:
-            exchange(shutdown)
-        except Exception: service.kill()
-        service.wait(timeout=5)
-print("persistent census protocol passed")
-`,
-        fileURLToPath(new URL("./fixtures/ci-windows-process-census.py", import.meta.url)),
-      ],
-      { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" },
-    );
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("persistent census protocol passed");
+  async () => {
+    await withWindowsCensusService(async (service) => {
+      const frame = (request: Record<string, unknown>) =>
+        Buffer.from(`${JSON.stringify({ v: 1, token: service.token, ...request })}\n`);
+      const invalid = [
+        { name: "malformed JSON", payload: Buffer.from("{\n") },
+        { name: "wrong census token", payload: frame({ token: "wrong", op: "census", pids: [] }) },
+        { name: "wrong shutdown token", payload: frame({ token: "wrong", op: "shutdown" }) },
+        { name: "unknown operation", payload: frame({ op: "unknown" }) },
+        { name: "extra fields", payload: frame({ op: "census", pids: [], extra: true }) },
+        { name: "duplicate PIDs", payload: frame({ op: "census", pids: [1, 1] }) },
+        { name: "boolean PID", payload: frame({ op: "census", pids: [true] }) },
+        { name: "boolean version", payload: frame({ v: true, op: "census", pids: [] }) },
+        {
+          name: "oversized frame",
+          payload: Buffer.concat([Buffer.alloc(16 * 1024 + 1, "x"), Buffer.from("\n")]),
+        },
+        {
+          name: "257 PIDs",
+          payload: frame({ op: "census", pids: Array.from({ length: 257 }, (_, i) => i + 1) }),
+        },
+        {
+          name: "trailing frame",
+          payload: Buffer.concat([frame({ op: "census", pids: [] }), Buffer.from("x")]),
+        },
+        { name: "missing EOF", payload: frame({ op: "census", pids: [] }), end: false },
+      ];
+      for (const { name, payload, end } of invalid) {
+        await expect(service.exchange(payload, { end }), name).resolves.toMatchObject({
+          v: 1,
+          error: expect.any(String),
+        });
+      }
+
+      const partial = await service.connect(Buffer.from('{"v":1'));
+      const drip = setInterval(() => partial.write(" "), 100);
+      const partialClosed = new Promise<void>((resolve) => {
+        partial.once("close", () => resolve());
+      });
+      try {
+        const census = await service.request({ op: "census", pids: [process.pid] }, 1_000);
+        expect(census).toMatchObject({
+          v: 1,
+          observations: [{ pid: process.pid, alive: true, creationTime: expect.any(String) }],
+        });
+        const started = Date.now();
+        await expect(service.request({ op: "shutdown" }, 1_000)).resolves.toEqual({
+          v: 1,
+          ok: true,
+        });
+        await expect(service.waitForExit(1_000)).resolves.toEqual({ code: 0, signal: null });
+        expect(Date.now() - started).toBeLessThan(900);
+        await expect(
+          Promise.race([
+            partialClosed,
+            new Promise((_, reject) => {
+              setTimeout(() => reject(new Error("Partial client remained open")), 1_000);
+            }),
+          ]),
+        ).resolves.toBeUndefined();
+      } finally {
+        clearInterval(drip);
+        partial.destroy();
+      }
+    });
+  },
+  20_000,
+);
+
+it.skipIf(process.platform !== "win32")(
+  "exits promptly when its parent dies during a partial frame",
+  async () => {
+    const owner = spawnOwnedVitestProcess({
+      command: process.execPath,
+      args: ["-e", "setInterval(() => {}, 1000)"],
+      options: { stdio: "ignore" },
+    });
+    const parentPid = expectDefined(owner.child.pid, "census parent PID");
+    try {
+      await withWindowsCensusService(
+        async (service) => {
+          const partial = await service.connect(Buffer.from('{"v":1'));
+          const partialClosed = new Promise<void>((resolve) => {
+            partial.once("close", () => resolve());
+          });
+          const started = Date.now();
+          owner.child.kill("SIGKILL");
+          await owner.completion;
+          await expect(service.waitForExit(1_000)).resolves.toEqual({ code: 0, signal: null });
+          expect(Date.now() - started).toBeLessThan(900);
+          await expect(
+            Promise.race([
+              partialClosed,
+              new Promise((_, reject) => {
+                setTimeout(() => reject(new Error("Partial client remained open")), 1_000);
+              }),
+            ]),
+          ).resolves.toBeUndefined();
+          partial.destroy();
+        },
+        { parentPid },
+      );
+    } finally {
+      owner.child.kill("SIGKILL");
+      await owner.completion;
+    }
   },
   20_000,
 );
@@ -911,15 +978,16 @@ it.skipIf(process.platform !== "win32")(
   55_000,
 );
 
-it("does not revive a terminated fixture instance when its PID is reused", () => {
-  const result = spawnSync(
-    process.platform === "win32" ? "python" : "python3",
-    [
-      "-I",
-      "-S",
-      "-c",
-      String.raw`
-import json, os, pathlib, runpy, socket, subprocess, sys, tempfile
+it("does not revive a terminated fixture instance when its PID is reused", async () => {
+  const run = (env: NodeJS.ProcessEnv = process.env) =>
+    spawnSync(
+      process.platform === "win32" ? "python" : "python3",
+      [
+        "-I",
+        "-S",
+        "-c",
+        String.raw`
+import json, os, pathlib, runpy, subprocess, sys, tempfile
 
 with tempfile.TemporaryDirectory(prefix="checkout-pid-reuse-") as directory:
     root = pathlib.Path(directory).resolve()
@@ -956,65 +1024,52 @@ cp.spawnSync = (command, args, options) => {
 require("node:module").syncBuiltinESMExports();
 ''')
     child_env = os.environ.copy()
-    census = None
-    if os.name == "nt":
-        token = os.urandom(16).hex()
-        census_env = dict(child_env, OPENCLAW_CI_CENSUS_TOKEN=token, OPENCLAW_CI_CENSUS_PARENT_PID=str(os.getpid()))
-        census = subprocess.Popen([sys.executable, "-I", "-S", sys.argv[3]], env=census_env, stdout=subprocess.PIPE, text=True)
-        ready = json.loads(census.stdout.readline())
-        child_env.update(OPENCLAW_CI_CENSUS_TOKEN=token, OPENCLAW_CI_CENSUS_PORT=str(ready["port"]), OPENCLAW_CI_CENSUS_DEADLINE_MS="9999999999999")
-    try:
-        with subprocess.Popen([sys.executable, "-I", "-S", "-c", "import sys; sys.stdin.read()"],
-                              stdin=subprocess.PIPE) as child:
-            retired = dict(pid=child.pid, role="grandchild", attempt=1, instance="retired")
-            current = dict(pid=os.getpid(), role="grandchild", attempt=2, instance="current")
-            if os.name == "nt":
-                read_processes = runpy.run_path(sys.argv[3])["read_processes"]
-                identities = read_processes([child.pid, os.getpid()])
-                assert all(identity["alive"] for identity in identities)
-                retired["creationTime"], current["creationTime"] = (
-                    identity["creationTime"] for identity in identities)
-            child.communicate(timeout=10)
-            (records / "retired.json").write_text(json.dumps(retired))
-            (records / "current.json").write_text(json.dumps(current))
-            (records / "sentinel.json").write_text(json.dumps(
-                dict(current, role="sentinel", attempt=0, instance="sentinel")))
+    with subprocess.Popen([sys.executable, "-I", "-S", "-c", "import sys; sys.stdin.read()"],
+                          stdin=subprocess.PIPE) as child:
+        retired = dict(pid=child.pid, role="grandchild", attempt=1, instance="retired")
+        current = dict(pid=os.getpid(), role="grandchild", attempt=2, instance="current")
+        if os.name == "nt":
+            read_processes = runpy.run_path(sys.argv[3])["read_processes"]
+            identities = read_processes([child.pid, os.getpid()])
+            assert all(identity["alive"] for identity in identities)
+            retired["creationTime"], current["creationTime"] = (
+                identity["creationTime"] for identity in identities)
+        child.communicate(timeout=10)
+        (records / "retired.json").write_text(json.dumps(retired))
+        (records / "current.json").write_text(json.dumps(current))
+        (records / "sentinel.json").write_text(json.dumps(
+            dict(current, role="sentinel", attempt=0, instance="sentinel")))
 
-            def observe():
-                subprocess.run([sys.argv[1], "--require", str(guard), sys.argv[2], "git", str(root), "early-leader-exit",
-                                "-C", str(workspace), "checkout"], cwd=workspace, env=child_env, check=True)
-                observed = json.loads((root / "events.jsonl").read_text().splitlines()[-1])
-                assert observed["sentinelAlive"], "unrelated live sentinel was lost"
-                return observed["alive"]
+        def observe():
+            subprocess.run([sys.argv[1], "--require", str(guard), sys.argv[2], "git", str(root), "early-leader-exit",
+                            "-C", str(workspace), "checkout"], cwd=workspace, env=child_env, check=True)
+            observed = json.loads((root / "events.jsonl").read_text().splitlines()[-1])
+            assert observed["sentinelAlive"], "unrelated live sentinel was lost"
+            return observed["alive"]
 
-            assert observe() == [current], "first boundary must observe real child termination"
-            # Fault-inject PID reuse only after actual death was observed. The fresh
-            # instance at that live PID must remain visible, never hidden by retirement.
-            retired["pid"] = current["pid"]
-            (records / "retired.json").write_text(json.dumps(retired))
-            assert observe() == [current], "a retired instance was revived by a reused PID"
-            if os.name == "nt":
-                # Birth identity rejects reuse even without an intervening dead census.
-                (records / "unobserved.json").write_text(json.dumps(
-                    dict(retired, instance="unobserved")))
-                assert observe() == [current], "an unobserved retired birth was revived by PID reuse"
-    finally:
-        if census and census.poll() is None:
-            try:
-                with socket.create_connection(("127.0.0.1", ready["port"])) as connection:
-                    request = dict(v=1, token=token, op="shutdown")
-                    connection.sendall(json.dumps(request).encode() + b"\n"); connection.shutdown(socket.SHUT_WR); assert json.loads(connection.makefile("rb").readline())["ok"]
-            except Exception:
-                census.kill()
-            assert census.wait(timeout=5) == 0
+        assert observe() == [current], "first boundary must observe real child termination"
+        # Fault-inject PID reuse only after actual death was observed. The fresh
+        # instance at that live PID must remain visible, never hidden by retirement.
+        retired["pid"] = current["pid"]
+        (records / "retired.json").write_text(json.dumps(retired))
+        assert observe() == [current], "a retired instance was revived by a reused PID"
+        if os.name == "nt":
+            # Birth identity rejects reuse even without an intervening dead census.
+            (records / "unobserved.json").write_text(json.dumps(
+                dict(retired, instance="unobserved")))
+            assert observe() == [current], "an unobserved retired birth was revived by PID reuse"
 print("fixture lifetime contract passed")
 `,
-      process.execPath,
-      ciCheckoutFixture,
-      fileURLToPath(new URL("./fixtures/ci-windows-process-census.py", import.meta.url)),
-    ],
-    { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" },
-  );
+        process.execPath,
+        ciCheckoutFixture,
+        fileURLToPath(new URL("./fixtures/ci-windows-process-census.py", import.meta.url)),
+      ],
+      { env, encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" },
+    );
+  const result =
+    process.platform === "win32"
+      ? await withWindowsCensusService((service) => run({ ...process.env, ...service.env }))
+      : run();
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toContain("fixture lifetime contract passed");
 });

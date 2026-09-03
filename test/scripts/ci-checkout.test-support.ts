@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
-import { fork, type ChildProcess } from "node:child_process";
+import { fork, spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import net, { type Socket } from "node:net";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
@@ -49,10 +53,28 @@ const reportSchema = z.object({
 });
 type Report = z.infer<typeof reportSchema>;
 type CloseResult = { code: number | null; signal: NodeJS.Signals | null };
+type CensusService = {
+  env: NodeJS.ProcessEnv;
+  token: string;
+  connect(payload?: Buffer): Promise<Socket>;
+  exchange(payload: Buffer, options?: { end?: boolean; timeoutMs?: number }): Promise<unknown>;
+  request(request: { op: string; [key: string]: unknown }, timeoutMs?: number): Promise<unknown>;
+  waitForExit(timeoutMs?: number): Promise<CloseResult>;
+};
 
 export const ciCheckoutFixture = fileURLToPath(
   new URL("./fixtures/ci-platform-checkout.mjs", import.meta.url),
 );
+const windowsCensusFixture = fileURLToPath(
+  new URL("./fixtures/ci-windows-process-census.py", import.meta.url),
+);
+const within = <T>(promise: Promise<T>, timeoutMs: number, label: string) =>
+  Promise.race([
+    promise,
+    delay(timeoutMs, undefined, { ref: false }).then(() => {
+      throw new Error(`${label} timed out`);
+    }),
+  ]);
 const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8")) as {
   jobs: Record<string, { steps: Step[] }>;
 };
@@ -69,21 +91,22 @@ export function renderGitTestClock(
   source: string,
   options: { realClock?: boolean; realDrain?: boolean } = {},
 ) {
+  let rendered = source;
   // Command deadlines and TERM grace are independent. Real-clock callers keep
   // real grace unless they explicitly opt into the fixture's immediate escalation.
   if (!(options.realDrain ?? options.realClock)) {
-    source = source.replace(
+    rendered = rendered.replace(
       "kill_at = deadline - cleanup_seconds / 2",
       "kill_at = time.monotonic()",
     );
   }
   if (options.realClock) {
-    return source;
+    return rendered;
   }
   // Only a ready, deliberately stalled tree advances the fetch clock. Real
   // process startup and teardown retain their independent wall-clock watchdogs.
   return (
-    source
+    rendered
       .replace(/fetch_timeout_seconds = [^\n]+/u, "fetch_timeout_seconds = 2")
       .replace(
         "def run_git(",
@@ -125,6 +148,96 @@ export function expectCiCheckoutCleanup(report: Report) {
     [],
     "Git descendants survived BEFORE deletion, reuse, consumption, or exit",
   );
+}
+
+export async function withWindowsCensusService<T>(
+  run: (service: CensusService) => T | Promise<T>,
+  options: { parentPid?: number } = {},
+): Promise<T> {
+  assert.equal(process.platform, "win32", "Windows census service requires Windows");
+  const token = randomUUID();
+  const child = spawn("python", ["-I", "-S", windowsCensusFixture], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      OPENCLAW_CI_CENSUS_TOKEN: token,
+      OPENCLAW_CI_CENSUS_PARENT_PID: String(options.parentPid ?? process.pid),
+      OPENCLAW_CI_CENSUS_MAX_LIFETIME_MS: "49000",
+    },
+  });
+  let stderr = "";
+  child.stderr?.on("data", (data) => (stderr += String(data)));
+  const closed = once(child, "close").then(([code, signal]) => ({ code, signal }));
+  const stdout = child.stdout;
+  assert(stdout);
+  const lines = createInterface({ input: stdout });
+  const [line] = await within(once(lines, "line"), 5_000, "Census service readiness");
+  lines.close();
+  const ready = JSON.parse(String(line)) as { v: number; port: number };
+  assert.deepEqual(Object.keys(ready).toSorted(), ["port", "v"]);
+  assert.equal(ready.v, 1);
+  assert(Number.isInteger(ready.port) && ready.port >= 1 && ready.port <= 65_535);
+
+  const connect = async (payload?: Buffer) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port: ready.port });
+    if (payload) {
+      socket.write(payload);
+    }
+    await within(once(socket, "connect"), 2_000, "Census connection");
+    socket.on("error", () => {});
+    return socket;
+  };
+  const exchange = async (
+    payload: Buffer,
+    { end = true, timeoutMs = 2_000 }: { end?: boolean; timeoutMs?: number } = {},
+  ) => {
+    const socket = await connect();
+    const chunks: Buffer[] = [];
+    socket.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    if (end) {
+      socket.end(payload);
+    } else {
+      socket.write(payload);
+    }
+    await within(once(socket, "end"), timeoutMs, "Census request");
+    const data = Buffer.concat(chunks).toString();
+    assert(Buffer.byteLength(data) <= 16_384, "Census response was oversized");
+    const [responseLine, tail, extra] = data.split("\n");
+    assert(responseLine && tail === "" && extra === undefined, "Census response frame was invalid");
+    return JSON.parse(responseLine);
+  };
+  const waitForExit = (timeoutMs = 2_000) => within(closed, timeoutMs, "Census service exit");
+  const service: CensusService = {
+    env: {
+      OPENCLAW_CI_CENSUS_TOKEN: token,
+      OPENCLAW_CI_CENSUS_PORT: String(ready.port),
+      OPENCLAW_CI_CENSUS_DEADLINE_MS: String(Date.now() + 45_000),
+    },
+    token,
+    connect,
+    exchange,
+    request: (request, timeoutMs) =>
+      exchange(Buffer.from(`${JSON.stringify({ v: 1, token, ...request })}\n`), { timeoutMs }),
+    waitForExit,
+  };
+  try {
+    return await run(service);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        await service.request({ op: "shutdown" }, 1_000);
+      } catch {}
+    }
+    let exit;
+    try {
+      exit = await waitForExit();
+    } catch {
+      child.kill("SIGKILL");
+      exit = await closed;
+    }
+    assert.deepEqual(exit, { code: 0, signal: null }, stderr);
+    assert.equal(stderr, "");
+  }
 }
 
 export async function withCiCheckoutFixture<T>(
