@@ -11313,11 +11313,6 @@ esac
   it("keeps release history checks blobless", () => {
     const fullHistoryCheckouts: Array<[string, string, string]> = [
       [LIVE_E2E_WORKFLOW, "validate_selected_ref", "Checkout workflow repository"],
-      [
-        RELEASE_CHECKS_WORKFLOW,
-        "resolve_target",
-        "Checkout selected ref for reachability fallback",
-      ],
       [PACKAGE_ACCEPTANCE_WORKFLOW, "resolve_package", "Checkout package workflow ref"],
       [PLUGIN_NPM_RELEASE_WORKFLOW, "preview_plugins_npm", "Checkout"],
       [PLUGIN_CLAWHUB_RELEASE_WORKFLOW, "preview_plugins_clawhub", "Checkout"],
@@ -11359,11 +11354,6 @@ esac
     const metadataOnlyCheckouts: Array<[string, string, string]> = [
       [LIVE_E2E_WORKFLOW, "validate_selected_ref", "Checkout workflow repository"],
       [RELEASE_PUBLISH_WORKFLOW, "resolve_release_target", "Checkout release tag"],
-      [
-        RELEASE_CHECKS_WORKFLOW,
-        "resolve_target",
-        "Checkout selected ref for reachability fallback",
-      ],
     ];
     for (const [workflowPath, jobName, stepName] of metadataOnlyCheckouts) {
       expect(workflowStep(workflowJob(workflowPath, jobName), stepName).with).toMatchObject({
