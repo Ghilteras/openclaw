@@ -75,6 +75,7 @@ export function normalizeRegisteredChannelPlugin(params: {
   const chatTypes = params.plugin.capabilities?.chatTypes;
   if (
     !Array.isArray(chatTypes) ||
+    chatTypes.length === 0 ||
     chatTypes.some((chatType) => !CHANNEL_CAPABILITY_CHAT_TYPES.has(chatType))
   ) {
     params.pushDiagnostic({
