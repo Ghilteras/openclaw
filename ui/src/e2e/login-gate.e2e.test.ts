@@ -8,6 +8,7 @@ import {
   captureControlUiE2eFailureDiagnostics,
   controlUiSessionUrl,
   installMockGateway,
+  waitForControlUiRoute,
 } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
@@ -165,9 +166,10 @@ suite.define(() => {
       },
       retryable: false,
     };
+    const target = new URL("chat/main", suite.server.baseUrl);
 
     try {
-      await page.goto(suite.server.baseUrl);
+      await page.goto(target.href);
       await gateway.waitForRequest("connect");
       await gateway.rejectDeferred("connect", mismatch);
       await page.waitForFunction(
@@ -229,6 +231,10 @@ suite.define(() => {
       await page.locator("openclaw-app-shell").waitFor();
       expect(documentRequests).toEqual([false, true, true, true]);
       expect(await page.getByRole("button", { name: /Server updated/u }).count()).toBe(0);
+      await expect
+        .poll(() => page.locator("openclaw-router-outlet").getAttribute("inert"))
+        .toBeNull();
+      await waitForControlUiRoute(page, { pathname: "/chat/main", routeId: "chat" });
       expect(
         await page.evaluate(() =>
           sessionStorage.getItem("openclaw.control-ui-e2e.build-rejection-loads"),
