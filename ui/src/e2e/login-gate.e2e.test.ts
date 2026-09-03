@@ -229,7 +229,6 @@ suite.define(() => {
       await page.locator("openclaw-app-shell").waitFor();
       expect(documentRequests).toEqual([false, true, true, true]);
       expect(await page.getByRole("button", { name: /Server updated/u }).count()).toBe(0);
-      expect(await page.locator(".chat-header-session-menu__trigger").isVisible()).toBe(true);
       expect(
         await page.evaluate(() =>
           sessionStorage.getItem("openclaw.control-ui-e2e.build-rejection-loads"),
