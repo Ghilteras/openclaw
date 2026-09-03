@@ -8,6 +8,7 @@ import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-ar
 import { takeControlUiViewportScreenshot } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import {
   captureControlUiE2eFailureDiagnostics,
+  controlUiBundledGatewayUrl,
   controlUiSessionUrl,
   installMockGateway,
   waitForControlUiRoute,
@@ -21,14 +22,54 @@ const suite = createControlUiE2eSuite({
     `Playwright Chromium is not installed or cannot start at ${executablePath}. Run \`pnpm --dir ui exec playwright install --with-deps chromium\`, or set OPENCLAW_UI_E2E_ALLOW_MISSING_CHROMIUM=1 only when intentionally skipping this lane.`,
 });
 let RECOVERY_ARTIFACT_DIR: string;
+const RECORDED_GATEWAY_REQUESTS_KEY = "openclaw.control-ui-e2e.phone-recovery-requests";
+
+type ObservedAssetLink = {
+  elementId: string | null;
+  pathname: string | null;
+  url: string | null;
+  version: string | null;
+};
+
+type InstalledArtifactObservation = {
+  bodyDisplay: string;
+  buildId: string | null;
+  font: ObservedAssetLink;
+  icon: ObservedAssetLink;
+  theme: ObservedAssetLink;
+};
+
+type ObservedGatewayRequest = {
+  documentOrdinal: number;
+  method: "chat.send" | "connect";
+  requestId: string;
+};
 
 type PhoneRecoveryObservation = {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  proofRevision: "base" | "head" | "local";
   serviceWorker: "normal" | "blocked";
   targetPath: string;
   scenarioCompleted: boolean;
-  documentRecoveryMarkers: boolean[];
-  documentResponses: Array<{ cacheControl: string | undefined; fromWorker: boolean }>;
+  documentRequests: Array<{
+    method: string;
+    pathname: string;
+    recoveryMarker: boolean;
+    url: string;
+  }>;
+  documentResponses: Array<{
+    cacheControl: string | undefined;
+    fromWorker: boolean;
+    requestUrl: string;
+    status: number;
+  }>;
+  expectedRevisionSha: string | null;
+  gatewayRequests: ObservedGatewayRequest[];
+  installedArtifacts: Array<
+    InstalledArtifactObservation & {
+      documentOrdinal: number;
+    }
+  >;
   reloadRequired?: {
     actionCount: number;
     access: {
@@ -44,29 +85,71 @@ type PhoneRecoveryObservation = {
   };
   recovered?: {
     actionCount: number;
-    artifactIdentity: {
-      bodyDisplay: string;
-      buildId: string | null;
-      font: string | null | undefined;
-      icon: string | null | undefined;
-      theme: string | null | undefined;
-    };
     routePath: string;
   };
   assignment?: {
-    chatSendCount: number;
+    modelWakeCount: number;
     visible: boolean;
   };
   final?: {
-    buildRejectionLoads: string | null;
-    chatSendCount: number;
+    appShellCount: number;
+    connectRequestCount: number;
+    loginGateCount: number;
     mainInert: boolean | null;
+    modelWakeCount: number;
     recoveryActionCount: number;
+    reloadCount: number | null;
     routePath: string;
     routerOutletInert: boolean | null;
     terminalInvocationCount: number;
   };
 };
+
+function phoneProofRevision(): PhoneRecoveryObservation["proofRevision"] {
+  const revision = process.env.OPENCLAW_PHONE_PROOF_REVISION;
+  return revision === "base" || revision === "head" ? revision : "local";
+}
+
+function phoneProofExpectedSha(): string | null {
+  const expectedSha = process.env.OPENCLAW_PHONE_PROOF_EXPECTED_SHA?.trim() ?? "";
+  if (!expectedSha) {
+    return null;
+  }
+  if (!/^[a-f0-9]{40}$/u.test(expectedSha)) {
+    throw new Error("OPENCLAW_PHONE_PROOF_EXPECTED_SHA must be a full lowercase commit SHA");
+  }
+  return expectedSha;
+}
+
+async function observeInstalledArtifact(page: Page): Promise<InstalledArtifactObservation> {
+  return page.evaluate(async () => {
+    await document.fonts.ready;
+    const observeLink = (selector: string) => {
+      const link = document.querySelector<HTMLLinkElement>(selector);
+      const url = link ? new URL(link.href) : null;
+      return {
+        elementId: link?.id || null,
+        pathname: url?.pathname ?? null,
+        url: url?.href ?? null,
+        version: url?.searchParams.get("v") ?? null,
+      };
+    };
+    return {
+      bodyDisplay: getComputedStyle(document.body).display,
+      buildId: document.documentElement.getAttribute("data-openclaw-control-ui-build-id"),
+      font: observeLink('link[id^="openclaw-typeface-"]'),
+      icon: observeLink('link[rel="icon"][type="image/svg+xml"]'),
+      theme: observeLink("#openclaw-theme-palette-absolutely"),
+    };
+  });
+}
+
+async function observeGatewayRequests(page: Page): Promise<ObservedGatewayRequest[]> {
+  return (await page.evaluate((key) => {
+    const value = JSON.parse(sessionStorage.getItem(key) ?? "[]") as unknown;
+    return Array.isArray(value) ? value : [];
+  }, RECORDED_GATEWAY_REQUESTS_KEY)) as ObservedGatewayRequest[];
+}
 
 beforeEach(() => {
   RECOVERY_ARTIFACT_DIR = createControlUiE2eArtifactDir("zombie-reload");
@@ -199,12 +282,17 @@ suite.define(() => {
         viewport: { height: 844, width: 390 },
       });
       const page = await context.newPage();
-      const documentRequests: boolean[] = [];
-      const documentResponses: Array<{ cacheControl: string | undefined; fromWorker: boolean }> =
-        [];
+      const documentRequests: PhoneRecoveryObservation["documentRequests"] = [];
+      const documentResponses: PhoneRecoveryObservation["documentResponses"] = [];
       page.on("request", (request) => {
         if (request.resourceType() === "document") {
-          documentRequests.push(new URL(request.url()).searchParams.has("openclaw_mount_recovery"));
+          const url = new URL(request.url());
+          documentRequests.push({
+            method: request.method(),
+            pathname: url.pathname,
+            recoveryMarker: url.searchParams.has("openclaw_mount_recovery"),
+            url: url.href,
+          });
         }
       });
       page.on("response", (response) => {
@@ -212,14 +300,74 @@ suite.define(() => {
           documentResponses.push({
             cacheControl: response.headers()["cache-control"],
             fromWorker: response.fromServiceWorker(),
+            requestUrl: response.request().url(),
+            status: response.status(),
           });
         }
       });
-      await page.addInitScript(() => {
-        const key = "openclaw.control-ui-e2e.build-rejection-loads";
-        const count = Number.parseInt(sessionStorage.getItem(key) ?? "0", 10);
-        sessionStorage.setItem(key, String(count + 1));
-      });
+      await page.addInitScript(
+        ({ gatewayUrl, requestLedgerKey }) => {
+          const key = "openclaw.control-ui-e2e.build-rejection-loads";
+          const count = Number.parseInt(sessionStorage.getItem(key) ?? "0", 10);
+          const documentOrdinal = count + 1;
+          sessionStorage.setItem(key, String(documentOrdinal));
+          localStorage.setItem(
+            `openclaw.control.settings.v1:${gatewayUrl}`,
+            JSON.stringify({ gatewayUrl, theme: "absolutely", themeMode: "dark" }),
+          );
+          const instrumentedPrototypes = new WeakSet<object>();
+          const instrument = (constructor: typeof WebSocket) => {
+            const prototype = constructor.prototype;
+            if (instrumentedPrototypes.has(prototype)) {
+              return constructor;
+            }
+            instrumentedPrototypes.add(prototype);
+            const originalSend = prototype.send;
+            prototype.send = function (data) {
+              if (typeof data === "string") {
+                try {
+                  const frame = JSON.parse(data) as {
+                    id?: unknown;
+                    method?: unknown;
+                    type?: unknown;
+                  };
+                  if (
+                    frame.type === "req" &&
+                    typeof frame.id === "string" &&
+                    (frame.method === "connect" || frame.method === "chat.send")
+                  ) {
+                    const existing = JSON.parse(
+                      sessionStorage.getItem(requestLedgerKey) ?? "[]",
+                    ) as ObservedGatewayRequest[];
+                    existing.push({
+                      documentOrdinal,
+                      method: frame.method,
+                      requestId: frame.id,
+                    });
+                    sessionStorage.setItem(requestLedgerKey, JSON.stringify(existing));
+                  }
+                } catch {
+                  // Non-JSON WebSocket traffic is outside this mock Gateway proof.
+                }
+              }
+              return Reflect.apply(originalSend, this, [data]);
+            };
+            return constructor;
+          };
+          let currentWebSocket = instrument(window.WebSocket);
+          Object.defineProperty(window, "WebSocket", {
+            configurable: true,
+            get: () => currentWebSocket,
+            set: (nextConstructor: typeof WebSocket) => {
+              currentWebSocket = instrument(nextConstructor);
+            },
+          });
+        },
+        {
+          gatewayUrl: controlUiBundledGatewayUrl(suite.server.baseUrl),
+          requestLedgerKey: RECORDED_GATEWAY_REQUESTS_KEY,
+        },
+      );
       const config = { ui: { prefs: { theme: "absolutely", themeMode: "dark" } } };
       const gateway = await installMockGateway(page, {
         deferredMethods: ["connect"],
@@ -233,6 +381,34 @@ suite.define(() => {
           },
         },
       });
+      const expectedRevisionSha = phoneProofExpectedSha();
+      const installedArtifacts: PhoneRecoveryObservation["installedArtifacts"] = [];
+      const observeCurrentArtifact = async () => {
+        const documentOrdinal = documentRequests.length;
+        const installedArtifact = await observeInstalledArtifact(page);
+        const observation = { documentOrdinal, ...installedArtifact };
+        const existing = installedArtifacts.findIndex(
+          (item) => item.documentOrdinal === documentOrdinal,
+        );
+        if (existing >= 0) {
+          installedArtifacts[existing] = observation;
+        } else {
+          installedArtifacts.push(observation);
+        }
+        if (
+          expectedRevisionSha &&
+          !installedArtifact.buildId?.includes(`-${expectedRevisionSha.slice(0, 12)}-`)
+        ) {
+          throw new Error(
+            `document ${documentOrdinal} loaded ${installedArtifact.buildId ?? "no build"}, expected ${expectedRevisionSha}`,
+          );
+        }
+        return installedArtifact;
+      };
+      const waitForConnect = async () => {
+        await gateway.waitForRequest("connect");
+        await observeCurrentArtifact();
+      };
       const mismatch = {
         code: "UNAVAILABLE",
         message: "Control UI updated; reload this page to continue",
@@ -246,17 +422,21 @@ suite.define(() => {
       const target = new URL("chat/main", suite.server.baseUrl);
 
       const observation: PhoneRecoveryObservation = {
-        schemaVersion: 1,
+        schemaVersion: 2,
+        proofRevision: phoneProofRevision(),
         serviceWorker,
         targetPath: target.pathname,
         scenarioCompleted: false,
-        documentRecoveryMarkers: documentRequests,
+        documentRequests,
         documentResponses,
+        expectedRevisionSha,
+        gatewayRequests: [],
+        installedArtifacts,
       };
 
       try {
         await page.goto(target.href);
-        await gateway.waitForRequest("connect");
+        await waitForConnect();
         await gateway.rejectDeferred("connect", mismatch);
         await page.waitForFunction(
           () =>
@@ -265,7 +445,7 @@ suite.define(() => {
             sessionStorage.getItem("openclaw.control-ui-e2e.build-rejection-loads") === "2",
         );
 
-        await gateway.waitForRequest("connect");
+        await waitForConnect();
         await gateway.rejectDeferred("connect", mismatch);
         const recovery = page.getByRole("button", { name: /Server updated/u });
         await recovery.waitFor({ timeout: 10_000 });
@@ -316,16 +496,25 @@ suite.define(() => {
 
         await recovery.tap();
         await expect.poll(() => documentRequests.length).toBe(3);
-        expect(documentRequests).toEqual([false, true, true]);
+        expect(documentRequests.map((request) => request.recoveryMarker)).toEqual([
+          false,
+          true,
+          true,
+        ]);
 
-        await gateway.waitForRequest("connect");
+        await waitForConnect();
         await gateway.rejectDeferred("connect", mismatch);
         await expect.poll(() => documentRequests.length).toBe(4);
-        await gateway.waitForRequest("connect");
+        await waitForConnect();
         await gateway.resolveDeferred("connect");
 
         await page.locator("openclaw-app-shell").waitFor();
-        expect(documentRequests).toEqual([false, true, true, true]);
+        expect(documentRequests.map((request) => request.recoveryMarker)).toEqual([
+          false,
+          true,
+          true,
+          true,
+        ]);
         expect(await page.getByRole("button", { name: /Server updated/u }).count()).toBe(0);
         await expect
           .poll(() => page.locator("openclaw-router-outlet").getAttribute("inert"))
@@ -337,37 +526,35 @@ suite.define(() => {
           ),
         ).toBe("4");
         await expect.poll(() => documentResponses.length).toBe(4);
-        expect(documentResponses).toEqual(
-          Array.from({ length: 4 }, () => ({ cacheControl: "no-cache", fromWorker: false })),
+        expect(
+          documentResponses.map(({ cacheControl, fromWorker, status }) => ({
+            cacheControl,
+            fromWorker,
+            status,
+          })),
+        ).toEqual(
+          Array.from({ length: 4 }, () => ({
+            cacheControl: "no-cache",
+            fromWorker: false,
+            status: 200,
+          })),
         );
-        const artifactIdentity = await page.evaluate(async () => {
-          await document.fonts.ready;
-          const buildId = document.documentElement.getAttribute(
-            "data-openclaw-control-ui-build-id",
-          );
-          const versionedUrl = (selector: string) => {
-            const link = document.querySelector<HTMLLinkElement>(selector);
-            return link ? new URL(link.href) : null;
-          };
-          return {
-            buildId,
-            icon: versionedUrl('link[rel="icon"][type="image/svg+xml"]')?.searchParams.get("v"),
-            font: versionedUrl('link[id^="openclaw-typeface-"]')?.searchParams.get("v"),
-            theme: versionedUrl("#openclaw-theme-palette-absolutely")?.searchParams.get("v"),
-            bodyDisplay: getComputedStyle(document.body).display,
-          };
-        });
-        expect(artifactIdentity.buildId).not.toBeNull();
-        expect(artifactIdentity).toEqual({
-          buildId: artifactIdentity.buildId,
-          icon: artifactIdentity.buildId,
-          font: artifactIdentity.buildId,
-          theme: artifactIdentity.buildId,
-          bodyDisplay: "block",
-        });
+        const installedArtifact = await observeCurrentArtifact();
+        expect(installedArtifact.buildId).not.toBeNull();
+        expect(installedArtifact.bodyDisplay).toBe("block");
+        expect(installedArtifact.icon.pathname).toBe("/favicon.svg");
+        expect(installedArtifact.font.pathname).toBe("/fonts/space-grotesk.css");
+        expect(installedArtifact.theme.pathname).toBe("/themes/absolutely.css");
+        for (const asset of [
+          installedArtifact.icon,
+          installedArtifact.font,
+          installedArtifact.theme,
+        ]) {
+          expect(asset.url).not.toBeNull();
+          expect(asset.version).toBe(installedArtifact.buildId);
+        }
         observation.recovered = {
           actionCount: await page.getByRole("button", { name: /Server updated/u }).count(),
-          artifactIdentity,
           routePath: new URL(page.url()).pathname,
         };
         const actions = page.getByRole("button", { name: "Actions for Main" });
@@ -378,10 +565,19 @@ suite.define(() => {
         await actions.tap();
         const assignment = page.getByRole("menuitem", { name: "Assign to…", exact: true });
         await assignment.waitFor();
-        const chatSendCount = (await gateway.getRequests("chat.send")).length;
-        expect(chatSendCount).toBe(0);
+        const observedGatewayRequests = await observeGatewayRequests(page);
+        const connectRequests = observedGatewayRequests.filter(
+          (request) => request.method === "connect",
+        );
+        expect(connectRequests).toHaveLength(4);
+        expect(connectRequests.map((request) => request.documentOrdinal)).toEqual([1, 2, 3, 4]);
+        expect(new Set(connectRequests.map((request) => request.requestId)).size).toBe(4);
+        const modelWakeCount = observedGatewayRequests.filter(
+          (request) => request.method === "chat.send",
+        ).length;
+        expect(modelWakeCount).toBe(0);
         observation.assignment = {
-          chatSendCount,
+          modelWakeCount,
           visible: await assignment.isVisible(),
         };
         await writeFile(
@@ -391,21 +587,45 @@ suite.define(() => {
         observation.scenarioCompleted = true;
       } finally {
         if (!page.isClosed()) {
+          await observeCurrentArtifact().catch(() => undefined);
+          observation.gatewayRequests = await observeGatewayRequests(page).catch(() => []);
+          const connectRequestCount = observation.gatewayRequests.filter(
+            (request) => request.method === "connect",
+          ).length;
+          const modelWakeCount = observation.gatewayRequests.filter(
+            (request) => request.method === "chat.send",
+          ).length;
           observation.final = {
-            buildRejectionLoads: await page
-              .evaluate(() =>
-                sessionStorage.getItem("openclaw.control-ui-e2e.build-rejection-loads"),
-              )
-              .catch(() => null),
-            chatSendCount: (await gateway.getRequests("chat.send")).length,
+            appShellCount: await page
+              .locator("openclaw-app-shell")
+              .count()
+              .catch(() => 0),
+            connectRequestCount,
+            loginGateCount: await page
+              .locator("openclaw-login-gate")
+              .count()
+              .catch(() => 0),
             mainInert: await page
               .locator("#control-ui-main")
               .evaluate((element) => element.hasAttribute("inert"))
               .catch(() => null),
+            modelWakeCount,
             recoveryActionCount: await page
               .getByRole("button", { name: /Server updated/u })
               .count()
               .catch(() => 0),
+            reloadCount: await page
+              .evaluate(() => {
+                const value = sessionStorage.getItem(
+                  "openclaw.control-ui-e2e.build-rejection-loads",
+                );
+                if (value === null) {
+                  return null;
+                }
+                const count = Number.parseInt(value, 10);
+                return Number.isSafeInteger(count) ? Math.max(0, count - 1) : null;
+              })
+              .catch(() => null),
             routePath: new URL(page.url()).pathname,
             routerOutletInert: await page
               .locator("openclaw-router-outlet")
