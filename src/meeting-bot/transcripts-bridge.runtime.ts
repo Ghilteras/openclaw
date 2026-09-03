@@ -11,7 +11,7 @@ import type {
 } from "../transcripts/provider-types.js";
 import { sanitizeTranscriptSourceLocator } from "../transcripts/source-locator.js";
 import { createTranscriptsStore } from "../transcripts/store.js";
-import { summarizeTranscripts } from "../transcripts/summary.js";
+import { persistTranscriptSummary } from "../transcripts/summary-persistence.js";
 import { MeetingTranscriptDeliveryError } from "./session-transcript-store.js";
 import type { MeetingSessionRecord, MeetingTranscriptLine } from "./session-types.js";
 import type {
@@ -316,13 +316,12 @@ export function createMeetingDurableTranscriptBridge<
         try {
           await tasks.enqueue(session.id, async () => {
             await store.writeSession(stopped);
-            const utterances = await store.readUtterancesForSession(stopped, {
-              maxUtterances: config.maxUtterances,
+            await persistTranscriptSummary({
+              config,
+              cfg: params.options.cfg,
+              store,
+              session: stopped,
             });
-            await store.writeSummary(
-              summarizeTranscripts({ session: stopped, utterances }),
-              stopped,
-            );
           });
         } catch (error) {
           params.logger.warn(

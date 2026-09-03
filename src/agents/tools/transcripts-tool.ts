@@ -17,15 +17,17 @@ import {
   TranscriptsSummaryChangedError,
   type TranscriptsStore,
 } from "../../transcripts/store.js";
+import {
+  persistTranscriptSummary,
+  readTranscriptSummary,
+} from "../../transcripts/summary-persistence.js";
 import type { AnyAgentTool } from "./common.js";
 import { listPastTranscripts, showPastTranscript } from "./transcripts-tool-read.js";
 import {
   activeSessions,
   authorizeTranscriptSource,
   createTranscriptSessionId,
-  persistTranscriptSummary,
   readTranscriptStringParam,
-  readTranscriptSummary,
   resolveTranscriptSourceOwnership,
   resolveSourceProvider,
   sourceFromParams,

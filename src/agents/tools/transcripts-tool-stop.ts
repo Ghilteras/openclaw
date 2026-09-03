@@ -1,11 +1,11 @@
 import { resolveTranscriptsConfig } from "../../transcripts/config.js";
 import type { TranscriptSessionDescriptor } from "../../transcripts/provider-types.js";
 import { transcriptSessionSelector, type TranscriptsStore } from "../../transcripts/store.js";
+import { persistTranscriptSummary } from "../../transcripts/summary-persistence.js";
 import {
   activeSessions,
   finalizeTranscriptCapture,
   isTranscriptSessionStarting,
-  persistTranscriptSummary,
   readTranscriptStringParam,
   resolveSourceProvider,
   stopPendingTranscriptCapture,

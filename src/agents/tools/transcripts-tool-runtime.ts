@@ -13,11 +13,9 @@ import type {
 } from "../../transcripts/provider-types.js";
 import { sanitizeTranscriptSourceLocator } from "../../transcripts/source-locator.js";
 import { transcriptSessionSelector } from "../../transcripts/store-artifacts.js";
-import { TranscriptsSummaryChangedError, type TranscriptsStore } from "../../transcripts/store.js";
-import { summarizeTranscriptsWithModel } from "../../transcripts/summary-model.js";
-import { summarizeTranscripts } from "../../transcripts/summary.js";
+import type { TranscriptsStore } from "../../transcripts/store.js";
+import { persistTranscriptSummary } from "../../transcripts/summary-persistence.js";
 import { truncateUtf16Safe } from "../../utils.js";
-import { resolveDefaultAgentId } from "../agent-scope-config.js";
 
 const ACCOUNT_ID_OUTPUT_MAX_CHARS = 64;
 
@@ -66,45 +64,6 @@ const startingSessionIds = new Set<string>();
 
 export function isTranscriptSessionStarting(sessionId: string): boolean {
   return startingSessionIds.has(sessionId);
-}
-
-export async function readTranscriptSummary(params: {
-  config: ReturnType<typeof resolveTranscriptsConfig>;
-  cfg?: OpenClawConfig;
-  store: TranscriptsStore;
-  session: TranscriptSessionDescriptor;
-}) {
-  const utterances = await params.store.readUtterancesForSession(params.session, {
-    maxUtterances: params.config.maxUtterances,
-  });
-  const agentId = params.session.metadata?.agentId;
-  if (params.cfg) {
-    const modeled = await summarizeTranscriptsWithModel({
-      cfg: params.cfg,
-      agentId:
-        typeof agentId === "string" && agentId.trim() ? agentId : resolveDefaultAgentId(params.cfg),
-      session: params.session,
-      utterances,
-    });
-    if (modeled) {
-      return modeled;
-    }
-  }
-  // Heuristic notes are the deterministic base; model inference is an enhancement
-  // so an unavailable model never loses the captured meeting notes.
-  return summarizeTranscripts({ session: params.session, utterances });
-}
-
-export async function persistTranscriptSummary(
-  params: Parameters<typeof readTranscriptSummary>[0],
-) {
-  const revision = params.store.readSummaryInputRevision(params.session);
-  if (revision === undefined) {
-    throw new TranscriptsSummaryChangedError();
-  }
-  const summary = await readTranscriptSummary(params);
-  const intendedSummaryPath = await params.store.writeSummary(summary, params.session, revision);
-  return { summary, intendedSummaryPath };
 }
 
 // Retain the exact owner on failure so stop can retry persistence without touching
