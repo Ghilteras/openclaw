@@ -155,7 +155,7 @@ export async function runSkillCollectionReviewForAgent(params: {
             ),
           assertCurrent: () => assertCurrent(lease),
         });
-        if (turnResult.admissionDisposition === "rejected") {
+        if (turnResult.status === "error") {
           const error =
             turnResult.error ??
             `Skill collection review turn ended with status: ${turnResult.status}`;
