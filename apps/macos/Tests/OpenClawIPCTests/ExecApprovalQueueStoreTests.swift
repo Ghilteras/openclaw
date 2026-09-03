@@ -89,10 +89,7 @@ private final class ApprovalGatewayFixture: @unchecked Sendable {
     let session: GatewayTestWebSocketSession
     let gateway: GatewayConnection
 
-    init(
-        initialRequests: @escaping @Sendable () -> [ApprovalFixtureRequest] = { [] },
-        listResponseDelay: Duration = .zero)
-    {
+    init(initialRequests: @escaping @Sendable () -> [ApprovalFixtureRequest] = { [] }) {
         let requestLog = ApprovalGatewayRequestLog(initialRequests: initialRequests)
         self.requestLog = requestLog
         self.session = GatewayTestWebSocketSession(taskFactory: {
@@ -110,9 +107,6 @@ private final class ApprovalGatewayFixture: @unchecked Sendable {
                             details: .init(["reason": reason])))
                     try socket.emitReceiveSuccess(.data(JSONEncoder().encode(response)))
                     return
-                }
-                if request.method == "exec.approval.list", listResponseDelay > .zero {
-                    try await Task.sleep(for: listResponseDelay)
                 }
                 let payload = if request.method == "exec.approval.list" {
                     await requestLog.listResponse()
@@ -133,6 +127,10 @@ private final class ApprovalGatewayFixture: @unchecked Sendable {
         let sequence = await self.requestLog.nextEventSequence()
         let event = #"{"type":"event","event":"\#(name)","seq":\#(sequence),"payload":\#(payload)}"#
         socket.emitReceiveSuccessOnce(.data(Data(event.utf8)))
+    }
+
+    func waitUntilReady() async throws {
+        _ = try await self.readySocket()
     }
 
     private func readySocket() async throws -> GatewayTestWebSocketTask {
@@ -170,11 +168,10 @@ private final class ApprovalGatewayFixture: @unchecked Sendable {
 @Suite(.serialized)
 @MainActor
 struct ExecApprovalQueueStoreTests {
-    @Test func `refresh seeds direct gateway list and excludes expired approvals`() async {
+    @Test func `refresh seeds and sorts the direct gateway list`() async {
         let fixture = ApprovalGatewayFixture(initialRequests: {
             [
                 ApprovalFixtureRequest(id: "later", sessionKey: "work", createdOffsetMs: 200),
-                ApprovalFixtureRequest(id: "expired", expiresOffsetMs: -100),
                 ApprovalFixtureRequest(id: "earlier", createdOffsetMs: -200),
             ]
         })
@@ -186,6 +183,19 @@ struct ExecApprovalQueueStoreTests {
         #expect(store.requests.map(\.id) == ["earlier", "later"])
         #expect(store.requests.last?.request.sessionKey == "work")
         #expect(store.requests.first?.allowedDecisions == [.allowOnce, .deny])
+        #expect(await fixture.requestLog.requests(method: "exec.approval.list").count == 1)
+    }
+
+    @Test func `refresh excludes approvals that are already expired`() async {
+        let fixture = ApprovalGatewayFixture(initialRequests: {
+            [ApprovalFixtureRequest(id: "expired", expiresOffsetMs: -100)]
+        })
+        let store = ExecApprovalQueueStore(gateway: fixture.gateway)
+        defer { store.stop() }
+
+        await store.refresh()
+
+        #expect(store.requests.isEmpty)
         #expect(await fixture.requestLog.requests(method: "exec.approval.list").count == 1)
     }
 
@@ -234,17 +244,20 @@ struct ExecApprovalQueueStoreTests {
         try #require(await self.waitUntil { store.requests.isEmpty })
     }
 
-    @Test(arguments: [0, 600])
-    func `expired requests disappear without a gateway resolution event`(listResponseDelayMs: Int) async throws {
-        let fixture = ApprovalGatewayFixture(initialRequests: {
-            [ApprovalFixtureRequest(id: "short-lived", expiresOffsetMs: 500)]
-        }, listResponseDelay: .milliseconds(listResponseDelayMs))
+    @Test func `live requests disappear at expiry without a gateway resolution event`() async throws {
+        let fixture = ApprovalGatewayFixture()
         let store = ExecApprovalQueueStore(gateway: fixture.gateway)
         defer { store.stop() }
-
+        store.start()
         await store.refresh()
-        #expect(store.requests.map(\.id) == ["short-lived"])
+
+        try await fixture.waitUntilReady()
+        let request = ApprovalFixtureRequest(id: "short-lived", expiresOffsetMs: 500)
+        try await fixture.sendEvent(name: "exec.approval.requested", payload: request.json)
+
+        try #require(await self.waitUntil { store.requests.map(\.id) == ["short-lived"] })
         try #require(await self.waitUntil { store.requests.isEmpty })
+        #expect(await fixture.requestLog.requests(method: "exec.approval.resolve").isEmpty)
     }
 
     @Test func `expiry keeps its deadline when the main actor delays task startup`() async {
