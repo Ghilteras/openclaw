@@ -27,7 +27,9 @@ export function createDraftTitleFixture(
         ? request(method)
         : method === "worktrees.branches"
           ? { repositoryStatus: "git", branches: [], defaultBranch: "main" }
-          : {},
+          : method === "models.list"
+            ? { models: [] }
+            : {},
     takePreparedTitle: () => titles.takePreparedTitle(),
   });
   const titles = new NewSessionTitleController(new TestReactiveControllerHost(), () => ({

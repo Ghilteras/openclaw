@@ -4,7 +4,7 @@ import type { ModelsProbeResult } from "../../api/types.ts";
 import type { ApplicationContext, ApplicationGatewaySnapshot } from "../../app/context.ts";
 import { createApplicationContextProvider } from "../../test-helpers/application-context.ts";
 import type { DefaultModelSelection, ModelProviderLogoutTarget } from "./data.ts";
-import type { ModelProvidersData } from "./load.ts";
+import { EMPTY_MODEL_PROVIDERS_DATA, type ModelProvidersData } from "./load.ts";
 import type { ModelBehaviorConfig } from "./page-mutations.ts";
 import type { ModelProvidersRouteData } from "./route.ts";
 import "./model-providers-page.ts";
@@ -243,12 +243,27 @@ export function focusDocument(): void {
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
 }
 
+export function createEmptyModelProvidersRouteData(
+  context: ApplicationContext,
+): ModelProvidersRouteData {
+  return {
+    view: "manage",
+    firstRun: false,
+    gateway: context.gateway,
+    gatewaySnapshot: { ...context.gateway.snapshot, phase: "stopped", client: null },
+    data: EMPTY_MODEL_PROVIDERS_DATA,
+    client: null,
+    agentId: context.agentSelection.state.selectedId,
+  };
+}
+
 export function appendPage(context: ApplicationContext) {
   const provider = createApplicationContextProvider(context);
   const page = document.createElement(
     "openclaw-model-providers-page",
   ) as ModelProvidersPageTestElement;
   page.context = context;
+  page.routeData = createEmptyModelProvidersRouteData(context);
   provider.append(page);
   document.body.append(provider);
   return page;

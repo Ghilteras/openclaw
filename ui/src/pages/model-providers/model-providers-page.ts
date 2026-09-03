@@ -357,7 +357,9 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
   private finishCoreRefresh(): void {
     if (this.revalidatePending) {
       this.revalidatePending = false;
-      void this.refresh("revalidate");
+      // Lit Task settles its status after onComplete; a synchronous re-run here would abort
+      // the request that just finished.
+      queueMicrotask(() => void this.refresh("revalidate"));
       return;
     }
     // A focus request can arrive while the core read is active. Event-driven

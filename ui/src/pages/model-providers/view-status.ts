@@ -40,11 +40,11 @@ function renderAuthStatus(card: ModelProviderCard) {
 }
 
 const PROVIDER_STATUS_BADGES = {
-  denied: { kind: "danger", label: "modelProviders.status.denied" },
-  ready: { kind: "ok", label: "modelProviders.status.ready" },
-  "not-set-up": { kind: "muted", label: "modelProviders.status.notSetUp" },
-  available: { kind: "muted", label: "modelProviders.status.ok" },
-  configured: { kind: "muted", label: "modelProviders.status.configured" },
+  denied: { kind: "danger", labelKey: "modelProviders.status.denied" },
+  ready: { kind: "ok", labelKey: "modelProviders.status.ready" },
+  "not-set-up": { kind: "muted", labelKey: "modelProviders.status.notSetUp" },
+  available: { kind: "muted", labelKey: "modelProviders.status.ok" },
+  configured: { kind: "muted", labelKey: "modelProviders.status.configured" },
 } as const;
 
 export function renderProviderStatus(card: ModelProviderCard) {
@@ -58,5 +58,5 @@ export function renderProviderStatus(card: ModelProviderCard) {
     >`;
   }
   const badge = PROVIDER_STATUS_BADGES[state.status];
-  return renderSettingsStatus({ kind: badge.kind, label: t(badge.label) });
+  return renderSettingsStatus({ kind: badge.kind, label: t(badge.labelKey) });
 }

@@ -225,7 +225,10 @@ describe("bootstrapApplication", () => {
     connectedListener(gateway.snapshot);
     expect(request).not.toHaveBeenCalled();
     expect(replaceRoute).toHaveBeenCalledOnce();
-    expect(replaceRoute).toHaveBeenCalledWith("model-setup", { search: "?firstRun=1" });
+    expect(replaceRoute).toHaveBeenCalledWith("model-providers", {
+      hash: "",
+      search: "?view=connect&firstRun=1",
+    });
   });
 
   it("does not replace a user route with the deferred default chat location", async () => {

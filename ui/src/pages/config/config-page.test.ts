@@ -691,12 +691,10 @@ describe("ConfigPage session observer models", () => {
     expect(modelCatalogStore.loadModelCatalog).toHaveBeenNthCalledWith(1, firstClient, {
       agentId: "main",
       preparedOnly: true,
-      rejectOnFailure: true,
     });
     expect(modelCatalogStore.loadModelCatalog).toHaveBeenNthCalledWith(2, secondClient, {
       agentId: "main",
       preparedOnly: true,
-      rejectOnFailure: true,
     });
   });
 
@@ -742,12 +740,10 @@ describe("ConfigPage session observer models", () => {
     expect(modelCatalogStore.loadModelCatalog).toHaveBeenNthCalledWith(1, client, {
       agentId: "main",
       preparedOnly: true,
-      rejectOnFailure: true,
     });
     expect(modelCatalogStore.loadModelCatalog).toHaveBeenNthCalledWith(2, client, {
       agentId: "writer",
       preparedOnly: true,
-      rejectOnFailure: true,
     });
 
     selectionState.selectedId = null;

@@ -20,11 +20,12 @@ type FixtureOptions = {
 };
 
 export function createDraftFixture(options: FixtureOptions = {}) {
+  // The model control always reads a catalog list; scenario overrides script the other methods.
   const request = vi.fn((method: string) => {
-    if (options.request) {
-      return options.request(method);
+    if (method === "models.list") {
+      return Promise.resolve({ models: [] });
     }
-    return Promise.resolve(method === "models.list" ? { models: [] } : {});
+    return options.request ? options.request(method) : Promise.resolve({});
   });
   const client = { recoveryScope: "principal-a", recoveryScopeReady: true, request };
   const phase = options.phase ?? "connected";
