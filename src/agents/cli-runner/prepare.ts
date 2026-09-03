@@ -408,13 +408,15 @@ if (process.env.VITEST || process.env.NODE_ENV === "test") {
   };
 }
 
-function shouldRefreshAuthProfileForExecution(params: {
+function shouldResolveAuthProfileForExecution(params: {
   policy?: BundledCliBackendAuthPolicy;
-  authProfileId?: string;
   authCredential?: AuthProfileCredential;
 }): boolean {
-  if (!params.policy || !params.authProfileId || !params.authCredential) {
+  if (!params.policy) {
     return false;
+  }
+  if (!params.authCredential) {
+    return params.policy.strictSelectedProfile;
   }
   if (params.authCredential.type === "oauth") {
     return params.policy.oauthRefreshOwner === "core";
@@ -516,6 +518,7 @@ export async function prepareCliRunContext(
       admittedRunContext: candidate.admittedRunContext,
       preparedRunAdmission: candidate.preparedRunAdmission,
     });
+    candidate.assertCurrent?.();
     const { preparedRunAdmission: _preparedRunAdmission, ...rest } = candidate;
     return { ...rest, agentId: workspaceResolution.agentId, admittedRunContext };
   };
@@ -690,15 +693,18 @@ export async function prepareCliRunContext(
   let authStore: AuthProfileStore | undefined;
   let authCredential: AuthProfileCredential | undefined;
   let resolvedProfileAuth: ResolvedProviderAuth | undefined;
-  const loadScopedAuthStore = (options: { profileId?: string; readOnly?: boolean } = {}) =>
-    loadAuthProfileStoreForRuntime(agentDir, {
+  const loadScopedAuthStore = (options: { profileId?: string; readOnly?: boolean } = {}) => {
+    params.assertCurrent?.();
+    return loadAuthProfileStoreForRuntime(agentDir, {
       readOnly: options.readOnly ?? true,
+      profileId: options.profileId,
       externalCli: externalCliDiscoveryForProviderAuth({
         cfg: params.config,
         provider: params.provider,
         ...(options.profileId ? { profileId: options.profileId } : {}),
       }),
     });
+  };
   if (effectiveAuthProfileId) {
     authStore = loadScopedAuthStore({ profileId: effectiveAuthProfileId });
     authCredential = authStore.profiles[effectiveAuthProfileId];
@@ -729,9 +735,8 @@ export async function prepareCliRunContext(
     authCredential = undefined;
   } else if (
     effectiveAuthProfileId &&
-    shouldRefreshAuthProfileForExecution({
+    shouldResolveAuthProfileForExecution({
       policy: backendAuthPolicy,
-      authProfileId: effectiveAuthProfileId,
       authCredential,
     })
   ) {
@@ -746,6 +751,7 @@ export async function prepareCliRunContext(
       // substitute a sibling account while preparing this run.
       ...(backendAuthPolicy?.strictSelectedProfile ? { allowProfileFallback: false } : {}),
     });
+    params.assertCurrent?.();
     if (!resolvedAuth && backendAuthPolicy?.strictSelectedProfile) {
       throw buildCliAuthProfileResolutionError({
         backendId: backendResolved.id,
@@ -1521,6 +1527,7 @@ export async function prepareCliRunContext(
         }
       : prepareExecutionContext;
     try {
+      params.assertCurrent?.();
       preparedExecution =
         (await backendResolved.prepareExecution?.(
           (backendAuthPolicy
@@ -1563,6 +1570,7 @@ export async function prepareCliRunContext(
           }
         : undefined;
     cleanupPreparedResources = preparedBackendCleanup;
+    params.assertCurrent?.();
     if (params.isolatedCompletion && preparedExecution?.isolatedCompletionEnforced !== true) {
       throw unsupportedIsolatedCompletionError(backendResolved.id);
     }

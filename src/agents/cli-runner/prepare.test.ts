@@ -1,5 +1,6 @@
 // Exercises CLI run preparation: auth boundaries, prompt hooks, context
 // injection, MCP loopback setup, and reusable session decisions.
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -42,6 +43,10 @@ import { setActiveDegradedSecretOwners } from "../../secrets/runtime-degraded-st
 import type { SkillLibraryAuthoringCapability } from "../../skills/library/authoring.js";
 import { buildSkillSnapshot } from "../../skills/loading/workspace-skill-prompt.js";
 import type { SkillSnapshot } from "../../skills/types.js";
+import { closeOpenClawStateDatabaseByPath } from "../../state/openclaw-state-db.js";
+import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
+import { connectUserModelAccount } from "../../state/user-model-accounts.js";
+import { ensureProfileForEmail } from "../../state/user-profiles.js";
 import {
   createChannelTestPluginBase,
   createTestRegistry,
@@ -49,12 +54,15 @@ import {
 import { captureEnv, setTestEnvValue } from "../../test-utils/env.js";
 import {
   createOperationalRunInstanceRef,
+  getAdmittedRunDelegatedAuthority,
   prepareAgentRunAdmission,
   prepareSystemAgentRunAdmission,
 } from "../admitted-run-context.js";
 import {
   createTestAdmittedRunContext,
   createTestPreparedRunAdmission,
+  withTestRunAdmission,
+  wrapRunWithTestPreparedAdmission,
 } from "../admitted-run-context.test-support.js";
 import { resolveApiKeyForProfile as resolveApiKeyForProfileImpl } from "../auth-profiles/oauth.js";
 import {
@@ -941,6 +949,57 @@ describe("prepareCliRunContext", () => {
     );
     expect(prepareExecution.mock.calls[0]?.[0]).not.toHaveProperty("authCredential");
   });
+
+  it.each(["connected", "missing"] as const)(
+    "requires the exact selected personal CLI credential when its account is %s",
+    async (accountState) => {
+      const { dir } = fixture.session;
+      const agentDir = path.join(dir, "agents", "main", "agent");
+      const databasePath = resolveOpenClawStateSqlitePath();
+      try {
+        const owner = ensureProfileForEmail("cli-owner@example.test");
+        const credential = {
+          type: "token" as const,
+          provider: "anthropic",
+          token: "synthetic-personal-cli-token",
+        };
+        const connected = connectUserModelAccount({
+          ownerProfileId: owner.id,
+          credential,
+          assertCurrent: () => undefined,
+        });
+        const authProfileId =
+          accountState === "connected"
+            ? connected.authProfileId
+            : `personal:${owner.id}:${randomUUID()}`;
+        const prepareExecution = vi.fn(async () => undefined);
+        setCliBackendForPrepareTest({ prepareExecution, authEpochMode: "profile-only" });
+
+        const preparation = fixture.prepare({
+          agentDir,
+          provider: "claude-cli",
+          model: "sonnet",
+          authProfileId,
+        });
+        if (accountState === "connected") {
+          await preparation;
+          expect(prepareExecution).toHaveBeenCalledWith(
+            expect.objectContaining({ authProfileId, authCredential: credential }),
+          );
+        } else {
+          await expect(preparation).rejects.toThrow(
+            `could not materialize selected auth profile "${authProfileId}"`,
+          );
+          expect(prepareExecution).not.toHaveBeenCalled();
+        }
+        expect(loadAuthProfileStoreWithoutExternalProfiles(agentDir).profiles).not.toHaveProperty(
+          connected.authProfileId,
+        );
+      } finally {
+        closeOpenClawStateDatabaseByPath(databasePath);
+      }
+    },
+  );
 
   it("persists and forwards a refreshed managed Anthropic OAuth profile", async () => {
     const { dir } = fixture.session;
@@ -3657,6 +3716,7 @@ describe("prepareCliRunContext", () => {
     "direct-with-placeholder",
     "reply-owned",
     "creator-closed",
+    "caller-retired",
     "request-cancelled",
     "retained-after-exit",
   ] as const)("binds prepared %s native questions to the actual CLI creator", async (mode) => {
@@ -3670,6 +3730,7 @@ describe("prepareCliRunContext", () => {
     );
     const sourceAbort = new AbortController();
     const requestAbort = new AbortController();
+    let callerCurrent = true;
     const promptDelivered = createDeferred();
     const nativeToolCallId = `native-input-${mode}`;
     const questionId = `${nativeToolCallId}:0`;
@@ -3769,6 +3830,11 @@ describe("prepareCliRunContext", () => {
         timeoutMs: 10_000,
         preparedRunAdmission: admission,
         abortSignal: sourceAbort.signal,
+        assertCurrent: () => {
+          if (!callerCurrent) {
+            throw new Error("original CLI caller retired");
+          }
+        },
         replyOperation: sourceOperation,
         toolAuthorityFingerprint,
         onPartialReply: async () => promptDelivered.resolve(),
@@ -3842,6 +3908,21 @@ describe("prepareCliRunContext", () => {
             requestAbort.abort();
             await processRun;
             expect(nativeAnswer).toMatchObject({ status: "cancelled" });
+          } else if (mode === "caller-retired") {
+            callerCurrent = false;
+            await expect(answer()).rejects.toThrow("original CLI caller retired");
+            expect(
+              gateway.requests.filter((frame) => frame.method === "question.resolve"),
+            ).toHaveLength(0);
+            // A late Gateway answer cannot revive the retired native caller.
+            gateway.manager.resolve(questionId, { answers: { choice: ["Continue"] } });
+            await processRun;
+            expect(nativeAnswer).toMatchObject({ status: "cancelled" });
+            expect(sourceAbort.signal.aborted).toBe(false);
+            expect(requestAbort.signal.aborted).toBe(false);
+            expect(
+              getAdmittedRunDelegatedAuthority(context.params.admittedRunContext),
+            ).toBeDefined();
           } else if (mode === "request-cancelled") {
             requestAbort.abort();
             await processRun;
@@ -5462,9 +5543,10 @@ describe("prepareCliRunContext", () => {
         runBeforePromptBuild,
         runBeforeAgentRun,
       } as never);
-      const { runEmbeddedAgent } = await import("../embedded-agent-runner/run.js");
+      const { runEmbeddedAgent: runEmbeddedAgentImpl } =
+        await import("../embedded-agent-runner/run.js");
+      const runEmbeddedAgent = wrapRunWithTestPreparedAdmission(runEmbeddedAgentImpl);
       const runId = `memory-cli-${scenario}`;
-      const admittedRunContext = createTestAdmittedRunContext(runId);
       const maintenance = await import("../embedded-agent-runner/context-engine-maintenance.js");
       const releaseMaintenance = createDeferred();
       const maintenanceStarted = createDeferred();
@@ -5512,7 +5594,6 @@ describe("prepareCliRunContext", () => {
       let run: ReturnType<typeof runEmbeddedAgent> | undefined;
       try {
         run = runEmbeddedAgent({
-          admittedRunContext,
           sessionId: sessionTarget.sessionId,
           sessionKey: sessionTarget.sessionKey,
           sessionTarget: {
@@ -5605,7 +5686,12 @@ describe("prepareCliRunContext", () => {
           });
           expect(context.openClawHistoryPrompt).toContain("OWNED_RETAINED");
           const { runPreparedCliAgent } = await import("../cli-runner.js");
-          await runPreparedCliAgent(context);
+          await withTestRunAdmission(context.params, (admittedRunContext) =>
+            runPreparedCliAgent({
+              ...context,
+              params: { ...context.params, admittedRunContext },
+            }),
+          );
           expect(outgoing.at(-1)).toMatchObject({
             useResume: true,
             sessionId: "native-owned",

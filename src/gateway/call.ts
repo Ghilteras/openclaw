@@ -139,6 +139,8 @@ type CallGatewayBaseOptions = {
   requiredStoredDeviceAuthScopes?: OperatorScope[];
   requireLocalBackendSharedAuth?: boolean;
   sharedStateMode?: "read-only";
+  /** Keep caller-resolved token/password authoritative, including an empty result. */
+  skipImplicitAuth?: boolean;
   onHelloOk?: GatewayClientOptions["onHelloOk"];
   deviceIdentity?: DeviceIdentity | null;
   instanceId?: string;
@@ -1133,7 +1135,7 @@ async function callGatewayWithScopes<T = Record<string, unknown>>(
       opts.localPortOverride !== undefined || opts.ignoreEnvUrlOverride === true,
     localPortOverride: opts.localPortOverride,
     explicitTlsFingerprint: opts.tlsFingerprint,
-    skipImplicitAuth: useStoredDeviceAuth,
+    skipImplicitAuth: useStoredDeviceAuth || opts.skipImplicitAuth === true,
     ...(useStoredDeviceAuth
       ? {}
       : {
