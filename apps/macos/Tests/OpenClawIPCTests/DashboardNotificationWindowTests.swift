@@ -6,7 +6,69 @@ import WebKit
 @testable import OpenClaw
 
 @MainActor
+private final class DashboardNotificationAlertCapture {
+    private(set) var textValues: [String] = []
+
+    func captureAndAbortModal() {
+        if let contentView = NSApp.modalWindow?.contentView {
+            self.textValues = Self.textValues(in: contentView)
+        }
+        NSApp.abortModal()
+    }
+
+    private static func textValues(in view: NSView) -> [String] {
+        let current = (view as? NSTextField).map { [$0.stringValue] } ?? []
+        return current + view.subviews.flatMap { self.textValues(in: $0) }
+    }
+}
+
+@MainActor
 extension DashboardWindowOwnershipTests {
+    @Test func `localized background session failure title`() async throws {
+        let probeKey = "OPENCLAW_LOCALIZED_GATEWAY_ERROR_PROBE"
+        if ProcessInfo.processInfo.environment[probeKey] != "1" {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+            process.arguments = [
+                "test", "--skip-build", "--filter", "localizedBackgroundSessionFailureTitle", "--",
+                "-AppleLanguages", "(fr)", "-AppleLocale", "fr_FR",
+                "-NSDoubleLocalizedStrings", "YES",
+            ]
+            process.currentDirectoryURL = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+            var environment = ProcessInfo.processInfo.environment
+            environment[probeKey] = "1"
+            process.environment = environment
+            let output = Pipe()
+            process.standardOutput = output
+            process.standardError = output
+            try process.run()
+            process.waitUntilExit()
+            let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            #expect(process.terminationStatus == 0, Comment(rawValue: text))
+            #expect(text.contains("\(probeKey)=ok"), Comment(rawValue: text))
+            return
+        }
+
+        #expect(Locale.current.language.languageCode?.identifier == "fr")
+        let expectedTitle = String(localized: "Could Not Open Background Session")
+        #expect(expectedTitle != "Could Not Open Background Session")
+        let manager = DashboardManager._testMake(
+            primaryEndpointProvider: { _ in throw DashboardWindowOwnershipEndpointFailure() })
+        defer { manager.close() }
+        let capture = DashboardNotificationAlertCapture()
+        DispatchQueue.main.async { capture.captureAndAbortModal() }
+
+        let sourceURL = try #require(URL(string: "https://gateway.example"))
+        await manager.openBackgroundSession(
+            self.completion(), target: .primary, sourceURL: sourceURL)
+
+        #expect(capture.textValues.contains(expectedTitle))
+        print("\(probeKey)=ok")
+    }
+
     @Test func `background completion restores a failed dashboard before navigating`() async throws {
         let server = try await DashboardHTTPFixture.start()
         defer { server.stop() }
