@@ -48,6 +48,7 @@ function branchList(name = "main") {
     branches: [{ kind: "local", name }],
     defaultBranch: name,
     repositoryStatus: "git",
+    allocationStatus: "available",
   };
 }
 
@@ -87,8 +88,17 @@ async function chooseCustomFolder(page: Page, gateway: MockGateway) {
   await page.locator("input.new-session-page__browser-path").fill(TARGET_REPO);
   await page.getByRole("button", { name: "Use this folder" }).click();
   await expect
-    .poll(async () => (await gateway.getRequests("worktrees.branches")).at(-1)?.params)
-    .toEqual({ repoRoot: TARGET_REPO, includeRepositoryStatus: true });
+    .poll(async () =>
+      (await gateway.getRequests("worktrees.branches")).some((request) => {
+        const params = request.params as Record<string, unknown>;
+        return (
+          params.repoRoot === TARGET_REPO &&
+          params.includeRepositoryStatus === true &&
+          params.includeAllocationStatus === undefined
+        );
+      }),
+    )
+    .toBe(true);
 }
 
 async function reconnectForBranchRediscovery(page: Page, gateway: MockGateway) {
@@ -151,9 +161,9 @@ suite.define(() => {
             exact: true,
           });
           expect(await worktree.isDisabled()).toBe(true);
-          await place
-            .getByText("Not enough disk space for another worktree", { exact: true })
-            .waitFor();
+          await pollLocatorText(place.locator(".new-session-page__capacity-warning")).toContain(
+            "No space for a worktree",
+          );
           if (captureUiProofEnabled) {
             await page.screenshot({
               path: `${suite.artifactDir}/worktree-capacity-${viewportName}.png`,
@@ -162,7 +172,7 @@ suite.define(() => {
             });
           }
 
-          await place.getByRole("button", { name: "Manage", exact: true }).click();
+          await place.getByRole("button", { name: /Managed Worktrees/ }).click();
           await page.waitForURL((url) => url.pathname === "/worktrees");
           expect(await gateway.getRequests("sessions.create")).toHaveLength(0);
         },
@@ -449,7 +459,10 @@ suite.define(() => {
             .slice(branchesBefore)
             .map((request) => request.params),
         )
-        .toEqual([{ repoRoot: TARGET_REPO, includeRepositoryStatus: true }]);
+        .toEqual([
+          { repoRoot: TARGET_REPO, includeRepositoryStatus: true },
+          { repoRoot: TARGET_REPO, baseRef: "beta", includeAllocationStatus: true },
+        ]);
       await page.getByRole("heading", { name: "Replacement agent" }).waitFor();
       await expect.poll(() => message.inputValue()).toBe("preserve this replacement draft");
       await expect
@@ -464,7 +477,8 @@ suite.define(() => {
       const branchRequests = await gateway.getRequests("worktrees.branches");
       expect(branchRequests.at(-1)?.params).toEqual({
         repoRoot: TARGET_REPO,
-        includeRepositoryStatus: true,
+        baseRef: "beta",
+        includeAllocationStatus: true,
       });
       await whereTrigger.click();
       await whereSelect.getByRole("button", { name: "New device" }).waitFor();

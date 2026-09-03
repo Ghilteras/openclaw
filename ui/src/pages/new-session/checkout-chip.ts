@@ -28,17 +28,19 @@ export function resolveCheckoutChip(params: {
   };
 }
 
-function renderWorktreeFields(params: {
-  branches: DraftBranches | null;
-  branchesLoading: boolean;
-  baseRef: string;
-  worktreeName: string;
-  submitting: boolean;
-  pendingPlacement: boolean;
-  showWorktreeDetails: boolean;
-  onBaseRefChange: (baseRef: string) => void;
-  onWorktreeNameInput: (name: string) => void;
-}) {
+function renderWorktreeFields(
+  params: {
+    branches: DraftBranches | null;
+    branchesLoading: boolean;
+    baseRef: string;
+    worktreeName: string;
+    submitting: boolean;
+    pendingPlacement: boolean;
+    onBaseRefChange: (baseRef: string) => void;
+    onWorktreeNameInput: (name: string) => void;
+  },
+  showWorktreeDetails: boolean,
+) {
   return html`
     <label class="new-session-page__menu-field">
       <span>${t("newSession.worktreeBaseRef")}</span>
@@ -62,7 +64,7 @@ function renderWorktreeFields(params: {
         )}
       </datalist>
     </label>
-    ${params.showWorktreeDetails
+    ${showWorktreeDetails
       ? html`<label class="new-session-page__menu-field">
             <span>${t("newSession.worktreeName")}</span>
             <input
@@ -88,7 +90,6 @@ export function renderCheckoutChip(params: {
   folderLabel: string;
   worktree: boolean;
   worktreeAvailable: boolean;
-  allocationStatus?: DraftBranches["allocationStatus"];
   allocationBlockedReason?: string;
   repositoryUnavailable?: boolean;
   branches: DraftBranches | null;
@@ -108,7 +109,6 @@ export function renderCheckoutChip(params: {
   onBaseRefChange: (baseRef: string) => void;
   onWorktreeNameInput: (name: string) => void;
 }) {
-  const allocationBlockedReason = params.allocationBlockedReason;
   return html`
     <span class="new-session-page__select">
       <button
@@ -127,11 +127,9 @@ export function renderCheckoutChip(params: {
       >
         <span class="new-session-page__target-icon" aria-hidden="true">${icons.gitBranch}</span>
         <span class="new-session-page__trigger-label">${params.state.label}</span>
-        ${allocationBlockedReason
+        ${params.allocationBlockedReason
           ? html`<span class="new-session-page__capacity-badge"
-              >${params.allocationStatus === "insufficient-space"
-                ? t("newSession.worktreeCapacityBadge")
-                : t("newSession.worktreeCapacityUnavailableBadge")}</span
+              >${params.allocationBlockedReason}</span
             >`
           : nothing}
         <span
@@ -178,9 +176,9 @@ export function renderCheckoutChip(params: {
             icon: icons.gitBranch,
             sub: t("newSession.checkoutWorktreeSub"),
             checked: params.worktree,
-            disabled: !params.worktreeAvailable || Boolean(allocationBlockedReason),
-            title: allocationBlockedReason
-              ? allocationBlockedReason
+            disabled: !params.worktreeAvailable || Boolean(params.allocationBlockedReason),
+            title: params.allocationBlockedReason
+              ? params.allocationBlockedReason
               : params.worktreeAvailable
                 ? undefined
                 : params.repositoryUnavailable
@@ -191,16 +189,17 @@ export function renderCheckoutChip(params: {
           },
           params.submitting,
         )}
-        ${allocationBlockedReason
-          ? html`<div class="new-session-page__capacity-warning" role="status">
-              <span>${allocationBlockedReason}</span>
-              <button type="button" @click=${params.onManageWorktrees}>
-                ${t("newSession.manageWorktrees")}
-              </button>
-            </div>`
+        ${params.allocationBlockedReason
+          ? html`<button
+              class="new-session-page__capacity-warning"
+              type="button"
+              @click=${params.onManageWorktrees}
+            >
+              ${params.allocationBlockedReason}. ${t("worktrees.title")}
+            </button>`
           : nothing}
-        ${params.worktree || allocationBlockedReason
-          ? renderWorktreeFields({ ...params, showWorktreeDetails: params.worktree })
+        ${params.worktree || params.allocationBlockedReason
+          ? renderWorktreeFields(params, params.worktree)
           : nothing}
         ${params.remotePlacement
           ? html`<div class="new-session-page__menu-note">

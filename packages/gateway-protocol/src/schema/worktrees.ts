@@ -64,15 +64,13 @@ export const WorktreesRemoveResultSchema = closedObject({
   snapshotError: Type.Optional(NonEmptyString),
 });
 
-const WORKTREE_REPOSITORY_STATUSES = ["git", "not_git", "unavailable"] as const;
-// Keep a flat string enum for native enum generation; the schema test pins
+// Keep flat string enums for native enum generation; the schema test pins
 // TypeBox Value.Check rejection of unknown members on our supported version.
 export const WorktreeRepositoryStatusSchema = Type.String({
-  enum: [...WORKTREE_REPOSITORY_STATUSES],
+  enum: ["git", "not_git", "unavailable"],
 });
-const WORKTREE_ALLOCATION_STATUSES = ["available", "insufficient-space", "unavailable"] as const;
 export const WorktreeAllocationStatusSchema = Type.String({
-  enum: [...WORKTREE_ALLOCATION_STATUSES],
+  enum: ["available", "insufficient-space", "unavailable"],
 });
 export const WorktreesBranchesParamsSchema = closedObject({
   repoRoot: NonEmptyString,
@@ -112,7 +110,7 @@ export type WorktreesRestoreParams = Static<typeof WorktreesRestoreParamsSchema>
 export type WorktreesGcParams = Static<typeof WorktreesGcParamsSchema>;
 export type WorktreesGcResult = Static<typeof WorktreesGcResultSchema>;
 export type WorktreeBranch = Static<typeof WorktreeBranchSchema>;
-export type WorktreeRepositoryStatus = (typeof WORKTREE_REPOSITORY_STATUSES)[number];
-export type WorktreeAllocationStatus = (typeof WORKTREE_ALLOCATION_STATUSES)[number];
+export type WorktreeRepositoryStatus = "git" | "not_git" | "unavailable";
+export type WorktreeAllocationStatus = "available" | "insufficient-space" | "unavailable";
 export type WorktreesBranchesParams = Static<typeof WorktreesBranchesParamsSchema>;
 export type WorktreesBranchesResult = Static<typeof WorktreesBranchesResultSchema>;

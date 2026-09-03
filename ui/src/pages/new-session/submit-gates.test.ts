@@ -128,7 +128,7 @@ describe("DraftSubmissionFlow submit gates", () => {
       folder: "/workspace",
       worktree: true,
     });
-    let resolveBranches!: (value: unknown) => void;
+    const branchResolvers: Array<(value: unknown) => void> = [];
     const fixture = createDraftFixture({
       scopes: ["operator.admin", "operator.read", "operator.write"],
       agents: [
@@ -142,7 +142,7 @@ describe("DraftSubmissionFlow submit gates", () => {
       request: (method) => {
         if (method === "worktrees.branches") {
           return new Promise((resolve) => {
-            resolveBranches = resolve;
+            branchResolvers.push(resolve);
           });
         }
         return Promise.resolve({});
@@ -161,12 +161,13 @@ describe("DraftSubmissionFlow submit gates", () => {
     expect(context.sessions.createResult).not.toHaveBeenCalled();
     expect(flow.blockedSubmitNotice()).toBe(flow.submitDisabledReason());
 
-    resolveBranches({
+    branchResolvers.shift()!({
       repositoryStatus: "git",
       branches: ["main"],
       defaultBranch: "main",
-      allocationStatus: "available",
     });
+    await vi.waitFor(() => expect(branchResolvers).toHaveLength(1));
+    branchResolvers.shift()!({ allocationStatus: "available" });
     await vi.waitFor(() => expect(flow.canSubmit()).toBe(true));
     // The transient gate lifted; the notice retires itself.
     expect(flow.blockedSubmitNotice()).toBeUndefined();
@@ -176,9 +177,9 @@ describe("DraftSubmissionFlow submit gates", () => {
   it.each([
     {
       status: "insufficient-space",
-      reason: "Not enough disk space for another worktree",
+      reason: "No space for a worktree",
     },
-    { status: "unavailable", reason: "Couldn't check worktree storage capacity" },
+    { status: "unavailable", reason: "Worktree capacity unknown" },
   ] as const)(
     "blocks a selected worktree when allocation is $status",
     async ({ status, reason }) => {

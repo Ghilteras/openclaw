@@ -155,62 +155,59 @@ describe("Checkout chip state", () => {
       );
     },
   );
-  it.each([
-    { status: "insufficient-space", badge: "No space" },
-    { status: "unavailable", badge: "Unavailable" },
-  ] as const)("blocks worktree selection when allocation is $status", ({ status, badge }) => {
-    const container = document.createElement("div");
-    const onSelectWorktree = vi.fn();
-    const onManageWorktrees = vi.fn();
-    const onBaseRefChange = vi.fn();
-    render(
-      renderCheckoutChip({
-        state: { label: "feature" },
-        remotePlacement: false,
-        folderLabel: "OpenClaw",
-        worktree: false,
-        worktreeAvailable: true,
-        allocationStatus: status,
-        allocationBlockedReason:
-          status === "insufficient-space"
-            ? "Not enough disk space for another worktree"
-            : "Couldn't check worktree storage capacity",
-        branches: { repoRoot: "/repo", branches: [], headBranch: "feature" },
-        branchesLoading: false,
-        baseRef: "main",
-        worktreeName: "",
-        submitting: false,
-        pendingPlacement: false,
-        popoverOpen: true,
-        popoverHiding: false,
-        onGuardTransition: () => undefined,
-        onPopoverShow: () => undefined,
-        onPopoverHide: () => undefined,
-        onPopoverAfterHide: () => undefined,
-        onSelectWorktree,
-        onManageWorktrees,
-        onBaseRefChange,
-        onWorktreeNameInput: () => undefined,
-      }),
-      container,
-    );
+  it.each(["insufficient-space", "unavailable"] as const)(
+    "blocks worktree selection when allocation is %s",
+    (status) => {
+      const container = document.createElement("div");
+      const onSelectWorktree = vi.fn();
+      const onManageWorktrees = vi.fn();
+      const onBaseRefChange = vi.fn();
+      render(
+        renderCheckoutChip({
+          state: { label: "feature" },
+          remotePlacement: false,
+          folderLabel: "OpenClaw",
+          worktree: false,
+          worktreeAvailable: true,
+          allocationBlockedReason:
+            status === "insufficient-space"
+              ? "No space for a worktree"
+              : "Worktree capacity unknown",
+          branches: { repoRoot: "/repo", branches: [], headBranch: "feature" },
+          branchesLoading: false,
+          baseRef: "main",
+          worktreeName: "",
+          submitting: false,
+          pendingPlacement: false,
+          popoverOpen: true,
+          popoverHiding: false,
+          onGuardTransition: () => undefined,
+          onPopoverShow: () => undefined,
+          onPopoverHide: () => undefined,
+          onPopoverAfterHide: () => undefined,
+          onSelectWorktree,
+          onManageWorktrees,
+          onBaseRefChange,
+          onWorktreeNameInput: () => undefined,
+        }),
+        container,
+      );
 
-    expect(container.querySelector(".new-session-page__capacity-badge")?.textContent).toContain(
-      badge,
-    );
-    const isolated = container.querySelector<HTMLButtonElement>('[data-value="worktree"]')!;
-    expect(isolated.disabled).toBe(true);
-    isolated.click();
-    expect(onSelectWorktree).not.toHaveBeenCalled();
-    const fields = container.querySelectorAll<HTMLLabelElement>(".new-session-page__menu-field");
-    expect(fields).toHaveLength(1);
-    const baseRef = fields[0]!.querySelector("input")!;
-    baseRef.value = " local-branch ";
-    baseRef.dispatchEvent(new Event("change"));
-    expect(onBaseRefChange).toHaveBeenCalledWith("local-branch");
-    container
-      .querySelector<HTMLButtonElement>(".new-session-page__capacity-warning button")!
-      .click();
-    expect(onManageWorktrees).toHaveBeenCalledOnce();
-  });
+      expect(container.querySelector(".new-session-page__capacity-warning")?.textContent).toContain(
+        status === "insufficient-space" ? "No space for a worktree" : "Worktree capacity unknown",
+      );
+      const isolated = container.querySelector<HTMLButtonElement>('[data-value="worktree"]')!;
+      expect(isolated.disabled).toBe(true);
+      isolated.click();
+      expect(onSelectWorktree).not.toHaveBeenCalled();
+      const fields = container.querySelectorAll<HTMLLabelElement>(".new-session-page__menu-field");
+      expect(fields).toHaveLength(1);
+      const baseRef = fields[0]!.querySelector("input")!;
+      baseRef.value = " local-branch ";
+      baseRef.dispatchEvent(new Event("change"));
+      expect(onBaseRefChange).toHaveBeenCalledWith("local-branch");
+      container.querySelector<HTMLButtonElement>(".new-session-page__capacity-warning")!.click();
+      expect(onManageWorktrees).toHaveBeenCalledOnce();
+    },
+  );
 });

@@ -6,7 +6,6 @@ import type { ApplicationContext } from "../../app/context.ts";
 import type { DraftRepositoryState } from "./discovery.ts";
 import type { NewSessionPreference } from "./preferences.ts";
 import type { DraftRemoteProject } from "./project-chip.ts";
-import { resolveWorktreePlacementRestore } from "./worktree-allocation.ts";
 
 type DraftRepositorySnapshot = Readonly<{
   remotePlacement: boolean;
@@ -82,14 +81,17 @@ export class DraftRepositoryController {
     return state.kind !== "git" || state.allocationStatus === "available";
   }
 
-  placementRestore(destinationAvailable: boolean, projectReady = true) {
-    return resolveWorktreePlacementRestore({
-      destinationAvailable,
-      repositoryReady:
-        projectReady && this.matchesCurrentRepo() && this.repositoryValue.kind !== "checking",
-      worktreeAvailable: this.available(),
-      allocationAvailable: this.allocationAvailable(),
-    });
+  placementRestoreAvailable(
+    destinationAvailable: boolean,
+    projectReady = true,
+  ): boolean | undefined {
+    if (!destinationAvailable) {
+      return false;
+    }
+    if (!projectReady || !this.matchesCurrentRepo() || this.repositoryValue.kind === "checking") {
+      return undefined;
+    }
+    return this.available() && this.allocationAvailable();
   }
 
   get preferenceReady(): boolean {

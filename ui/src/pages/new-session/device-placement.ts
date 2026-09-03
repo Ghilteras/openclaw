@@ -68,13 +68,6 @@ function unavailableReason(
   return environment.workerSlots.available === 0 ? t("newSession.deviceNoSlots") : undefined;
 }
 
-export function findDevicePlacement(
-  devices: readonly DevicePlacementOption[],
-  deviceId: string,
-): DevicePlacementOption | undefined {
-  return devices.find((device) => device.deviceId === deviceId);
-}
-
 /** One projection owns device presentation, restore eligibility, and submit eligibility. */
 export function projectDevicePlacements(
   environments: readonly DraftEnvironment[] | null,
@@ -164,23 +157,23 @@ export function devicePlacementReady(
 ): boolean {
   return automatic
     ? devices.some((device) => device.selectable)
-    : !deviceId || findDevicePlacement(devices, deviceId)?.selectable === true;
+    : !deviceId || devices.some((device) => device.deviceId === deviceId && device.selectable);
 }
 
-export function resolveDevicePlacementDisabledReason(params: {
-  environments: readonly DraftEnvironment[] | null;
-  devices: readonly DevicePlacementOption[];
-  deviceId: string;
-  automatic: boolean;
-}): string | undefined {
-  if (params.automatic) {
-    return resolveAutomaticDevicePlacementDisabledReason(params.environments, params.devices);
+export function resolveDevicePlacementDisabledReason(
+  environments: readonly DraftEnvironment[] | null,
+  devices: readonly DevicePlacementOption[],
+  deviceId: string,
+  automatic: boolean,
+): string | undefined {
+  if (automatic) {
+    return resolveAutomaticDevicePlacementDisabledReason(environments, devices);
   }
-  if (!params.deviceId) {
+  if (!deviceId) {
     return undefined;
   }
   return (
-    findDevicePlacement(params.devices, params.deviceId)?.disabledReason ??
+    devices.find((device) => device.deviceId === deviceId)?.disabledReason ??
     t("newSession.nodeUnavailable")
   );
 }

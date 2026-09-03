@@ -72,9 +72,7 @@ suite.define(() => {
         const row = page.locator(`[data-value="${value}"]`);
         await row.waitFor();
         await expect.poll(() => row.isDisabled()).toBe(true);
-        await expect
-          .poll(() => tooltipTitleText(row))
-          .toBe("Not enough disk space for another worktree");
+        await expect.poll(() => tooltipTitleText(row)).toBe("No space for a worktree");
       }
     } finally {
       await context.close();

@@ -420,6 +420,7 @@ html.openclaw-native-macos .new-session-page__incognito-rail {
   font-size: 10px;
   font-weight: 650;
   line-height: 1.4;
+  white-space: nowrap;
 }
 
 .new-session-page__trigger-chevron {
@@ -714,29 +715,18 @@ wa-popover.new-session-page__picker-popover
 }
 
 .new-session-page__capacity-warning {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  display: block;
+  width: calc(100% - 16px);
   margin: 2px 8px 4px;
   padding: 6px 8px;
+  border: 0;
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--danger) 9%, transparent);
   color: var(--danger);
+  font: inherit;
   font-size: 11px;
   line-height: 1.35;
-}
-
-.new-session-page__capacity-warning button {
-  flex: 0 0 auto;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-weight: 650;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  text-align: left;
 }
 
 .new-session-page__menu-meta {

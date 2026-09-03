@@ -12,7 +12,6 @@ import {
 } from "./create-params.ts";
 import {
   devicePlacementReady,
-  findDevicePlacement,
   projectDevicePlacements,
   resolveDevicePlacementDisabledReason,
 } from "./device-placement.ts";
@@ -220,12 +219,12 @@ export class DraftPlaceState {
   }
 
   devicePlacementDisabledReason(): string | undefined {
-    return resolveDevicePlacementDisabledReason({
-      environments: this.gateway.environments,
-      devices: this.devices(),
-      deviceId: this.deviceIdValue,
-      automatic: this.autoDeviceValue,
-    });
+    return resolveDevicePlacementDisabledReason(
+      this.gateway.environments,
+      this.devices(),
+      this.deviceIdValue,
+      this.autoDeviceValue,
+    );
   }
 
   isAdmin(): boolean {
@@ -522,7 +521,8 @@ export class DraftPlaceState {
       return;
     }
     if (
-      (deviceId && findDevicePlacement(this.devices(), deviceId)?.selectable !== true) ||
+      (deviceId &&
+        !this.devices().some((device) => device.deviceId === deviceId && device.selectable)) ||
       (autoDevice && !this.devices().some((device) => device.selectable)) ||
       ((deviceId || autoDevice) && !this.repositoryState.allocationAvailable())
     ) {
@@ -640,16 +640,18 @@ export class DraftPlaceState {
       const automatic = preferredWhere.kind === "auto-device";
       const deviceAvailable = automatic
         ? this.devices().some((device) => device.selectable)
-        : findDevicePlacement(this.devices(), preferredWhere.id)?.selectable === true;
-      const restore = this.repositoryState.placementRestore(deviceAvailable);
-      if (restore === "available") {
+        : this.devices().some(
+            (device) => device.deviceId === preferredWhere.id && device.selectable,
+          );
+      const restore = this.repositoryState.placementRestoreAvailable(deviceAvailable);
+      if (restore === true) {
         this.autoDeviceValue = automatic;
         this.deviceIdValue = preferredWhere.kind === "device" ? preferredWhere.id : "";
         this.cloudProfileIdValue = "";
         this.repositoryState.forceWorktree(true);
         this.preferredWhereRestore = null;
         changed = true;
-      } else if (restore === "unavailable") {
+      } else if (restore === false) {
         this.deviceIdValue = "";
         this.autoDeviceValue = false;
         this.preferredWhereRestore = null;
@@ -664,18 +666,18 @@ export class DraftPlaceState {
         preferredProfile &&
         !this.modelControl.cloudRuntimeUnsupportedReason(preferredProfile),
       );
-      const restore = this.repositoryState.placementRestore(
+      const restore = this.repositoryState.placementRestoreAvailable(
         profileAvailable,
         !preferredProject || this.browser.projectId === preferredProject,
       );
-      if (restore === "available") {
+      if (restore === true) {
         this.deviceIdValue = "";
         this.autoDeviceValue = false;
         this.cloudProfileIdValue = preferredWhere.id;
         this.repositoryState.forceWorktree(true);
         this.preferredWhereRestore = null;
         changed = true;
-      } else if (restore === "unavailable") {
+      } else if (restore === false) {
         this.cloudProfileIdValue = "";
         changed = true;
         this.preferredWhereRestore = null;

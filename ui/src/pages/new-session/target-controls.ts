@@ -218,7 +218,6 @@ export function renderNewSessionPlaceControls({
         folderLabel: projectState.label,
         worktree: place.worktree,
         worktreeAvailable: place.worktreeAvailable(),
-        allocationStatus,
         allocationBlockedReason,
         repositoryUnavailable: place.repository.kind === "unavailable",
         branches,
