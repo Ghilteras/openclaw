@@ -145,12 +145,15 @@ Recorded usage counts and last-used recency are supporting evidence, not an
 age-based lifecycle: heavy use favors preserving a skill's procedure, while no
 recorded use alone never justifies removing it.
 
-OpenClaw validates and scans every write before changing the Workshop directory,
-serializes each agent's collection edits with an agent-scoped lease, and retains
-one backup under that agent directory. File tools use the Workshop directory as
-their containment root. Shell commands use it as `cwd`, but normal host shell
-authority still applies. The changed collection appears in new agent runs;
-running sessions keep their existing skill snapshot.
+Proposal apply validates and scans every write before changing the Workshop directory.
+Collection review has a different boundary: it snapshots the tree before the
+turn, then inspects changed and added entries after the turn returns; critical
+files and symbolic links are restored while other safe changes stay. Each
+agent's collection edits are serialized with an agent-scoped lease, and one
+backup is retained under that agent directory. File tools use the Workshop
+directory as their containment root. Shell commands use it as `cwd`, but normal
+host shell authority still applies. The changed collection appears in new agent
+runs; running sessions keep their existing skill snapshot.
 
 To undo the last completed cleanup, ask the agent to restore the skill
 collection. It uses `skill_workshop` action `restore_collection` under the same
