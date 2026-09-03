@@ -316,7 +316,7 @@ describe("Codex app-server binding store", () => {
     expect(store.read(identity)).toMatchObject({ threadId: "thread-new" });
   });
 
-  it("drops pending native compaction remediation when the binding changes threads", async () => {
+  it("drops native compaction sync when the binding changes threads", async () => {
     const { state } = createStateStore();
     const store = createCodexAppServerBindingStore(state);
     const identity = {
@@ -329,10 +329,10 @@ describe("Codex app-server binding store", () => {
       binding: {
         threadId: "thread-old",
         cwd: "/repo",
-        nativeCompactionRetryPending: true,
+        nativeCompactionSyncPending: true,
       },
     });
-    expect(store.read(identity)).toMatchObject({ nativeCompactionRetryPending: true });
+    expect(store.read(identity)).toMatchObject({ nativeCompactionSyncPending: true });
 
     await expect(
       store.mutate(identity, {
@@ -341,7 +341,7 @@ describe("Codex app-server binding store", () => {
         binding: {
           threadId: "thread-new",
           cwd: "/repo",
-          nativeCompactionRetryPending: true,
+          nativeCompactionSyncPending: true,
         },
       }),
     ).resolves.toBe(true);

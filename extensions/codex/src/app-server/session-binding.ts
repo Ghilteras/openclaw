@@ -923,7 +923,7 @@ export function createCodexAppServerBindingStore(
               });
             }
             if (active && binding.threadId !== active.binding.threadId) {
-              const { nativeCompactionRetryPending: _pending, ...replacement } = binding;
+              const { nativeCompactionSyncPending: _pending, ...replacement } = binding;
               binding = replacement;
             }
             return {

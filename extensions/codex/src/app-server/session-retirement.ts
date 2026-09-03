@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type {
   AgentHarnessSessionDeletionMutation,
   AgentHarnessSessionDeletionParams,
@@ -155,12 +156,19 @@ export async function retireCodexAppServerSessionGeneration(params: {
   bindingStore: CodexAppServerBindingStore;
   identity: Extract<CodexAppServerBindingIdentity, { kind: "session" }>;
   mode: "reset" | "retire";
+  expectedBinding?: CodexAppServerThreadBinding;
 }): Promise<CodexSessionGenerationRetirementResult> {
   const retireGeneration = () =>
     params.mode === "reset"
       ? params.bindingStore.resetSessionGeneration(params.identity)
       : params.bindingStore.retireSessionGeneration(params.identity);
-  const expectedBinding = params.bindingStore.read(params.identity);
+  const expectedBinding = params.expectedBinding ?? params.bindingStore.read(params.identity);
+  if (
+    params.expectedBinding &&
+    !isDeepStrictEqual(params.bindingStore.read(params.identity), params.expectedBinding)
+  ) {
+    return "conflict";
+  }
   if (!expectedBinding) {
     // Leasing an absent/retired row manufactures state or rejects its fence;
     // callers need the original absent/conflict result for reset reclamation.
@@ -169,7 +177,10 @@ export async function retireCodexAppServerSessionGeneration(params: {
   return await withCodexAppServerThreadMutation(expectedBinding.threadId, () =>
     params.bindingStore.withLease(params.identity, async () => {
       const binding = params.bindingStore.read(params.identity);
-      if (!binding || !isSameCodexAppServerThreadOwner(binding, expectedBinding)) {
+      const bindingMatchesExpected = params.expectedBinding
+        ? isDeepStrictEqual(binding, expectedBinding)
+        : isSameCodexAppServerThreadOwner(binding, expectedBinding);
+      if (!binding || !bindingMatchesExpected) {
         return "conflict";
       }
       const result = await retireGeneration();

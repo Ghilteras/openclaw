@@ -223,7 +223,7 @@ function pendingNativeCompactionBinding(
     threadId,
     cwd,
     dynamicToolsFingerprint: "[]",
-    nativeCompactionRetryPending: true,
+    nativeCompactionSyncPending: true,
     contextEngine: {
       schemaVersion: 1,
       engineId: "lossless-claw",
@@ -844,7 +844,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
       threadId: "thread-1",
       cwd: workspaceDir,
       dynamicToolsFingerprint: "[]",
-      nativeCompactionRetryPending: true,
+      nativeCompactionSyncPending: true,
       contextEngine: {
         schemaVersion: 1,
         engineId: "lossless-claw",
@@ -903,6 +903,9 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
     );
     const params = createParams(sessionFile, workspaceDir);
     params.senderId = null;
+    params.senderName = null;
+    params.senderUsername = null;
+    params.senderE164 = null;
 
     const run = runCodexAppServerAttempt(params);
     await harness.waitForMethod("turn/start");
@@ -912,7 +915,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
     expect(methods.indexOf("thread/compact/start")).toBeLessThan(methods.indexOf("turn/start"));
     const binding = await readCodexAppServerBinding(sessionFile);
     expect(binding?.contextEngine?.projection).toBeUndefined();
-    expect(binding?.nativeCompactionRetryPending).toBeUndefined();
+    expect(binding?.nativeCompactionSyncPending).toBeUndefined();
 
     await harness.completeTurn();
     await run;
@@ -925,7 +928,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
       threadId: "thread-1",
       cwd: workspaceDir,
       dynamicToolsFingerprint: "[]",
-      nativeCompactionRetryPending: true,
+      nativeCompactionSyncPending: true,
       contextEngine: {
         schemaVersion: 1,
         engineId: "lossless-claw",
@@ -964,7 +967,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
     expect(harness.requests.some(({ method }) => method === "turn/start")).toBe(false);
     expect(await readCodexAppServerBinding(sessionFile)).toMatchObject({
       threadId: "thread-1",
-      nativeCompactionRetryPending: true,
+      nativeCompactionSyncPending: true,
       contextEngine: { projection: { epoch: "epoch-1" } },
     });
     upstreamAbort.abort("after retry rejection");
@@ -1019,7 +1022,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
         threadId: "thread-fresh",
       });
       expect(
-        (await readCodexAppServerBinding(sessionFile))?.nativeCompactionRetryPending,
+        (await readCodexAppServerBinding(sessionFile))?.nativeCompactionSyncPending,
       ).toBeUndefined();
     },
   );
@@ -1090,7 +1093,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
       expect(harness.requests.some(({ method }) => method === "turn/start")).toBe(false);
       await expect(readCodexAppServerBinding(sessionFile)).resolves.toMatchObject({
         threadId: "thread-a",
-        nativeCompactionRetryPending: true,
+        nativeCompactionSyncPending: true,
         preserveNativeModel: true,
         ...(owner === "supervision" ? { connectionScope: "supervision" } : {}),
       });
@@ -1115,7 +1118,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
         }),
       );
       const replacement = pendingNativeCompactionBinding("thread-b", workspaceDir, {
-        nativeCompactionRetryPending: undefined,
+        nativeCompactionSyncPending: undefined,
         preserveNativeModel: true,
         model: "replacement-model",
         modelProvider: nativeThread.modelProvider,
@@ -1208,7 +1211,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
       }),
     );
     const replacement = pendingNativeCompactionBinding("thread-b", workspaceDir, {
-      nativeCompactionRetryPending: undefined,
+      nativeCompactionSyncPending: undefined,
       preserveNativeModel: true,
       model: "replacement-model",
       modelProvider: nativeThread.modelProvider,
@@ -1276,6 +1279,103 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
     expect(clientStarts).toHaveLength(1);
     expect(harness.requests.some(({ method }) => method === "turn/start")).toBe(false);
     upstreamAbort.abort("after replacement reprepare");
+    expect(onAttemptAbort).not.toHaveBeenCalled();
+  });
+
+  it("leaves a same-thread replacement untouched after compaction item completion", async () => {
+    const sessionFile = path.join(tempDir, "same-thread-replacement-after-completion.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace-same-thread-replacement");
+    const nativeThread = threadStartResult("thread-a");
+    const clientId = "shared-client";
+    await writeCodexAppServerBinding(
+      sessionFile,
+      pendingNativeCompactionBinding("thread-a", workspaceDir, {
+        clientId,
+        preserveNativeModel: true,
+        model: nativeThread.model,
+        modelProvider: nativeThread.modelProvider,
+      }),
+    );
+    const replacement = pendingNativeCompactionBinding("thread-a", workspaceDir, {
+      clientId,
+      preserveNativeModel: true,
+      model: "replacement-model",
+      modelProvider: nativeThread.modelProvider,
+      contextEngine: {
+        schemaVersion: 1,
+        engineId: "replacement-engine",
+        policyFingerprint: "replacement-policy",
+        projection: {
+          schemaVersion: 1,
+          mode: "thread_bootstrap",
+          epoch: "replacement-epoch",
+        },
+      },
+    });
+    const clientStarts: unknown[] = [];
+    let harness!: ReturnType<typeof createStartedThreadHarness>;
+    harness = createStartedThreadHarness(
+      async (method, rawParams) => {
+        const request = requireRecord(rawParams, `${method} params`);
+        const threadId = readStringValue(request.threadId);
+        if (method === "thread/resume" && threadId === "thread-a") {
+          return threadStartResult("thread-a");
+        }
+        if (method === "thread/compact/start" && threadId === "thread-a") {
+          await harness.notify({
+            method: "turn/started",
+            params: {
+              threadId,
+              turn: { id: "compact-thread-a", threadId, status: "inProgress" },
+            },
+          });
+          for (const notificationMethod of ["item/started", "item/completed"] as const) {
+            await harness.notify({
+              method: notificationMethod,
+              params: {
+                threadId,
+                turnId: "compact-thread-a",
+                item: { id: "item-thread-a", type: "contextCompaction" },
+              },
+            });
+          }
+          seedCodexTestBinding(sessionFile, replacement);
+          await harness.notify({
+            method: "turn/completed",
+            params: {
+              threadId,
+              turn: { id: "compact-thread-a", threadId, status: "completed" },
+            },
+          });
+          return {};
+        }
+        return undefined;
+      },
+      {
+        persistedThreads: ["thread-a"],
+        onStart: (...args) => {
+          clientStarts.push(args);
+        },
+      },
+    );
+    const params = createParams(sessionFile, workspaceDir);
+    const upstreamAbort = new AbortController();
+    const onAttemptAbort = vi.fn();
+    params.abortSignal = upstreamAbort.signal;
+    params.onAttemptAbort = onAttemptAbort;
+    params.expectedSessionRuntimeOwnership = {
+      model: "native",
+      auth: "host",
+      modelRef: { model: nativeThread.model, provider: nativeThread.modelProvider },
+    };
+
+    await expect(runCodexAppServerAttempt(params)).rejects.toMatchObject({
+      name: "AgentHarnessPreflightError",
+    });
+    expect(clientStarts).toHaveLength(1);
+    expect(harness.requests.some(({ method }) => method === "turn/start")).toBe(false);
+    await expect(readCodexAppServerBinding(sessionFile)).resolves.toEqual(replacement);
+    upstreamAbort.abort("after same-thread replacement reprepare");
     expect(onAttemptAbort).not.toHaveBeenCalled();
   });
 

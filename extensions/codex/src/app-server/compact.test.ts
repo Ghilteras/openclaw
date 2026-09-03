@@ -738,7 +738,7 @@ describe("maybeCompactCodexAppServerSession", () => {
     expect(await readCodexAppServerBinding(sessionFile)).toMatchObject({
       threadId: "thread-1",
       contextEngine: { projection },
-      nativeCompactionRetryPending: true,
+      nativeCompactionSyncPending: true,
     });
 
     await expect(maybeCompactCodexAppServerSession(params, options)).resolves.toMatchObject({
@@ -747,7 +747,7 @@ describe("maybeCompactCodexAppServerSession", () => {
     });
     const binding = await readCodexAppServerBinding(sessionFile);
     expect(binding?.contextEngine?.projection).toBeUndefined();
-    expect(binding?.nativeCompactionRetryPending).toBeUndefined();
+    expect(binding?.nativeCompactionSyncPending).toBeUndefined();
     expect(
       fake.request.mock.calls.filter(([method]) => method === "thread/compact/start"),
     ).toHaveLength(2);
@@ -1333,11 +1333,11 @@ describe("maybeCompactCodexAppServerSession", () => {
     expect(compactDetails(result).signal).toBe("thread/compact/start");
   });
 
-  it("clears post-context-engine retry state when the compaction item completes before terminal interruption", async () => {
+  it("clears sync state when compaction completes before terminal interruption", async () => {
     const fake = createFakeCodexClient({ autoCompleteCompaction: false });
     setCodexAppServerClientFactoryForTest(async () => fake.client);
     const sessionFile = await writeTestBinding({
-      nativeCompactionRetryPending: true,
+      nativeCompactionSyncPending: true,
       contextEngine: {
         schemaVersion: 1,
         engineId: "lossless-claw",
@@ -1405,10 +1405,10 @@ describe("maybeCompactCodexAppServerSession", () => {
     });
     const binding = await readCodexAppServerBinding(sessionFile);
     expect(binding?.contextEngine?.projection).toBeUndefined();
-    expect(binding?.nativeCompactionRetryPending).toBeUndefined();
+    expect(binding?.nativeCompactionSyncPending).toBeUndefined();
   });
 
-  it("keeps post-context-engine retry state when the native turn fails before compaction item completion", async () => {
+  it("keeps sync state when the native turn fails before compaction item completion", async () => {
     const fake = createFakeCodexClient({ autoCompleteCompaction: false });
     setCodexAppServerClientFactoryForTest(async () => fake.client);
     const projection = {
@@ -1465,7 +1465,7 @@ describe("maybeCompactCodexAppServerSession", () => {
     await expect(readCodexAppServerBinding(sessionFile)).resolves.toMatchObject({
       threadId: "thread-1",
       contextEngine: { projection },
-      nativeCompactionRetryPending: true,
+      nativeCompactionSyncPending: true,
     });
   });
 

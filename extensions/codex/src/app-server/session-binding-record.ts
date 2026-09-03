@@ -184,8 +184,8 @@ const threadBindingSchema = z
     pluginAppsInputFingerprint: optionalStringSchema,
     pluginAppPolicyContext: pluginAppPolicyContextSchema.optional().catch(undefined),
     contextEngine: contextEngineSchema.optional().catch(undefined),
-    // A rejected post-context-engine compaction must retry before the next turn.
-    nativeCompactionRetryPending: z.literal(true).optional().catch(undefined),
+    // Native history must synchronize after context-engine compaction before the next turn.
+    nativeCompactionSyncPending: z.literal(true).optional().catch(undefined),
     environmentSelectionFingerprint: optionalStringSchema,
     conversationStartId: optionalStringSchema,
     conversationSourceTransferComplete: z.literal(true).optional().catch(undefined),
