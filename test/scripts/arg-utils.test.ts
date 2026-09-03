@@ -1,5 +1,6 @@
 // Arg Utils tests cover arg utils script behavior.
 import { describe, expect, it } from "vitest";
+import { parseNonNegativeIntegerArg } from "../../scripts/lib/arg-utils.mts";
 import {
   booleanFlag,
   classifyBoundedUnsignedDecimal,
@@ -73,6 +74,31 @@ describe("scripts/lib/arg-utils required option arguments", () => {
     expect(() => requireOptionArgument(argv, 0, "--output")).toThrow(
       new Error("--output requires a value"),
     );
+  });
+});
+
+describe("scripts/lib/arg-utils non-negative integer arguments", () => {
+  it.each([
+    { input: "0", expected: 0 },
+    { input: "001", expected: 1 },
+    { input: String(Number.MAX_SAFE_INTEGER), expected: Number.MAX_SAFE_INTEGER },
+    { input: "-1", error: true },
+    { input: "NaN", error: true },
+    { input: "1.5", error: true },
+    { input: "1e3", error: true },
+    { input: " 1", error: true },
+    { input: "1 ", error: true },
+    { input: undefined, error: true },
+    { input: "--next", error: true },
+    { input: String(Number.MAX_SAFE_INTEGER + 1), error: true },
+  ])("parses non-negative integer argument %#", ({ input, expected, error }) => {
+    if (error) {
+      expect(() => parseNonNegativeIntegerArg(input, "--limit")).toThrow(
+        "--limit expects a non-negative integer",
+      );
+      return;
+    }
+    expect(parseNonNegativeIntegerArg(input, "--limit")).toBe(expected);
   });
 });
 

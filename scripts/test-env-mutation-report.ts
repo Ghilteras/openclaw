@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { isCodeFile, isTestRelatedFile, listRepoFilesSync } from "./check-file-utils.js";
+import { parseNonNegativeIntegerArg } from "./lib/arg-utils.mts";
 
 type EnvMutationOperation = "assign" | "delete" | "replace" | "stubEnv";
 
@@ -349,7 +350,7 @@ function parseArgs(argv: string[]): {
       continue;
     }
     if (arg === "--limit") {
-      limit = readNonNegativeIntArg(argv[index + 1]);
+      limit = parseNonNegativeIntegerArg(argv[index + 1], "--limit");
       index += 1;
       continue;
     }
@@ -366,17 +367,6 @@ function parseArgs(argv: string[]): {
   }
 
   return { help, includeAllowed, json, limit, repoRoot };
-}
-
-function readNonNegativeIntArg(raw: string | undefined): number {
-  if (!raw || raw.startsWith("--") || !/^\d+$/u.test(raw)) {
-    throw new Error("--limit expects a non-negative integer");
-  }
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value)) {
-    throw new Error("--limit expects a non-negative integer");
-  }
-  return value;
 }
 
 function printHelp(): void {
