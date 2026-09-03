@@ -26,6 +26,7 @@ import {
   type QuestionPrompt,
 } from "../../app/question-prompt.ts";
 import type { PresencePayload } from "../../app/user-profile.ts";
+import type { CanvasElementAnnotation } from "../../components/board/board-widget-commenter.ts";
 import { FullscreenController } from "../../components/fullscreen-controller.ts";
 import { SessionProgressCardController } from "../../components/session-progress-card-controller.ts";
 import { t } from "../../i18n/index.ts";
@@ -99,8 +100,15 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
       requestChatPageUpdate(state);
     }
   };
+  private readonly handleCanvasAnnotationEscape = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && this.canvasCommentTarget && this.presented && this.selected) {
+      event.preventDefault();
+      this.canvasCommentTarget = "";
+    }
+  };
   override connectedCallback() {
     document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    window.addEventListener("keydown", this.handleCanvasAnnotationEscape, true);
     super.connectedCallback();
   }
   protected override async scheduleUpdate() {
@@ -115,6 +123,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   override disconnectedCallback() {
     this.hiddenUpdateResume?.();
     document.removeEventListener("visibilitychange", this.handleVisibilityChange);
+    window.removeEventListener("keydown", this.handleCanvasAnnotationEscape, true);
     super.disconnectedCallback();
   }
 
@@ -303,6 +312,10 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   } | null = null;
   @litState() protected boardChatDockSize: BoardChatDockSize = boardChatDockLayout.load();
   @litState() protected canvasCommentTarget = "";
+  @litState() protected canvasAnnotationsByTarget: Record<
+    string,
+    readonly CanvasElementAnnotation[]
+  > = {};
   @litState() protected resetConfirmationOpen = false;
   protected deferredSessionHydrationRequestVersion = 0;
   protected sessionCompanionHydrationKey = "";

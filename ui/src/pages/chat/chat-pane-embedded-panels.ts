@@ -42,7 +42,11 @@ type SidebarPanelDefinitionParams = {
   hasBoard: boolean;
   canvasCommentAvailable: boolean;
   canvasCommentMode: boolean;
+  canvasAnnotationCount: number;
   onToggleCanvasComment: () => void;
+  onExitCanvasComment: () => void;
+  onDiscardCanvasComments: () => void;
+  onSendCanvasComments: () => void;
   chat: TemplateResult;
   workspace: TemplateResult | typeof nothing;
   tasks: TemplateResult | typeof nothing;
@@ -92,22 +96,87 @@ const SIDEBAR_PANEL_LOADING_VARIANTS = {
 function renderCanvasCommentAction(params: {
   available: boolean;
   active: boolean;
+  count: number;
   onToggle: () => void;
+  onExit: () => void;
+  onDiscard: () => void;
+  onSend: () => void;
 }): TemplateResult {
-  const label = t(params.active ? "chat.board.stopCommenting" : "chat.board.commentOnCanvas");
-  return html`<openclaw-tooltip .content=${label}>
+  if (!params.active) {
+    const label = t(
+      params.count > 0 ? "chat.board.resumeCommenting" : "chat.board.commentOnCanvas",
+      { count: String(params.count) },
+    );
+    return html`<openclaw-tooltip .content=${label}>
+      <button
+        class="rail-header__action canvas-annotation-launcher"
+        type="button"
+        data-canvas-comment-toggle
+        aria-label=${label}
+        aria-pressed="false"
+        ?disabled=${!params.available}
+        @click=${params.onToggle}
+      >
+        ${icons.mousePointer2}
+        ${params.count > 0
+          ? html`<span class="canvas-annotation-launcher__count">${params.count}</span>`
+          : nothing}
+      </button>
+    </openclaw-tooltip>`;
+  }
+  return html`<div
+    class="canvas-annotation-toolbar"
+    role="toolbar"
+    aria-label=${t("chat.board.annotationToolbar")}
+  >
+    <openclaw-tooltip .content=${t("chat.board.exitAnnotationMode")}>
+      <button
+        class="rail-header__action"
+        type="button"
+        data-canvas-comment-exit
+        aria-label=${t("chat.board.exitAnnotationMode")}
+        @click=${params.onExit}
+      >
+        ${icons.x}
+      </button>
+    </openclaw-tooltip>
+    <openclaw-tooltip .content=${t("chat.board.discardAnnotations")}>
+      <button
+        class="rail-header__action"
+        type="button"
+        data-canvas-comment-discard
+        aria-label=${t("chat.board.discardAnnotations")}
+        ?disabled=${params.count === 0}
+        @click=${params.onDiscard}
+      >
+        ${icons.trash}
+      </button>
+    </openclaw-tooltip>
     <button
-      class=${`rail-header__action ${params.active ? "rail-header__action--active" : ""}`}
+      class="canvas-annotation-toolbar__state"
       type="button"
       data-canvas-comment-toggle
-      aria-label=${label}
-      aria-pressed=${String(params.active)}
-      ?disabled=${!params.available}
+      aria-label=${t("chat.board.stopCommenting")}
+      aria-pressed="true"
       @click=${params.onToggle}
     >
-      ${icons.mousePointer2}
+      ${icons.messageSquare}<span>${t("chat.board.annotating")}</span>
     </button>
-  </openclaw-tooltip>`;
+    <button
+      class="canvas-annotation-toolbar__send"
+      type="button"
+      data-canvas-comment-send
+      aria-label=${t(
+        params.count === 1 ? "chat.board.stageAnnotation" : "chat.board.stageAnnotations",
+        { count: String(params.count) },
+      )}
+      ?disabled=${params.count === 0}
+      @click=${params.onSend}
+    >
+      ${t("chat.runControls.send")}
+      <span class="canvas-annotation-toolbar__count">${params.count}</span>
+    </button>
+  </div>`;
 }
 
 /** One ordered declaration for every chat side-panel slot. */
@@ -298,7 +367,11 @@ export function sidebarPanelDefinitions(
             headerAction: renderCanvasCommentAction({
               available: params.canvasCommentAvailable,
               active: params.canvasCommentMode,
+              count: params.canvasAnnotationCount,
               onToggle: params.onToggleCanvasComment,
+              onExit: params.onExitCanvasComment,
+              onDiscard: params.onDiscardCanvasComments,
+              onSend: params.onSendCanvasComments,
             }),
           }
         : {}),

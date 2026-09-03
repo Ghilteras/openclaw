@@ -23,7 +23,6 @@ import {
 import { formatUiError } from "../../lib/format-error.ts";
 import { showToast } from "../../lib/toast.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
-import { dispatchBrowserAnnotation } from "../browser/browser-annotation.ts";
 import { renderBoardMcpAppContent } from "./board-mcp-app-content.ts";
 import { BoardMcpAppLifecycle } from "./board-mcp-app-lifecycle.ts";
 import { renderBoardGrantedCapabilities } from "./board-widget-capabilities.ts";
@@ -37,11 +36,8 @@ import {
   renderBoardWidgetPending,
   renderBoardWidgetRejected,
 } from "./board-widget-cell-render.ts";
-import {
-  buildCanvasElementAnnotation,
-  type CanvasInspectedNode,
-  requestWidgetInspection,
-} from "./board-widget-commenter.ts";
+import type { CanvasElementAnnotation } from "./board-widget-commenter.ts";
+import "./board-widget-commenter.ts";
 import { BoardWidgetFrameLifecycle } from "./board-widget-frame.ts";
 import "../tooltip.ts";
 import "../web-awesome.ts";
@@ -87,19 +83,15 @@ class OpenClawBoardWidgetCell extends OpenClawLightDomElement {
   @property({ type: Boolean }) canMutate = true;
   @property({ type: Boolean }) canGrant = true;
   @property({ type: Boolean }) commentMode = false;
+  @property({ attribute: false }) commentAnnotations: readonly CanvasElementAnnotation[] = [];
 
   @state() private actionError = "";
   @state() private actionPending = false;
-  @state() private commentNode: CanvasInspectedNode | null = null;
-  @state() private commentCapturing = false;
   @state() private pluginRenderer: PluginBoardWidgetRenderer | null = null;
   @state() private pluginRendererError = "";
   @state() private pluginRendererLabel = "";
   private pluginRendererKind = "";
   private pluginRendererLoadToken: object | null = null;
-  private commentRequest = 0;
-  private commentHoverTimer: number | null = null;
-  private commentHoverPoint: { x: number; y: number } | null = null;
   private readonly appView = new BoardMcpAppLifecycle({
     active: () => this.active,
     connected: () => this.isConnected,
@@ -132,11 +124,7 @@ class OpenClawBoardWidgetCell extends OpenClawLightDomElement {
     const previousWidget = changed.get("widget");
     if (previousWidget && previousWidget !== this.widget) {
       this.actionError = "";
-      this.clearCommentHover();
       this.frame.widgetChanged(previousWidget, this.widget);
-    }
-    if (changed.has("commentMode") && !this.commentMode) {
-      this.clearCommentHover();
     }
     this.appView.update(this.widget, this.callbacks);
     if (changed.has("active")) {
@@ -170,7 +158,6 @@ class OpenClawBoardWidgetCell extends OpenClawLightDomElement {
   }
 
   override disconnectedCallback(): void {
-    this.clearCommentHover();
     this.resetPluginRenderer();
     this.frame.disconnect();
     this.appView.disconnect();
@@ -403,93 +390,6 @@ class OpenClawBoardWidgetCell extends OpenClawLightDomElement {
     }
   }
 
-  private commentPoint(event: PointerEvent): { x: number; y: number } {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLElement)) {
-      return { x: 0, y: 0 };
-    }
-    const bounds = target.getBoundingClientRect();
-    return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-  }
-
-  private readonly inspectCommentPoint = async (): Promise<void> => {
-    this.commentHoverTimer = null;
-    const point = this.commentHoverPoint;
-    const frame = this.querySelector<HTMLIFrameElement>(".board-widget__frame");
-    if (!point || !frame || !this.commentMode) {
-      return;
-    }
-    const request = ++this.commentRequest;
-    try {
-      const node = await requestWidgetInspection(frame, point);
-      if (request === this.commentRequest && this.commentMode) {
-        this.commentNode = node;
-      }
-    } catch {
-      if (request === this.commentRequest) {
-        this.commentNode = null;
-      }
-    }
-  };
-
-  private handleCommentPointerMove(event: PointerEvent): void {
-    this.commentHoverPoint = this.commentPoint(event);
-    if (this.commentHoverTimer === null) {
-      this.commentHoverTimer = window.setTimeout(() => void this.inspectCommentPoint(), 40);
-    }
-  }
-
-  private clearCommentHover(): void {
-    this.commentRequest += 1;
-    this.commentHoverPoint = null;
-    this.commentNode = null;
-    if (this.commentHoverTimer !== null) {
-      window.clearTimeout(this.commentHoverTimer);
-      this.commentHoverTimer = null;
-    }
-  }
-
-  private async handleCommentClick(event: PointerEvent, widget: BoardWidget): Promise<void> {
-    event.preventDefault();
-    event.stopPropagation();
-    const frame = this.querySelector<HTMLIFrameElement>(".board-widget__frame");
-    if (!frame || this.commentCapturing) {
-      return;
-    }
-    this.commentCapturing = true;
-    try {
-      const node = await requestWidgetInspection(frame, this.commentPoint(event));
-      if (!node) {
-        showToast({ message: t("chat.board.commentElementUnavailable") });
-        return;
-      }
-      const draft = await buildCanvasElementAnnotation({
-        frame,
-        node,
-        title: widget.title || widget.name,
-        widgetName: widget.name,
-      });
-      const result = dispatchBrowserAnnotation(draft);
-      if (result === "accepted") {
-        showToast({ message: t("chat.board.commentAdded") });
-        this.dispatchEvent(new CustomEvent("canvas-comment-captured", { bubbles: true }));
-        this.clearCommentHover();
-      } else {
-        showToast({
-          message: t(
-            result === "rejected"
-              ? "chat.board.commentLimitReached"
-              : "chat.board.commentChatUnavailable",
-          ),
-        });
-      }
-    } catch (error) {
-      showToast({ message: t("chat.board.commentFailed", { error: formatUiError(error) }) });
-    } finally {
-      this.commentCapturing = false;
-    }
-  }
-
   override render() {
     const widget = this.widget;
     const rect = this.rect;
@@ -583,29 +483,14 @@ class OpenClawBoardWidgetCell extends OpenClawLightDomElement {
         >
           ${body}
           ${this.commentMode && widget.contentKind === "html" && !bodyErrored
-            ? html`<div
-                class="board-widget__comment-overlay"
-                data-canvas-comment-overlay
-                aria-label=${t("chat.board.commentHint")}
-                @pointermove=${(event: PointerEvent) => this.handleCommentPointerMove(event)}
-                @pointerleave=${() => this.clearCommentHover()}
-                @pointerdown=${(event: PointerEvent) => event.preventDefault()}
-                @click=${(event: PointerEvent) => void this.handleCommentClick(event, widget)}
-              >
-                ${this.commentNode
-                  ? html`<span
-                        class="board-widget__comment-highlight"
-                        style=${`left:${this.commentNode.viewportRect.x}px;top:${this.commentNode.viewportRect.y}px;width:${this.commentNode.viewportRect.width}px;height:${this.commentNode.viewportRect.height}px`}
-                      ></span>
-                      <span class="board-widget__comment-label"
-                        >${this.commentNode.selector || this.commentNode.tag}</span
-                      >`
-                  : html`<span class="board-widget__comment-label"
-                      >${this.commentCapturing
-                        ? t("chat.board.commentCapturing")
-                        : t("chat.board.commentHint")}</span
-                    >`}
-              </div>`
+            ? html`<openclaw-board-widget-commenter
+                active
+                .annotations=${this.commentAnnotations}
+                .sessionKey=${this.sessionKey}
+                .title=${label}
+                .widgetName=${widget.name}
+                .widgetRevision=${widget.revision}
+              ></openclaw-board-widget-commenter>`
             : nothing}
           ${this.actionError && widget.grantState !== "pending"
             ? html`<div class="board-widget__error-overlay">

@@ -13,7 +13,11 @@ type PanelTestOptions = {
   hasBoard?: boolean;
   canvasCommentAvailable?: boolean;
   canvasCommentMode?: boolean;
+  canvasAnnotationCount?: number;
   onToggleCanvasComment?: () => void;
+  onExitCanvasComment?: () => void;
+  onDiscardCanvasComments?: () => void;
+  onSendCanvasComments?: () => void;
 };
 
 function panelDefinitions(discussionAvailable: boolean, options: PanelTestOptions = {}) {
@@ -42,13 +46,20 @@ describe("chat pane embedded panels", () => {
     expect(discussionSlots(true)).toContain("discussion");
   });
 
-  it("offers the Canvas commenter from the Board chat header", () => {
+  it("renders the staged Canvas annotation controls in the Board chat header", () => {
     const onToggleCanvasComment = vi.fn();
+    const onExitCanvasComment = vi.fn();
+    const onDiscardCanvasComments = vi.fn();
+    const onSendCanvasComments = vi.fn();
     const definitions = panelDefinitions(false, {
       hasBoard: true,
       canvasCommentAvailable: true,
       canvasCommentMode: true,
+      canvasAnnotationCount: 2,
       onToggleCanvasComment,
+      onExitCanvasComment,
+      onDiscardCanvasComments,
+      onSendCanvasComments,
     });
     const action = sidebarPanelActions(definitions).chat;
     const container = document.createElement("div");
@@ -59,6 +70,12 @@ describe("chat pane embedded panels", () => {
     expect(button?.getAttribute("aria-pressed")).toBe("true");
     button?.click();
     expect(onToggleCanvasComment).toHaveBeenCalledOnce();
+    container.querySelector<HTMLButtonElement>("button[data-canvas-comment-exit]")?.click();
+    container.querySelector<HTMLButtonElement>("button[data-canvas-comment-discard]")?.click();
+    container.querySelector<HTMLButtonElement>("button[data-canvas-comment-send]")?.click();
+    expect(onExitCanvasComment).toHaveBeenCalledOnce();
+    expect(onDiscardCanvasComments).toHaveBeenCalledOnce();
+    expect(onSendCanvasComments).toHaveBeenCalledOnce();
   });
 
   it("enumerates a structural loading variant for every side-panel tab", async () => {

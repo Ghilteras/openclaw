@@ -58,6 +58,60 @@ async function openDashboard(page: Page): Promise<void> {
   await page.locator(".board-session-surface").waitFor();
 }
 
+async function openCommenterBoard(page: Page) {
+  const origin = new URL(controlUi.baseUrl).origin;
+  const documentHtml = buildWidgetDocument(
+    "Release dashboard",
+    `<style>
+      body { min-height: 320px; padding: 32px; background: var(--surface); }
+      .panel { max-width: 520px; padding: 28px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
+      button { margin-top: 20px; }
+    </style>
+    <main class="panel">
+      <h1>Release dashboard</h1>
+      <p>Review the candidate before promotion.</p>
+      <button id="save-profile" class="primary">Promote release</button>
+    </main>`,
+  );
+  const frameUrl = `${origin}/__openclaw__/board/${encodeURIComponent(sessionKey)}/release-dashboard/index.html?bt=ticket`;
+  await page.route("**/__openclaw__/board/**", (route) =>
+    route.fulfill({ status: 200, contentType: "text/html", body: documentHtml }),
+  );
+  const gateway = await installMockGateway(page, {
+    sessionKey,
+    featureMethods: ["board.get", "chat.metadata", "chat.send", "chat.startup"],
+    methodResponses: {
+      "board.get": {
+        sessionKey,
+        revision: 1,
+        tabs: [{ tabId: "main", title: "Main", position: 0, chatDock: "right" }],
+        widgets: [
+          {
+            name: "release-dashboard",
+            tabId: "main",
+            title: "Release dashboard",
+            contentKind: "html",
+            sizeW: 8,
+            sizeH: 6,
+            heightMode: "fixed",
+            position: 0,
+            grantState: "none",
+            revision: 1,
+            frameUrl,
+            viewTicket: "ticket",
+            viewTicketTtlMs: 1_200_000,
+            viewGeneration: "0123456789abcdef0123456789abcdef",
+            sandboxUrl: buildBoardWidgetSandboxPath({ grantState: "none" }),
+            sandboxPort,
+          },
+        ],
+      },
+    },
+  });
+  await openDashboard(page);
+  return gateway;
+}
+
 describeControlUiE2e("Control UI dashboard A2UI", () => {
   beforeAll(async () => {
     execFileSync(process.execPath, ["extensions/canvas/scripts/bundle-a2ui.mjs"], {
@@ -125,57 +179,7 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
     contexts.add(context);
     const page = await context.newPage();
     const video = page.video();
-    const origin = new URL(controlUi.baseUrl).origin;
-    const documentHtml = buildWidgetDocument(
-      "Release dashboard",
-      `<style>
-        body { min-height: 320px; padding: 32px; background: var(--surface); }
-        .panel { max-width: 520px; padding: 28px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
-        button { margin-top: 20px; }
-      </style>
-      <main class="panel">
-        <h1>Release dashboard</h1>
-        <p>Review the candidate before promotion.</p>
-        <button id="save-profile" class="primary">Promote release</button>
-      </main>`,
-    );
-    const frameUrl = `${origin}/__openclaw__/board/${encodeURIComponent(sessionKey)}/release-dashboard/index.html?bt=ticket`;
-    await page.route("**/__openclaw__/board/**", (route) =>
-      route.fulfill({ status: 200, contentType: "text/html", body: documentHtml }),
-    );
-    const gateway = await installMockGateway(page, {
-      sessionKey,
-      featureMethods: ["board.get", "chat.metadata", "chat.send", "chat.startup"],
-      methodResponses: {
-        "board.get": {
-          sessionKey,
-          revision: 1,
-          tabs: [{ tabId: "main", title: "Main", position: 0, chatDock: "right" }],
-          widgets: [
-            {
-              name: "release-dashboard",
-              tabId: "main",
-              title: "Release dashboard",
-              contentKind: "html",
-              sizeW: 8,
-              sizeH: 6,
-              heightMode: "fixed",
-              position: 0,
-              grantState: "none",
-              revision: 1,
-              frameUrl,
-              viewTicket: "ticket",
-              viewTicketTtlMs: 1_200_000,
-              viewGeneration: "0123456789abcdef0123456789abcdef",
-              sandboxUrl: buildBoardWidgetSandboxPath({ grantState: "none" }),
-              sandboxPort,
-            },
-          ],
-        },
-      },
-    });
-
-    await openDashboard(page);
+    const gateway = await openCommenterBoard(page);
     const outer = page.locator(".board-widget__frame");
     await outer.waitFor();
     const outerFrame = await outer.elementHandle().then((handle) => handle?.contentFrame());
@@ -183,11 +187,16 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
     const widgetFrame = outerFrame!.childFrames()[0]!;
     const target = widgetFrame.locator("#save-profile");
     await target.waitFor();
+    if (recordProof) {
+      await page.screenshot({ path: path.join(commenterProofDir, "inactive.png") });
+    }
 
     const toggle = page.getByRole("button", { name: "Comment on Canvas" });
     await toggle.click();
     await page.locator("[data-canvas-comment-overlay]").waitFor();
+    await page.getByRole("button", { name: "Stop commenting on Canvas" }).waitFor();
     if (recordProof) {
+      await page.screenshot({ path: path.join(commenterProofDir, "annotating.png") });
       await page.waitForTimeout(600);
     }
     const targetBounds = await target.boundingBox();
@@ -206,17 +215,58 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
       targetBounds!.x + targetBounds!.width / 2,
       targetBounds!.y + targetBounds!.height / 2,
     );
-
-    const annotation = page.locator('.chat-attachment-thumb--browser-annotation[role="group"]');
-    await annotation.waitFor();
-    await expect.poll(() => toggle.getAttribute("aria-pressed")).toBe("false");
+    const commentInput = page.getByRole("textbox", {
+      name: "Comment on selected Canvas element",
+    });
+    await commentInput.fill("Make this action less prominent.");
     if (recordProof) {
+      await page.screenshot({ path: path.join(commenterProofDir, "comment-editor.png") });
+      await page.waitForTimeout(700);
+    }
+    await page.getByRole("button", { name: "Add element comment" }).click();
+    const stageAnnotations = page.getByRole("button", {
+      name: "Add 1 annotation to the chat composer",
+    });
+    await stageAnnotations.waitFor();
+    expect(await page.locator(".chat-browser-annotation-group").count()).toBe(0);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Resume annotating (1)" }).click();
+    await page.getByRole("button", { name: "Discard annotations" }).click();
+    await expect.poll(() => page.locator(".board-widget__comment-marker").count()).toBe(0);
+
+    await page.mouse.click(
+      targetBounds!.x + targetBounds!.width / 2,
+      targetBounds!.y + targetBounds!.height / 2,
+    );
+    await commentInput.fill("Make this action less prominent.");
+    await page.getByRole("button", { name: "Add element comment" }).click();
+    await stageAnnotations.waitFor();
+    if (recordProof) {
+      await page.screenshot({ path: path.join(commenterProofDir, "annotation-toolbar.png") });
       await page.waitForTimeout(900);
     }
+    await stageAnnotations.click();
+    const annotationGroup = page.locator(".chat-browser-annotation-group");
+    await annotationGroup.waitFor();
+    await annotationGroup.locator(".chat-browser-annotation-group__summary").hover();
+    const annotationPopover = annotationGroup.locator(".chat-browser-annotation-group__popover");
+    await expect
+      .poll(() => annotationPopover.getAttribute("aria-label"))
+      .toBe("Annotation details");
+    await annotationPopover.getByText("#save-profile", { exact: true }).waitFor();
+    await annotationPopover
+      .getByText("Make this action less prominent.", { exact: true })
+      .waitFor();
+    await annotationPopover.locator("img").waitFor();
+    if (recordProof) {
+      await page.screenshot({ path: path.join(commenterProofDir, "composer-hover.png") });
+      await page.waitForTimeout(900);
+    }
+
     const composer = page.locator(
       ".chat-pane-cache__pane--active .agent-chat__composer-combobox textarea",
     );
-    await composer.fill("Make this action less prominent.");
+    await composer.fill("Please apply this feedback.");
     if (recordProof) {
       await page.waitForTimeout(700);
     }
@@ -225,7 +275,7 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
     const sent = (await gateway.getRequests("chat.send"))[0]?.params as { message?: unknown };
     expect(sent.message).toContain("Make this action less prominent.");
     expect(sent.message).toContain("#save-profile");
-    await page.getByText("Make this action less prominent.", { exact: true }).waitFor();
+    await page.getByText("Please apply this feedback.", { exact: true }).waitFor();
     expect(await page.getByText("I annotated the page", { exact: false }).count()).toBe(0);
     await page.waitForTimeout(recordProof ? 1_000 : 100);
 
@@ -233,6 +283,45 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
     if (recordProof && video) {
       await video.saveAs(path.join(commenterProofDir, "canvas-element-commenter.webm"));
     }
+    await context.close();
+    contexts.delete(context);
+  });
+
+  it("drops a Canvas capture when its originating Board becomes inactive", async () => {
+    const context = await browser.newContext({
+      permissions: ["local-network-access"],
+      viewport: { width: 1280, height: 800 },
+    });
+    contexts.add(context);
+    const page = await context.newPage();
+    await openCommenterBoard(page);
+    await page.getByRole("button", { name: "Comment on Canvas" }).click();
+
+    const outerFrame = await page
+      .locator(".board-widget__frame")
+      .elementHandle()
+      .then((handle) => handle?.contentFrame());
+    await expect.poll(() => outerFrame?.childFrames().length ?? 0).toBe(1);
+    const targetBounds = await outerFrame!.childFrames()[0]!.locator("#save-profile").boundingBox();
+    expect(targetBounds).not.toBeNull();
+    await page.mouse.click(
+      targetBounds!.x + targetBounds!.width / 2,
+      targetBounds!.y + targetBounds!.height / 2,
+    );
+    await page
+      .getByRole("textbox", { name: "Comment on selected Canvas element" })
+      .fill("This capture must stay with its originating Board.");
+    await page.evaluate(() => {
+      document.querySelector<HTMLButtonElement>(".board-widget__comment-submit")?.click();
+      document
+        .querySelector<HTMLElement>('.chat-pane__face-switch wa-radio[value="chat"]')
+        ?.click();
+    });
+
+    await page.locator(".board-session-surface").waitFor({ state: "hidden" });
+    await expect.poll(() => page.locator(".board-widget__comment-marker").count()).toBe(0);
+    expect(await page.locator(".chat-browser-annotation-group").count()).toBe(0);
+    await page.close();
     await context.close();
     contexts.delete(context);
   });

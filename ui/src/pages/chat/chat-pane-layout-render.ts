@@ -144,6 +144,8 @@ export abstract class ChatPaneLayoutRender extends ChatPaneBrowserAnnotationRend
     const desktopPresented =
       this.active && this.presented && isSidebarSlotVisible(sidebarLayout, "desktop");
     const desktopRefreshOnPresentation = !this.pendingPanelToggleRequests.has("desktop");
+    const canvasAnnotationTarget = this.canvasAnnotationTarget(board);
+    const canvasAnnotations = this.canvasAnnotations(canvasAnnotationTarget);
     const panelDefinitions = sidebarPanelDefinitions({
       state,
       themeMode: this.context.theme.resolvedMode,
@@ -168,13 +170,12 @@ export abstract class ChatPaneLayoutRender extends ChatPaneBrowserAnnotationRend
             widget.grantState !== "pending" &&
             widget.grantState !== "rejected",
         ),
-      canvasCommentMode:
-        this.canvasCommentTarget ===
-        `${this.resolveBoardSessionKey(board.snapshot.sessionKey)}\u0000${board.activeTabId}`,
-      onToggleCanvasComment: () => {
-        const target = `${this.resolveBoardSessionKey(board.snapshot.sessionKey)}\u0000${board.activeTabId}`;
-        this.canvasCommentTarget = this.canvasCommentTarget === target ? "" : target;
-      },
+      canvasCommentMode: this.canvasCommentTarget === canvasAnnotationTarget,
+      canvasAnnotationCount: canvasAnnotations.length,
+      onToggleCanvasComment: () => this.toggleCanvasAnnotationMode(canvasAnnotationTarget),
+      onExitCanvasComment: () => this.exitCanvasAnnotationMode(canvasAnnotationTarget),
+      onDiscardCanvasComments: () => this.discardCanvasAnnotations(canvasAnnotationTarget),
+      onSendCanvasComments: () => this.sendCanvasAnnotations(canvasAnnotationTarget),
       chat,
       workspace: renderSessionWorkspaceRail(sessionWorkspace, { embedded: true }),
       tasks: renderBackgroundTasksRail(backgroundTasks, { embedded: true }),

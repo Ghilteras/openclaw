@@ -22,6 +22,12 @@ export type BrowserAnnotationDraft = {
     displayUrl: string;
     markedRegionCount: number;
     inspectedElement: boolean;
+    /** Operator-authored feedback attached to an inspected element. */
+    comment?: string;
+    /** Bounded page-reported selector used only for annotation presentation. */
+    selector?: string;
+    /** Bounded page-reported tag used only for annotation presentation. */
+    elementTag?: string;
   };
   /** PNG data URL of the screenshot with the markup composited in. */
   dataUrl: string;

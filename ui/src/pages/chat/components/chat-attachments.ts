@@ -7,7 +7,7 @@ import type { ImageLightboxItem } from "../../../components/image-lightbox.ts";
 import "../../../components/tooltip.ts";
 import "../../../components/web-awesome.ts";
 import { t } from "../../../i18n/index.ts";
-import type { BrowserAnnotationAttachment, ChatAttachment } from "../../../lib/chat/chat-types.ts";
+import type { ChatAttachment } from "../../../lib/chat/chat-types.ts";
 import { showToast } from "../../../lib/toast.ts";
 import {
   generateAttachmentId,
@@ -576,19 +576,6 @@ export function renderChatAttachmentMenuOptions(fileIcon = icons.folder) {
   `;
 }
 
-function removeBrowserAnnotationAttachment(
-  attachment: ChatAttachment,
-  props: ChatAttachmentControlsProps,
-): void {
-  if (props.onRemoveAttachment) {
-    props.onRemoveAttachment(attachment);
-    return;
-  }
-  const next = currentAttachments(props).filter((candidate) => candidate.id !== attachment.id);
-  releaseChatAttachmentPayload(attachment.id);
-  props.onAttachmentsChange?.(next);
-}
-
 function renderAttachmentImage(
   attachment: ChatAttachment,
   alt: string,
@@ -615,62 +602,70 @@ function renderAttachmentImage(
   `;
 }
 
-function renderBrowserAnnotationAttachment(
-  attachment: ChatAttachment,
-  annotation: BrowserAnnotationAttachment,
+function removeBrowserAnnotationGroup(
+  annotations: readonly ChatAttachment[],
+  props: ChatAttachmentControlsProps,
+): void {
+  if (annotations.length === 1 && annotations[0] && props.onRemoveAttachment) {
+    props.onRemoveAttachment(annotations[0]);
+    return;
+  }
+  const ids = new Set(annotations.map((attachment) => attachment.id));
+  for (const attachment of annotations) {
+    releaseChatAttachmentPayload(attachment.id);
+  }
+  props.onAttachmentsChange?.(
+    currentAttachments(props).filter((attachment) => !ids.has(attachment.id)),
+  );
+}
+
+function renderBrowserAnnotationGroup(
+  attachments: readonly ChatAttachment[],
   props: ChatAttachmentControlsProps,
 ) {
-  const identity =
-    annotation.title.trim() ||
-    annotation.displayUrl.trim() ||
-    attachment.fileName ||
-    t("chat.attachments.attachedFile");
-  const regionLabel = t(
-    annotation.markedRegionCount === 1
-      ? "chat.composer.browserAnnotationRegion"
-      : "chat.composer.browserAnnotationRegions",
-    { count: String(annotation.markedRegionCount) },
-  );
-  const removeLabel = t("chat.composer.removeBrowserAnnotation", { name: identity });
-
-  return html`
-    <div
-      class="chat-attachment-thumb chat-attachment-thumb--browser-annotation"
-      data-attachment-id=${attachment.id}
-      role="group"
-      aria-label=${`${t("chat.composer.browserAnnotation")}: ${identity}`}
-    >
-      <div class="chat-browser-annotation-card__preview">
-        ${renderAttachmentImage(
-          attachment,
-          t("chat.composer.browserAnnotationPreview"),
-          identity,
-          props,
-        )}
-      </div>
-      <div class="chat-attachment-file__body chat-browser-annotation-card__body">
-        <span
-          class="chat-attachment-file__name chat-browser-annotation-card__identity"
-          title=${identity}
-          >${identity}</span
-        >
-        <span class="chat-attachment-file__meta chat-browser-annotation-card__meta">
-          <span>${regionLabel}</span>
-        </span>
-      </div>
-      <openclaw-tooltip .content=${removeLabel}>
-        <button
-          class="chat-attachment-remove chat-browser-annotation-card__remove"
-          type="button"
-          aria-label=${removeLabel}
-          ?disabled=${props.disabled}
-          @click=${() => removeBrowserAnnotationAttachment(attachment, props)}
-        >
-          ${icons.x}
-        </button>
-      </openclaw-tooltip>
+  const labelKey =
+    attachments.length === 1
+      ? "chat.composer.browserAnnotationCount"
+      : "chat.composer.browserAnnotationCountPlural";
+  const label = t(labelKey, { count: String(attachments.length) });
+  return html`<div class="chat-browser-annotation-group" role="group" aria-label=${label}>
+    <div class="chat-browser-annotation-group__summary" tabindex="0">
+      <span aria-hidden="true">${icons.messageSquare}</span>
+      <span>${label}</span>
+      <button
+        type="button"
+        class="chat-browser-annotation-group__remove"
+        aria-label=${t("chat.composer.removeBrowserAnnotations")}
+        ?disabled=${props.disabled}
+        @click=${() => removeBrowserAnnotationGroup(attachments, props)}
+      >
+        ${icons.x}
+      </button>
     </div>
-  `;
+    <div
+      class="chat-browser-annotation-group__popover"
+      aria-label=${t("chat.composer.browserAnnotationDetails")}
+    >
+      ${attachments.map((attachment, index) => {
+        const annotation = attachment.browserAnnotation!;
+        const preview = getChatAttachmentPreviewUrl(attachment);
+        const selector = annotation.selector || annotation.title || annotation.displayUrl;
+        return html`<article class="chat-browser-annotation-group__item">
+          ${preview
+            ? html`<img src=${preview} alt=${t("chat.composer.browserAnnotationPreview")} />`
+            : nothing}
+          <div class="chat-browser-annotation-group__item-copy">
+            <div class="chat-browser-annotation-group__item-title">
+              <span class="chat-browser-annotation-group__number">${index + 1}</span>
+              ${annotation.elementTag ? html`<code>${annotation.elementTag}</code>` : nothing}
+              <span title=${selector}>${selector}</span>
+            </div>
+            <p>${annotation.comment || annotation.title}</p>
+          </div>
+        </article>`;
+      })}
+    </div>
+  </div>`;
 }
 
 export function renderAttachmentPreview(props: ChatAttachmentControlsProps) {
@@ -678,20 +673,24 @@ export function renderAttachmentPreview(props: ChatAttachmentControlsProps) {
   if (attachments.length === 0) {
     return nothing;
   }
+  const browserAnnotations = attachments.filter((attachment) => attachment.browserAnnotation);
+  const ordinaryAttachments = attachments.filter((attachment) => !attachment.browserAnnotation);
   return html`
-    <div
-      class="chat-attachments-preview"
-      ${ref(syncChatAttachmentRailScroll)}
-      @scroll=${(event: Event) => {
-        if (event.currentTarget instanceof Element) {
-          syncChatAttachmentRailScroll(event.currentTarget);
-        }
-      }}
-    >
-      ${attachments.map((att) =>
-        att.browserAnnotation
-          ? renderBrowserAnnotationAttachment(att, att.browserAnnotation, props)
-          : html`
+    ${browserAnnotations.length > 0
+      ? renderBrowserAnnotationGroup(browserAnnotations, props)
+      : nothing}
+    ${ordinaryAttachments.length > 0
+      ? html`<div
+          class="chat-attachments-preview"
+          ${ref(syncChatAttachmentRailScroll)}
+          @scroll=${(event: Event) => {
+            if (event.currentTarget instanceof Element) {
+              syncChatAttachmentRailScroll(event.currentTarget);
+            }
+          }}
+        >
+          ${ordinaryAttachments.map(
+            (att) => html`
               <div
                 class=${[
                   "chat-attachment-thumb",
@@ -747,7 +746,8 @@ export function renderAttachmentPreview(props: ChatAttachmentControlsProps) {
                 </openclaw-tooltip>
               </div>
             `,
-      )}
-    </div>
+          )}
+        </div>`
+      : nothing}
   `;
 }

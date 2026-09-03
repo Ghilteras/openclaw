@@ -8,8 +8,16 @@ export function canAdmitBrowserAnnotation(
   attachments: readonly ChatAttachment[],
   modelContext: string,
 ): boolean {
-  let annotationCount = 1;
-  let contextLength = modelContext.length;
+  return canAdmitBrowserAnnotations(attachments, [modelContext]);
+}
+
+/** Applies the composer limits atomically before a staged annotation batch is admitted. */
+export function canAdmitBrowserAnnotations(
+  attachments: readonly ChatAttachment[],
+  modelContexts: readonly string[],
+): boolean {
+  let annotationCount = modelContexts.length;
+  let contextLength = modelContexts.reduce((total, context) => total + context.length, 0);
   if (contextLength > MAX_BROWSER_ANNOTATION_CONTEXT_CHARS) {
     return false;
   }
