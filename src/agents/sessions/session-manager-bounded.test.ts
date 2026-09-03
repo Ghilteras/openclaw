@@ -8,6 +8,7 @@ import {
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
 import { readSessionTranscriptBoundedActiveContextCore } from "../../config/sessions/session-accessor.sqlite-active-context.js";
+import { SYNC_REBUILD_MAX_BYTES } from "../../config/sessions/session-transcript-index.js";
 import { runWithSessionTranscriptReadFence } from "../../config/sessions/session-transcript-read-fence.js";
 import { waitForSessionTranscriptIndexReconcile } from "../../config/sessions/session-transcript-reconcile.js";
 import { SessionManager } from "./session-manager.js";
@@ -269,4 +270,51 @@ it("preserves inactive siblings when the bounded active branch fits its limits",
       }),
     ]),
   );
+});
+
+it("keeps a multi-megabyte transcript readable after removing a trailing assistant suffix", async () => {
+  const dir = tempDirs.make("openclaw-session-manager-bounded-suffix-");
+  const scope = {
+    agentId: "main",
+    sessionId: "bounded-suffix-session",
+    sessionKey: "agent:main:bounded-suffix-session",
+    storePath: path.join(dir, "sessions.json"),
+  };
+  await upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 1 });
+  // Past the synchronous-rebuild ceiling a whole-transcript rewrite hands the projection to the
+  // reconcile worker, so every reader below would fault until that worker caught up.
+  await appendTranscriptMessage(scope, {
+    cwd: dir,
+    message: { role: "user", content: "x".repeat(SYNC_REBUILD_MAX_BYTES) },
+  });
+  const retained = await appendTranscriptMessage(scope, {
+    cwd: dir,
+    message: { role: "user", content: "retained" },
+  });
+  for (const content of ["yield tool call", "aborted"]) {
+    await appendTranscriptMessage(scope, { cwd: dir, message: { role: "assistant", content } });
+  }
+
+  const limits = { maxBytes: 4096, maxEvents: 3 };
+  const manager = SessionManager.open(scope, dir, limits);
+  expect(manager.buildSessionContext().messages).toMatchObject([
+    { content: "retained" },
+    { content: "yield tool call" },
+    { content: "aborted" },
+  ]);
+  expect(
+    manager.removeTrailingEntries(
+      (entry) => entry.type === "message" && entry.message.role === "assistant",
+    ),
+  ).toBe(2);
+
+  // Both reads happen without a reconcile wait: the suffix rewrite owns the projection inline.
+  await expect(loadTranscriptEvents(scope)).resolves.toMatchObject([
+    { type: "session" },
+    { message: { role: "user" } },
+    { message: { role: "user", content: "retained" } },
+  ]);
+  const context = readSessionTranscriptBoundedActiveContextCore(scope, limits);
+  expect(context.activeLeafEntryId).toBe(retained.messageId);
+  expect(context.events.at(-1)).toMatchObject({ message: { content: "retained" } });
 });
