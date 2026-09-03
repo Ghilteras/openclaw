@@ -314,6 +314,42 @@ describe("DraftPlaceState repository selection", () => {
     },
   );
 
+  it("waits for allocation discovery before restoring a saved cloud preference", async () => {
+    const { state, request, readPreference } = createRepositoryFixture({ workspaceGit: true });
+    const allocation = createDeferred<WorktreesBranchesResult>();
+    request.mockImplementation(async (method, params) => {
+      if (method !== "worktrees.branches") {
+        return {};
+      }
+      return params?.includeRepositoryStatus
+        ? { repositoryStatus: "git", branches: [], defaultBranch: "main" }
+        : allocation.promise;
+    });
+    readPreference.mockReturnValue({ where: { kind: "cloud", id: "aws" } });
+
+    state.adoptAgentDefaults();
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenLastCalledWith("worktrees.branches", {
+        repoRoot: "/workspace",
+        includeAllocationStatus: true,
+        baseRef: "main",
+      }),
+    );
+    state.restorePreferenceSelections();
+    expect(state.placementPreferenceReady).toBe(false);
+    expect(state.cloudProfileId).toBe("");
+
+    allocation.resolve({ branches: [], allocationStatus: "available" });
+    await vi.waitFor(() =>
+      expect(state.repository).toMatchObject({ kind: "git", allocationStatus: "available" }),
+    );
+    state.restorePreferenceSelections();
+
+    expect(state.placementPreferenceReady).toBe(true);
+    expect(state.cloudProfileId).toBe("aws");
+    expect(state.worktree).toBe(true);
+  });
+
   it.each([false, true])(
     "finishes restoring a saved cloud preference for a non-Git workspace (unavailable: %s)",
     async (unavailable) => {

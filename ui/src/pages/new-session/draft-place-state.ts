@@ -638,12 +638,11 @@ export class DraftPlaceState {
       this.gateway.cloudProfilesReady
     ) {
       const automatic = preferredWhere.kind === "auto-device";
-      const deviceAvailable = automatic
-        ? this.devices().some((device) => device.selectable)
-        : this.devices().some(
-            (device) => device.deviceId === preferredWhere.id && device.selectable,
-          );
-      const restore = this.repositoryState.placementRestoreAvailable(deviceAvailable);
+      const devices = this.devices();
+      const destinationPresent = automatic
+        ? devices.length > 0
+        : devices.some((device) => device.deviceId === preferredWhere.id);
+      const restore = this.repositoryState.placementRestoreAvailable(destinationPresent);
       if (restore === true) {
         this.autoDeviceValue = automatic;
         this.deviceIdValue = preferredWhere.kind === "device" ? preferredWhere.id : "";

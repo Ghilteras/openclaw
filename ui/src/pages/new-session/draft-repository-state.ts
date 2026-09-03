@@ -45,6 +45,7 @@ export class DraftRepositoryController {
   private repositoryValue: DraftRepositoryState = { kind: "idle" };
   private requestToken = 0;
   private allocationRequestToken = 0;
+  private allocationPending = false;
   private preferredWorktreeRestore = false;
   private worktreeSelectedByUser = false;
   private detailsSelectedByUser = false;
@@ -88,7 +89,12 @@ export class DraftRepositoryController {
     if (!destinationAvailable) {
       return false;
     }
-    if (!projectReady || !this.matchesCurrentRepo() || this.repositoryValue.kind === "checking") {
+    if (
+      !projectReady ||
+      !this.matchesCurrentRepo() ||
+      this.repositoryValue.kind === "checking" ||
+      this.allocationPending
+    ) {
       return undefined;
     }
     return this.available() && this.allocationAvailable();
@@ -144,6 +150,7 @@ export class DraftRepositoryController {
   invalidate() {
     this.requestToken += 1;
     this.allocationRequestToken += 1;
+    this.allocationPending = false;
     this.repositoryValue = { kind: "idle" };
   }
 
@@ -209,6 +216,7 @@ export class DraftRepositoryController {
     const requestId = ++this.allocationRequestToken;
     const repoRoot = state.repoRoot;
     const baseRef = this.baseRef;
+    this.allocationPending = true;
     this.repositoryValue = { ...state, allocationStatus: "unavailable" };
     this.callbacks.requestUpdate();
     void client
@@ -227,6 +235,7 @@ export class DraftRepositoryController {
         ) {
           return;
         }
+        this.allocationPending = false;
         this.repositoryValue = {
           ...current,
           allocationStatus: result.allocationStatus ?? "unavailable",
@@ -243,6 +252,7 @@ export class DraftRepositoryController {
         ) {
           return;
         }
+        this.allocationPending = false;
         this.repositoryValue = { ...current, allocationStatus: "unavailable" };
         this.callbacks.requestUpdate();
       });
@@ -280,6 +290,8 @@ export class DraftRepositoryController {
 
   load() {
     const requestId = ++this.requestToken;
+    this.allocationRequestToken += 1;
+    this.allocationPending = false;
     const snapshot = this.read();
     const discovery = initialRepositoryState(snapshot);
     if (discovery.kind !== "checking") {
