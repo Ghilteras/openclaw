@@ -18,6 +18,7 @@ import type {
   TranscriptStopRequest,
 } from "../../transcripts/provider-types.js";
 import { TranscriptsStore } from "../../transcripts/store.js";
+import { activeSessions } from "./transcripts-tool-runtime.js";
 import { createTranscriptsAutoStartService, createTranscriptsTool } from "./transcripts-tool.js";
 
 const tempDirs = createTempDirTracker();
@@ -27,11 +28,80 @@ const credential = "fixture-secret-value-1234567890";
 const providerError = `fixture stop failure\n\u001b[31mred\u001b[0m\u0085 token=${credential} ${"🦞".repeat(2_000)}`;
 
 afterEach(() => {
+  vi.useRealTimers();
   closeOpenClawStateDatabaseForTest();
   tempDirs.cleanup();
 });
 
 describe("transcripts auto-start stop reporting", () => {
+  it.each([false, true])(
+    "retries startup cleanup even after shutdown times out: %s",
+    async (late) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const stateDir = tempDirs.make("transcripts-start-cleanup-");
+      const entered = createDeferred();
+      const release = createDeferred();
+      const stop = vi
+        .fn<NonNullable<TranscriptSourceProvider["stop"]>>()
+        .mockResolvedValueOnce({ ok: false, error: "cleanup temporarily unavailable" })
+        .mockImplementation(async ({ sessionId }) => ({ ok: true, sessionId }));
+      const provider: TranscriptSourceProvider = {
+        id: "start-cleanup",
+        name: "Start cleanup",
+        sourceKinds: ["live-audio"],
+        async start(request) {
+          entered.resolve();
+          await release.promise;
+          return { ok: true, session: request.session };
+        },
+        stop,
+      };
+      const registry = createEmptyPluginRegistry();
+      registry.transcriptSourceProviders.push({
+        pluginId: provider.id,
+        provider,
+        source: import.meta.url,
+      });
+      const ctx = {
+        stateDir,
+        config: { transcripts: { autoStart: [{ providerId: provider.id, sessionId: "pending" }] } },
+        caller: { kind: "operator" as const, source: "local" as const },
+        logger: { warn: vi.fn() },
+      };
+      const service = createTranscriptsAutoStartService(ctx);
+      await withPluginRuntimeRegistryScope(registry, async () => {
+        let stopping: Promise<void> | undefined;
+        try {
+          service.start();
+          await entered.promise;
+          stopping = service.stop();
+          if (late) {
+            await vi.advanceTimersByTimeAsync(5_000);
+            await stopping;
+          }
+          release.resolve();
+          await stopping;
+          await vi.waitFor(() => {
+            expect(stop.mock.calls.map(([request]) => request.sessionId)).toEqual([
+              "pending",
+              "pending",
+            ]);
+            expect(activeSessions.has("pending")).toBe(false);
+          });
+        } finally {
+          release.resolve();
+          await stopping;
+          await service.stop();
+          await createTranscriptsTool(ctx).execute("cleanup", {
+            action: "stop",
+            sessionId: "pending",
+          });
+          vi.useRealTimers();
+        }
+      });
+    },
+  );
+
   it.each([
     { name: "export failure", blocked: true, outcome: "ok", manual: false },
     { name: "fulfilled provider warning", blocked: false, outcome: "warn", manual: false },

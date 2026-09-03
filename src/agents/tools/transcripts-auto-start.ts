@@ -139,34 +139,40 @@ export function createTranscriptsAutoStartService(ctx: TranscriptsRuntimeContext
   };
 
   const startContinuous = (
-    entry: ResolvedTranscriptsAutoStartConfig,
+    entry: ResolvedTranscriptsAutoStartConfig & { sessionId: string },
     attempt: number,
     store: TranscriptsStore,
   ) => {
-    if (stopped || startedSessions.has(entry.sessionId ?? "")) {
+    if (stopped || startedSessions.has(entry.sessionId)) {
       return;
     }
-    const lifecycleToken = Symbol(entry.sessionId);
+    const capture = { sessionId: entry.sessionId, lifecycleToken: Symbol(entry.sessionId) };
+    // Startup can reject after accepting provider ownership; shutdown must still
+    // find that exact capture when its first cleanup attempt fails.
+    startedSessions.set(capture.sessionId, capture.lifecycleToken);
     void runPending(async (controller) => {
       try {
-        const result = await startTranscripts({
+        await startTranscripts({
           ctx,
           store,
           abortSignal: controller.signal,
           startupWaitMs: AUTO_START_PROVIDER_READY_TIMEOUT_MS,
           configuredLifecycle: true,
-          lifecycleToken,
+          lifecycleToken: capture.lifecycleToken,
           rawParams: { action: "start", ...entry },
         });
-        const sessionId = result.details.sessionId;
-        if (typeof sessionId === "string") {
-          startedSessions.set(sessionId, lifecycleToken);
-        }
       } catch (error) {
+        forgetCapture(capture);
         if (stopped) {
+          // Startup may settle after the service's bounded shutdown wait.
+          await stopCapture(capture, store);
           return;
         }
-        if (attempt >= AUTO_START_RETRY_ATTEMPTS) {
+        if (ownsCapture(capture)) {
+          ctx.logger.warn(
+            `transcripts autoStart session=${formatAutoStopDiagnostic(capture.sessionId)} still owns capture after startup failed: ${formatAutoStopDiagnostic(error)}; use transcripts stop to retry cleanup.`,
+          );
+        } else if (attempt >= AUTO_START_RETRY_ATTEMPTS) {
           ctx.logger.warn(
             `transcripts autoStart failed provider=${entry.providerId}: ${formatAutoStopDiagnostic(error)} (check the transcripts.autoStart entry in your config)`,
           );
