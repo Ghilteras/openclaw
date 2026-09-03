@@ -19,6 +19,14 @@ const UPGRADE_SURVIVOR_SCENARIOS = Object.freeze([
   "watchos-direct-node",
 ]);
 
+// These black-box scenarios are implemented entirely by the current trusted
+// release harness and treat the selected tree only as the package under test.
+const TRUSTED_HARNESS_OWNED_SCENARIOS = new Set(["mobile-pairing-reconnect"]);
+
+export function isTrustedHarnessOwnedUpgradeSurvivorScenario(scenario) {
+  return TRUSTED_HARNESS_OWNED_SCENARIOS.has(scenario);
+}
+
 // Registry proof needs its artifact contract; versioned auth fixtures exercise
 // legacy import rather than native state from every baseline in a broad sweep.
 // Platform pairing probes run only through explicit or dedicated scheduled

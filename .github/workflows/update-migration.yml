@@ -23,11 +23,6 @@ on:
         default: plugin-deps-cleanup
         required: true
         type: string
-      allow_frozen_target_scenario_omissions:
-        description: Allow current trusted harness scenarios that are absent from a frozen historical target
-        default: false
-        required: false
-        type: boolean
 
 permissions:
   actions: read
@@ -47,7 +42,6 @@ jobs:
       docker_lanes: update-migration
       published_upgrade_survivor_baselines: ${{ inputs.baselines }}
       published_upgrade_survivor_scenarios: ${{ inputs.scenarios }}
-      allow_frozen_target_scenario_omissions: ${{ inputs.allow_frozen_target_scenario_omissions }}
       shared_image_artifact_namespace: update-migration
       shared_image_policy: no-push-artifact
       telegram_mode: none

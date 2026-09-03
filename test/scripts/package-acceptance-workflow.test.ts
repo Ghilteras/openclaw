@@ -5391,13 +5391,8 @@ test "$package_manager" = "pnpm@12.1.0"
       required: false,
     });
     expect(
-      readWorkflow(UPDATE_MIGRATION_WORKFLOW).on?.workflow_dispatch?.inputs
-        ?.allow_frozen_target_scenario_omissions,
-    ).toMatchObject({
-      default: false,
-      required: false,
-      type: "boolean",
-    });
+      readWorkflow(UPDATE_MIGRATION_WORKFLOW).on?.workflow_dispatch?.inputs,
+    ).not.toHaveProperty("allow_frozen_target_scenario_omissions");
     expect(workflow).toContain("default: plugin-deps-cleanup");
     expect(workflow).not.toMatch(/\n {2}schedule:/u);
     expect(job.with).toMatchObject({
@@ -5405,9 +5400,8 @@ test "$package_manager" = "pnpm@12.1.0"
       package_ref: "${{ inputs.package_ref }}",
       published_upgrade_survivor_baselines: "${{ inputs.baselines }}",
       published_upgrade_survivor_scenarios: "${{ inputs.scenarios }}",
-      allow_frozen_target_scenario_omissions:
-        "${{ inputs.allow_frozen_target_scenario_omissions }}",
     });
+    expect(job.with).not.toHaveProperty("allow_frozen_target_scenario_omissions");
     expect(workflow).toContain("telegram_mode: none");
     expect(workflow).toContain("secrets: inherit");
     expect(packageWorkflow).toContain("published-upgrade-survivor/update-migration");

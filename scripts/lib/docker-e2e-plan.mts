@@ -22,6 +22,7 @@ import {
 } from "./docker-e2e-scenarios.mts";
 import officialExternalChannelCatalog from "./official-external-channel-catalog.json" with { type: "json" };
 import {
+  isTrustedHarnessOwnedUpgradeSurvivorScenario,
   normalizeUpgradeSurvivorBaselineSpec,
   parseUpgradeSurvivorBaselineSpecs,
   parseUpgradeSurvivorScenarios,
@@ -261,9 +262,15 @@ function filterUpgradeSurvivorScenariosForTarget(
   if (!targetRoot) {
     return scenarios;
   }
+  const targetOwnedScenarios = scenarios.filter(
+    (scenario) => !isTrustedHarnessOwnedUpgradeSurvivorScenario(scenario),
+  );
+  if (targetOwnedScenarios.length === 0) {
+    return scenarios;
+  }
   const assertionsFile = resolve(targetRoot, "scripts/e2e/lib/upgrade-survivor/assertions.mjs");
   if (!existsSync(assertionsFile)) {
-    return [];
+    return scenarios.filter(isTrustedHarnessOwnedUpgradeSurvivorScenario);
   }
   const targetScenarios = readFrozenScenarioContract(
     assertionsFile,
@@ -271,7 +278,10 @@ function filterUpgradeSurvivorScenariosForTarget(
     allowExecutableContract,
   );
   const supportedScenarios = new Set(targetScenarios);
-  return scenarios.filter((scenario) => supportedScenarios.has(scenario));
+  return scenarios.filter(
+    (scenario) =>
+      isTrustedHarnessOwnedUpgradeSurvivorScenario(scenario) || supportedScenarios.has(scenario),
+  );
 }
 
 function expandedUpgradeSurvivorLaneName(

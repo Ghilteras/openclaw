@@ -4,16 +4,19 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   MOBILE_PAIRING_AUDIT_CLIENT,
+  MOBILE_PAIRING_APPROVAL_SCOPES,
   MOBILE_PAIRING_CLIENT,
   MOBILE_PAIRING_NODE_CAPS,
   MOBILE_PAIRING_NODE_COMMANDS,
   MOBILE_PAIRING_NODE_PERMISSIONS,
   MOBILE_PAIRING_OPERATOR_CAPS,
+  approveBaselineNodePairing,
   buildConnectRequest,
   buildDeviceAuthCompatibilityPayloadV2,
   buildRedactedEvidence,
   createMobilePairingIdentity,
   extractBootstrapCredentials,
+  inspectBaselineNodePairing,
   parseConnectChallengePayload,
   parseQrBootstrapJson,
   persistHelloCredential,
@@ -53,22 +56,22 @@ function bootstrapHello(nodeToken: string, operatorToken: string) {
 }
 
 describe("upgrade survivor mobile pairing client", () => {
-  it("uses the canonical closed-schema CLI identity for pairing audits", () => {
+  it("uses the node approval CLI backend identity for pairing audits", () => {
     expect(MOBILE_PAIRING_AUDIT_CLIENT).toMatchObject({
-      id: "cli",
+      id: "gateway-client",
       version: MOBILE_PAIRING_CLIENT.version,
       instanceId: "c0202128-dbd7-42a5-a8ac-aaf20dc14c9c",
     });
     const request = buildConnectRequest({
       challengePayload: { nonce: "nonce-audit", ts: 1_700_000_000_000 },
       client: MOBILE_PAIRING_AUDIT_CLIENT,
-      mode: "cli",
+      mode: "backend",
       role: "operator",
       scopes: ["operator.pairing"],
       auth: { password: "audit-password" },
     });
     expect(request.params).toMatchObject({
-      client: { id: "cli", mode: "cli" },
+      client: { id: "gateway-client", mode: "backend" },
       role: "operator",
       scopes: ["operator.pairing"],
       auth: { password: "audit-password" },
@@ -220,6 +223,8 @@ describe("upgrade survivor mobile pairing client", () => {
       token: operatorToken,
       scopes: ["operator.approvals", "operator.read", "operator.talk.secrets", "operator.write"],
     });
+    expect(credentials.operator.scopes).not.toContain("operator.pairing");
+    expect(credentials.operator.scopes).not.toContain("operator.admin");
     expect(credentials.client.instanceId).toBe(MOBILE_PAIRING_CLIENT.instanceId);
   });
 
@@ -286,6 +291,73 @@ describe("upgrade survivor mobile pairing client", () => {
         deviceId: "device-1",
       }),
     ).toThrow(/node pairing left a pending request/);
+  });
+
+  it("completes legacy baseline node pairing only for the bootstrapped identity", async () => {
+    const approvalRequest = buildConnectRequest({
+      challengePayload: { nonce: "nonce-approval", ts: 1_700_000_000_003 },
+      client: MOBILE_PAIRING_AUDIT_CLIENT,
+      mode: "backend",
+      role: "operator",
+      scopes: [...MOBILE_PAIRING_APPROVAL_SCOPES],
+      auth: { password: "approval-password" },
+    });
+    expect(approvalRequest.params).toMatchObject({
+      client: { id: "gateway-client", mode: "backend" },
+      role: "operator",
+      scopes: ["operator.pairing", "operator.admin"],
+      auth: { password: "approval-password" },
+    });
+    expect(approvalRequest.params).not.toHaveProperty("device");
+
+    expect(
+      inspectBaselineNodePairing(
+        {
+          pending: [{ requestId: "request-1", nodeId: "device-1" }],
+          paired: [],
+        },
+        "device-1",
+      ),
+    ).toEqual({ pendingRequestId: "request-1", paired: false });
+    expect(
+      inspectBaselineNodePairing(
+        {
+          pending: [],
+          paired: [{ nodeId: "device-1" }],
+        },
+        "device-1",
+      ),
+    ).toEqual({ pendingRequestId: null, paired: true });
+    expect(() =>
+      inspectBaselineNodePairing(
+        {
+          pending: [{ requestId: "request-other", nodeId: "device-2" }],
+          paired: [],
+        },
+        "device-1",
+      ),
+    ).toThrow(/unexpected pending request/);
+
+    const observed: string[] = [];
+    const states = [
+      { pending: [], paired: [] },
+      { pending: [{ requestId: "request-1", nodeId: "device-1" }], paired: [] },
+      { pending: [], paired: [{ nodeId: "device-1" }] },
+    ];
+    await approveBaselineNodePairing({
+      deviceId: "device-1",
+      listPairings: async () => {
+        observed.push("list");
+        return states.shift();
+      },
+      approvePairing: async (requestId) => {
+        observed.push(`approve:${requestId}`);
+      },
+      wait: async () => {
+        observed.push("wait");
+      },
+    });
+    expect(observed).toEqual(["list", "wait", "list", "approve:request-1", "wait", "list"]);
   });
 
   it("emits only redacted reconnect evidence", () => {

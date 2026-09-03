@@ -1276,6 +1276,24 @@ describe("scripts/lib/docker-e2e-plan", () => {
     ]);
   });
 
+  it("runs trusted-harness-owned mobile pairing against frozen package targets", () => {
+    const targetRoot = tempDirs.make("openclaw-frozen-mobile-package-target-");
+    writeFrozenScenarioContract(targetRoot, ["base"]);
+
+    const plan = planFor({
+      selectedLaneNames: ["update-migration"],
+      upgradeSurvivorBaselines: "2026.7.1",
+      upgradeSurvivorScenarios: "mobile-pairing-reconnect",
+      upgradeSurvivorTargetRoot: targetRoot,
+      allowFrozenTargetScenarioOmissions: false,
+    });
+
+    expect(plan.lanes.map((lane) => lane.name)).toEqual([
+      "update-migration-2026.7.1-mobile-pairing-reconnect",
+    ]);
+    expect(plan.omittedUnsupportedLanes).toEqual([]);
+  });
+
   it("omits survivor lanes when the target exposes none of the requested scenarios", () => {
     const targetRoot = tempDirs.make("openclaw-frozen-empty-upgrade-harness-");
     writeFrozenScenarioContract(targetRoot, ["unrelated"]);

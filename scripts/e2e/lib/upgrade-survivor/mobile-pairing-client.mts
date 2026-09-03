@@ -34,7 +34,7 @@ type ConnectAuth = {
   password?: string;
 };
 type ConnectRole = "node" | "operator";
-type ConnectMode = "node" | "ui" | "cli";
+type ConnectMode = "node" | "ui" | "cli" | "backend";
 type StoredRoleCredential = {
   token: string;
   scopes: string[];
@@ -88,7 +88,7 @@ export const MOBILE_PAIRING_CLIENT: MobileClientMetadata = Object.freeze({
 });
 
 export const MOBILE_PAIRING_AUDIT_CLIENT: MobileClientMetadata = Object.freeze({
-  id: "cli",
+  id: "gateway-client",
   displayName: "Upgrade Survivor Pairing Audit",
   version: MOBILE_PAIRING_CLIENT.version,
   platform: "linux",
@@ -160,10 +160,13 @@ export const MOBILE_PAIRING_NODE_PERMISSIONS = Object.freeze({
 });
 
 export const MOBILE_PAIRING_OPERATOR_CAPS = Object.freeze(["inline-widgets"]);
+export const MOBILE_PAIRING_APPROVAL_SCOPES = Object.freeze(["operator.pairing", "operator.admin"]);
 
 const GATEWAY_PROTOCOL_VERSION = 4;
 const GATEWAY_MIN_NODE_PROTOCOL_VERSION = 3;
 const PAIRING_AUDIT_SCOPES = ["operator.pairing"];
+const BASELINE_PAIRING_POLL_ATTEMPTS = 50;
+const BASELINE_PAIRING_POLL_INTERVAL_MS = 100;
 const RESPONSE_TIMEOUT_MS = 15_000;
 
 function requireString(value: unknown, label: string): string {
@@ -245,12 +248,12 @@ export function publicKeyRawBase64Url(publicKeyPem: string): string {
 
 export function createMobilePairingIdentity(): MobilePairingIdentity {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" });
   const rawPublicKey = publicKeyRawBase64Url(publicKeyPem);
   return {
     deviceId: sha256(Buffer.from(rawPublicKey, "base64url")),
     publicKeyPem,
-    privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }),
   };
 }
 
@@ -445,7 +448,12 @@ async function closeSocket(socket: WebSocketLike, WebSocket: WebSocketConstructo
   }
   const closed = waitForClose(socket).then(() => undefined);
   socket.close();
-  await Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
+  await Promise.race([
+    closed,
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, 1_000);
+    }),
+  ]);
 }
 
 function loadWebSocket(packageRoot: string): WebSocketConstructor {
@@ -484,7 +492,7 @@ async function attemptConnect(params: {
   await waitForOpen(socket);
   const challengeFrame = await challenge;
   const payload = isRecord(challengeFrame.payload) ? challengeFrame.payload : null;
-  const request = buildConnectRequest({
+  const connectRequest = buildConnectRequest({
     challengePayload: payload,
     client: params.client,
     mode: params.mode,
@@ -493,9 +501,9 @@ async function attemptConnect(params: {
     auth: params.auth,
     identity: params.identity,
   });
-  const requestId = requireString(request.id, "connect request id");
+  const requestId = requireString(connectRequest.id, "connect request id");
   const response = receiveFrame(socket, (frame) => frame.type === "res" && frame.id === requestId);
-  socket.send(JSON.stringify(request));
+  socket.send(JSON.stringify(connectRequest));
   return { socket, response: await response, closeCode };
 }
 
@@ -595,9 +603,9 @@ async function assertMissingPassword(params: {
   }
   const closeCode = await Promise.race([
     result.closeCode,
-    new Promise<number>((_, reject) =>
-      setTimeout(() => reject(new Error("unauthenticated connect did not close")), 2_000),
-    ),
+    new Promise<number>((_, reject) => {
+      setTimeout(() => reject(new Error("unauthenticated connect did not close")), 2_000);
+    }),
   ]);
   if (closeCode !== 1008) {
     throw new Error("unauthenticated password-mode connect did not close with 1008");
@@ -609,13 +617,13 @@ async function auditPairingState(params: {
   credentials: MobilePairingCredentials;
   password: string;
 }): Promise<MobilePairingAudit> {
-  // Both 2026.7.1 and current preserve scopes for an authenticated loopback
-  // cli/cli client. Keep this audit device-less so it cannot rotate mobile tokens.
+  // Match the node approval CLI's local backend shared-auth path. Keep this
+  // audit device-less so it cannot rotate mobile tokens.
   const audit = await connect({
     WebSocket: params.WebSocket,
     url: params.credentials.url,
     client: MOBILE_PAIRING_AUDIT_CLIENT,
-    mode: "cli",
+    mode: "backend",
     role: "operator",
     scopes: PAIRING_AUDIT_SCOPES,
     auth: { password: params.password },
@@ -660,6 +668,84 @@ export function validatePairingAudit(params: {
     pairedDevicePresent: true,
     pairedNodePresent: true,
   };
+}
+
+export function inspectBaselineNodePairing(
+  value: unknown,
+  deviceId: string,
+): { pendingRequestId: string | null; paired: boolean } {
+  if (!isRecord(value) || !Array.isArray(value.pending) || !Array.isArray(value.paired)) {
+    throw new Error("baseline node pairing audit invalid");
+  }
+  if (value.pending.some((entry) => !isRecord(entry) || entry.nodeId !== deviceId)) {
+    throw new Error("baseline node pairing has an unexpected pending request");
+  }
+  const pending = value.pending.filter((entry) => isRecord(entry) && entry.nodeId === deviceId);
+  if (pending.length > 1) {
+    throw new Error("baseline node pairing has duplicate pending requests");
+  }
+  const pendingRequestId =
+    pending.length === 1
+      ? requireString((pending[0] as JsonRecord).requestId, "baseline node pairing request id")
+      : null;
+  const paired = value.paired.some((entry) => isRecord(entry) && entry.nodeId === deviceId);
+  return { pendingRequestId, paired };
+}
+
+export async function approveBaselineNodePairing(params: {
+  deviceId: string;
+  listPairings: () => Promise<unknown>;
+  approvePairing: (requestId: string) => Promise<unknown>;
+  wait?: () => Promise<void>;
+}): Promise<void> {
+  let approvedRequestId: string | null = null;
+  const wait =
+    params.wait ??
+    (() =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, BASELINE_PAIRING_POLL_INTERVAL_MS);
+      }));
+  for (let attempt = 0; attempt < BASELINE_PAIRING_POLL_ATTEMPTS; attempt += 1) {
+    const state = inspectBaselineNodePairing(await params.listPairings(), params.deviceId);
+    if (state.pendingRequestId && state.pendingRequestId !== approvedRequestId) {
+      await params.approvePairing(state.pendingRequestId);
+      approvedRequestId = state.pendingRequestId;
+    }
+    if (!state.pendingRequestId && state.paired) {
+      return;
+    }
+    await wait();
+  }
+  throw new Error("baseline node pairing did not complete");
+}
+
+async function completeBaselineNodePairing(params: {
+  WebSocket: WebSocketConstructor;
+  credentials: MobilePairingCredentials;
+  password: string;
+}): Promise<void> {
+  const operator = await connect({
+    WebSocket: params.WebSocket,
+    url: params.credentials.url,
+    client: MOBILE_PAIRING_AUDIT_CLIENT,
+    mode: "backend",
+    role: "operator",
+    scopes: [...MOBILE_PAIRING_APPROVAL_SCOPES],
+    auth: { password: params.password },
+  });
+  try {
+    readHelloAuth(operator.hello, "operator", [...MOBILE_PAIRING_APPROVAL_SCOPES]);
+    await approveBaselineNodePairing({
+      deviceId: params.credentials.identity.deviceId,
+      listPairings: () => request(operator.socket, "node.pair.list"),
+      approvePairing: (requestId) =>
+        request(operator.socket, "node.pair.approve", {
+          requestId,
+        }),
+    });
+  } finally {
+    await closeSocket(operator.socket, params.WebSocket);
+  }
 }
 
 export function buildRedactedEvidence(params: {
@@ -882,6 +968,11 @@ async function main(): Promise<void> {
     });
     await closeSocket(initial.socket, WebSocket);
     writePrivateJson(credentialsFile, credentials);
+    await completeBaselineNodePairing({
+      WebSocket,
+      credentials,
+      password,
+    });
     await verifyReconnect({
       packageRoot,
       credentials,
@@ -907,7 +998,7 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error) => {
+  main().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : "unknown failure";
     process.stderr.write(`mobile pairing client failed: ${message}\n`);
     process.exitCode = 1;
