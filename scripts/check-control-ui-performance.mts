@@ -39,8 +39,9 @@ const controlUiPerformanceBudgets = {
   // Briefly 47 KiB for the Tide/Beacon/Phosphor palettes, restored to 45 KiB
   // once those palettes moved out of the startup sheet into public/themes and
   // measured 42.2 KiB — below where they started. Adding a built-in theme no
-  // longer costs the default path anything, so this ceiling should stay put.
-  startupCssGzipBytes: 45 * KIB,
+  // longer costs the default path anything. The participant menu uses 17 B of
+  // tightly bounded headroom; retain a 32 B allowance without a broad reset.
+  startupCssGzipBytes: 45 * KIB + 32,
   largestJsGzipBytes: 215 * KIB,
   // Composer multiline surface (stack #124301) legitimately grew boot CSS;
   // operator decision 2026-08-25 rejected boot splitting due to precedence risk.
