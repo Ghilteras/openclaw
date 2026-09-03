@@ -5,6 +5,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT_DIR/scripts/lib/docker-e2e-image.sh"
+source "$ROOT_DIR/scripts/lib/frozen-target-compat.sh"
+SOURCE_ROOT="${OPENCLAW_DOCKER_E2E_REPO_ROOT:-$ROOT_DIR}"
+export OPENCLAW_SELECTED_SHA="${OPENCLAW_SELECTED_SHA:-${OPENCLAW_DOCKER_E2E_SELECTED_SHA:-$(git -C "$SOURCE_ROOT" rev-parse HEAD)}}"
+export OPENCLAW_TOOLING_SHA="${OPENCLAW_TOOLING_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
+openclaw_resolve_frozen_core_harness_capabilities "$SOURCE_ROOT"
 IMAGE_NAME="$(docker_e2e_resolve_image "openclaw-agent-bundle-mcp-tools-e2e" OPENCLAW_IMAGE)"
 CONTAINER_NAME="openclaw-agent-bundle-mcp-tools-e2e-$$"
 RUN_LOG="$(mktemp -t openclaw-agent-bundle-mcp-tools-log.XXXXXX)"
@@ -17,6 +22,14 @@ trap cleanup EXIT
 
 docker_e2e_build_or_reuse "$IMAGE_NAME" agent-bundle-mcp-tools
 OPENCLAW_TEST_STATE_SCRIPT_B64="$(docker_e2e_test_state_shell_b64 agent-bundle-mcp-tools empty)"
+CLIENT_PATH="test/e2e/qa-lab/runtime/agent-bundle-mcp-tools-docker-client.ts"
+CLIENT_MOUNT_ARGS=()
+if [ "$OPENCLAW_FROZEN_TARGET_AGENT_BUNDLE_MCP_MODE" = "legacy" ]; then
+  CLIENT_PATH="scripts/e2e/agent-bundle-mcp-tools-docker-client.ts"
+  CLIENT_MOUNT_ARGS=(
+    -v "$SOURCE_ROOT/scripts/e2e/agent-bundle-mcp-tools-docker-client.ts:/app/$CLIENT_PATH:ro"
+  )
+fi
 
 echo "Running in-container OpenClaw bundle MCP tool availability smoke..."
 # Harness files are mounted read-only; the app under test comes from /app/dist.
@@ -24,11 +37,12 @@ set +e
 docker_e2e_run_with_harness \
   --name "$CONTAINER_NAME" \
   -e "OPENCLAW_TEST_STATE_SCRIPT_B64=$OPENCLAW_TEST_STATE_SCRIPT_B64" \
+  "${CLIENT_MOUNT_ARGS[@]}" \
   "$IMAGE_NAME" \
   bash -lc "set -euo pipefail
     source scripts/lib/openclaw-e2e-instance.sh
     openclaw_e2e_eval_test_state_from_b64 \"\${OPENCLAW_TEST_STATE_SCRIPT_B64:?missing OPENCLAW_TEST_STATE_SCRIPT_B64}\"
-    tsx test/e2e/qa-lab/runtime/agent-bundle-mcp-tools-docker-client.ts
+    tsx $CLIENT_PATH
   " >"$RUN_LOG" 2>&1
 status=${PIPESTATUS[0]}
 set -e

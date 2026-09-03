@@ -58,6 +58,8 @@ openclaw_resolve_frozen_core_harness_capabilities() {
   local source_root="${1:?missing selected source root}" authorization_status=0
 
   export OPENCLAW_FROZEN_TARGET_ONBOARD_CASES="" \
+    OPENCLAW_FROZEN_TARGET_ONBOARD_SESSION_MEMORY_HOOK_MODE="required" \
+    OPENCLAW_FROZEN_TARGET_AGENT_BUNDLE_MCP_MODE="current" \
     OPENCLAW_FROZEN_TARGET_MCP_MEMORY_CONFIG_MODE="current" \
     OPENCLAW_FROZEN_TARGET_SESSION_REPAIR_MODE="sqlite"
 
@@ -79,6 +81,17 @@ openclaw_resolve_frozen_core_harness_capabilities() {
     export OPENCLAW_FROZEN_TARGET_ONBOARD_CASES="local-basic,remote-non-interactive,reset,channels,skills"
   fi
 
+  # Before default-hook onboarding, quickstart offered only the hooks it found
+  # in the workspace. A successful old quickstart therefore cannot promise a
+  # session-memory entry when that workspace shipped no hook definition.
+  if git -C "$source_root" cat-file -e "$OPENCLAW_SELECTED_SHA:src/commands/onboard-hooks.ts" 2>/dev/null &&
+    git -C "$source_root" show "$OPENCLAW_SELECTED_SHA:src/commands/onboard-hooks.ts" 2>/dev/null |
+      grep -Fq 'setupInternalHooks' &&
+    ! git -C "$source_root" show "$OPENCLAW_SELECTED_SHA:src/commands/onboard-hooks.ts" 2>/dev/null |
+      grep -Fq 'enableDefaultOnboardingInternalHooks'; then
+    export OPENCLAW_FROZEN_TARGET_ONBOARD_SESSION_MEMORY_HOOK_MODE="interactive"
+  fi
+
   if git -C "$source_root" show "$OPENCLAW_SELECTED_SHA:src/agents/memory-search.ts" 2>/dev/null |
     grep -Fq 'cfg.agents?.defaults?.memorySearch'; then
     export OPENCLAW_FROZEN_TARGET_MCP_MEMORY_CONFIG_MODE="agent"
@@ -88,5 +101,14 @@ openclaw_resolve_frozen_core_harness_capabilities() {
     git -C "$source_root" show "$OPENCLAW_SELECTED_SHA:src/commands/doctor-session-transcripts.ts" 2>/dev/null |
       grep -Fq '.pre-doctor-branch-repair-'; then
     export OPENCLAW_FROZEN_TARGET_SESSION_REPAIR_MODE="jsonl"
+  fi
+
+  # The manager API and MCP App assertions were added after the selected
+  # release. Run its still-packaged bundle-MCP contract instead of importing a
+  # new dist entry the release cannot contain.
+  if ! git -C "$source_root" cat-file -e "$OPENCLAW_SELECTED_SHA:src/agents/agent-bundle-mcp-manager-api.ts" 2>/dev/null &&
+    git -C "$source_root" cat-file -e "$OPENCLAW_SELECTED_SHA:src/agents/agent-bundle-mcp-runtime.ts" 2>/dev/null &&
+    git -C "$source_root" cat-file -e "$OPENCLAW_SELECTED_SHA:scripts/e2e/agent-bundle-mcp-tools-docker-client.ts" 2>/dev/null; then
+    export OPENCLAW_FROZEN_TARGET_AGENT_BUNDLE_MCP_MODE="legacy"
   fi
 }

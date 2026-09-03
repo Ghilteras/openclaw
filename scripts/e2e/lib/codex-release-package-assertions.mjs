@@ -4,7 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { assertPathInside, findPackageJson, readJson } from "./codex-install-utils.mjs";
 
-const EXPECTED_CODEX_VERSION = "0.152.1";
 const CODEX_PLATFORM_TARGETS = new Map([
   ["linux:x64", { alias: "@openai/codex-linux-x64", os: "linux", cpu: "x64" }],
   ["linux:arm64", { alias: "@openai/codex-linux-arm64", os: "linux", cpu: "arm64" }],
@@ -34,9 +33,9 @@ export function assertCodexReleasePackageContract(params) {
 
   const pluginPackage = readJson(params.pluginPackageJson);
   const expectedDependency = pluginPackage.dependencies?.["@openai/codex"];
-  if (expectedDependency !== EXPECTED_CODEX_VERSION) {
+  if (typeof expectedDependency !== "string" || !/^\d+\.\d+\.\d+$/u.test(expectedDependency)) {
     throw new Error(
-      `@openclaw/codex must depend on @openai/codex ${EXPECTED_CODEX_VERSION}; found ${String(expectedDependency)}`,
+      `@openclaw/codex must pin @openai/codex to an exact version; found ${String(expectedDependency)}`,
     );
   }
   const requiredPlatformPackages = pluginPackage.openclaw?.install?.requiredPlatformPackages;
@@ -51,12 +50,12 @@ export function assertCodexReleasePackageContract(params) {
 
   assertPathInside(params.managedRoot, params.codexPackageJson, "@openai/codex dependency");
   const codexPackage = readJson(params.codexPackageJson);
-  if (codexPackage.version !== EXPECTED_CODEX_VERSION) {
+  if (codexPackage.version !== expectedDependency) {
     throw new Error(
-      `installed @openai/codex version mismatch: expected ${EXPECTED_CODEX_VERSION}, got ${String(codexPackage.version)}`,
+      `installed @openai/codex version mismatch: expected ${expectedDependency}, got ${String(codexPackage.version)}`,
     );
   }
-  const expectedAliasSpec = `npm:@openai/codex@${EXPECTED_CODEX_VERSION}-${platform}-${arch}`;
+  const expectedAliasSpec = `npm:@openai/codex@${expectedDependency}-${platform}-${arch}`;
   if (codexPackage.optionalDependencies?.[target.alias] !== expectedAliasSpec) {
     throw new Error(
       `@openai/codex current platform alias mismatch: expected ${target.alias}=${expectedAliasSpec}`,
@@ -69,7 +68,7 @@ export function assertCodexReleasePackageContract(params) {
   }
   assertPathInside(params.managedRoot, platformPackageJson, "Codex platform package");
   const platformPackage = readJson(platformPackageJson);
-  const expectedPlatformVersion = `${EXPECTED_CODEX_VERSION}-${platform}-${arch}`;
+  const expectedPlatformVersion = `${expectedDependency}-${platform}-${arch}`;
   if (platformPackage.version !== expectedPlatformVersion) {
     throw new Error(
       `installed ${target.alias} version mismatch: expected ${expectedPlatformVersion}, got ${String(platformPackage.version)}`,
@@ -115,9 +114,9 @@ export function assertCodexReleasePackageContract(params) {
     );
   }
   const versionMatch = /^codex-cli\s+(\S+)$/u.exec(stdout);
-  if (versionMatch?.[1] !== EXPECTED_CODEX_VERSION) {
+  if (versionMatch?.[1] !== expectedDependency) {
     throw new Error(
-      `managed Codex CLI version mismatch: expected ${EXPECTED_CODEX_VERSION}, got ${JSON.stringify(stdout)}`,
+      `managed Codex CLI version mismatch: expected ${expectedDependency}, got ${JSON.stringify(stdout)}`,
     );
   }
 

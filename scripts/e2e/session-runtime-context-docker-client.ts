@@ -254,8 +254,11 @@ async function verifyDoctorRepair(root: string) {
     })) as TranscriptEntry[];
   }
   const ids = entries.map((entryValue) => (entryValue as { id?: string }).id).filter(Boolean);
+  const expectedIds = legacyJsonlRepair
+    ? ["broken-session", "parent", "plain-user", "plain-assistant"]
+    : ["broken", "parent", "plain-user", "plain-assistant"];
   assert(
-    JSON.stringify(ids) === JSON.stringify(["broken", "parent", "plain-user", "plain-assistant"]),
+    JSON.stringify(ids) === JSON.stringify(expectedIds),
     `doctor kept wrong active branch: ${JSON.stringify(ids)}`,
   );
   assert(
