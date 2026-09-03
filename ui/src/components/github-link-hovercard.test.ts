@@ -406,7 +406,7 @@ describe("openclaw-github-link-hovercard-provider", () => {
     {
       reason: "rate_limited",
       heading: "GitHub API rate limit reached",
-      guidance: "Wait and try again later.",
+      guidance: "Try again later.",
       headingKey: "rateLimited",
       guidanceKey: "rateLimitedNextStep",
     },

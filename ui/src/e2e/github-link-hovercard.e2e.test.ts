@@ -258,7 +258,7 @@ describeControlUiE2e("GitHub link hover cards", () => {
       });
 
       await expectText(card, "GitHub API rate limit reached");
-      await expectText(card, "Wait and try again later.");
+      await expectText(card, "Try again later.");
       await expectText(card, "gateway.controlUi.github.token");
       expect(await card.textContent()).not.toContain("synthetic-private-error");
       expect(await card.locator("img, button").count()).toBe(0);
