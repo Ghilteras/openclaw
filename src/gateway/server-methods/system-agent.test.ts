@@ -75,6 +75,7 @@ const onboardingWelcomeMocks = vi.hoisted(() => ({
 
 vi.mock("../../system-agent/setup-inference.js", () => ({
   activateSetupInference: setupInferenceMocks.activateSetupInference,
+  detectSetupInferenceIsolated: setupInferenceDetectionMocks.detectSetupInferenceIsolated,
   resolvePersistentApplyInference: setupInferenceMocks.resolvePersistentApplyInference,
   verifySetupInference: setupInferenceMocks.verifySetupInference,
 }));

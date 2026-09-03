@@ -1,15 +1,13 @@
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { describe, expect, it } from "vitest";
 import { resolveRunWorkspaceDir } from "../agents/workspace-run.js";
+import { createConfigFileSnapshot } from "../config/io.snapshot-shared.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { redactToolPayloadText } from "../logging/redact.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { resolveSystemAgentConfiguredRouteFromConfig } from "./inference-route.js";
 import { getSetupAppRecommendations } from "./setup-app-recommendations.js";
-import {
-  completeSetupInferenceConfig,
-  type CompleteSetupInferenceResult,
-} from "./setup-inference.js";
+import { completeSetupInference, type CompleteSetupInferenceResult } from "./setup-inference.js";
 
 const LIVE = process.env.OPENCLAW_LIVE_TEST === "1" && Boolean(process.env.OPENAI_API_KEY?.trim());
 const describeLive = LIVE ? describe : describe.skip;
@@ -92,11 +90,25 @@ describeLive("setup app recommendations live", () => {
       runtime,
       deps: {
         complete: async (prompt) => {
-          completion = await completeSetupInferenceConfig({
-            config,
+          completion = await completeSetupInference({
             prompt,
             runtime,
             timeoutMs: 240_000,
+            deps: {
+              readConfigFileSnapshot: async () =>
+                createConfigFileSnapshot({
+                  path: "openclaw.json",
+                  exists: true,
+                  valid: true,
+                  raw: null,
+                  parsed: config,
+                  sourceConfig: config,
+                  runtimeConfig: config,
+                  issues: [],
+                  warnings: [],
+                  legacyIssues: [],
+                }),
+            },
           });
           return completion;
         },
