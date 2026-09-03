@@ -9,6 +9,7 @@ import {
   controlUiBundledSettingsStorageKey,
   controlUiSessionPath,
   installMockGateway,
+  waitForControlUiRoute,
 } from "../test-helpers/control-ui-e2e.ts";
 import { readTextTone } from "../test-helpers/rendered-colors.ts";
 import { createControlUiE2eSuite, tooltipTitleText } from "./control-ui-e2e-suite.test-support.ts";
@@ -692,6 +693,7 @@ suite.define(() => {
         "chat.startup",
         "config.get",
         "config.schema",
+        "plugins.list",
         "sessions.catalog.list",
       ],
       methodResponses: {
@@ -763,6 +765,24 @@ suite.define(() => {
           version: "e2e",
           generatedAt: "2026-07-14T00:00:00.000Z",
         },
+        "plugins.list": {
+          plugins: [
+            {
+              id: "codex",
+              name: "Codex",
+              origin: "bundled",
+              installed: true,
+            },
+            {
+              id: "anthropic",
+              name: "Anthropic",
+              origin: "bundled",
+              installed: true,
+            },
+          ],
+          diagnostics: [],
+          mutationAllowed: true,
+        },
         "sessions.catalog.list": {
           catalogs: [
             {
@@ -814,7 +834,12 @@ suite.define(() => {
         expected: boolean,
       ) => {
         await page.goto(`${suite.server.baseUrl}settings/plugins/${pluginId}`);
+        await waitForControlUiRoute(page, {
+          pathname: `/settings/plugins/${pluginId}`,
+          routeId: "plugin-settings",
+        });
         const setting = page.locator(".settings-row", { hasText: settingLabel });
+        await setting.locator("xpath=ancestor::details[1]/summary").click();
         await setting.waitFor({ state: "visible" });
         expect(await setting.getByText("eligible paired nodes.", { exact: false }).count()).toBe(1);
         expect(
