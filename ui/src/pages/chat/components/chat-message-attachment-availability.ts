@@ -10,6 +10,7 @@ import {
   notifyChatMediaResourceSubscribers,
   observeChatMediaResource,
   scheduleChatMediaResourceRefresh,
+  type AssistantMediaResolver,
   type ChatMediaResource,
 } from "./chat-message-media.ts";
 
@@ -57,6 +58,8 @@ export function resolveAssistantAttachmentAvailability(
   resourceBasePath: string | undefined,
   authToken: string | null | undefined,
   onRequestUpdate: (() => void) | undefined,
+  resolveMedia?: AssistantMediaResolver,
+  connectionEpoch?: number,
 ): AssistantAttachmentAvailability {
   if (!isLocalAssistantAttachmentSource(source)) {
     return { status: "available" };
@@ -74,7 +77,8 @@ export function resolveAssistantAttachmentAvailability(
     };
   }
   const normalizedAuthToken = authToken?.trim() ?? "";
-  const cacheKey = `${resourceBasePath ?? ""}::${normalizedAuthToken}::${source}`;
+  const authorityKey = resolveMedia ? `gateway:${connectionEpoch ?? 0}` : normalizedAuthToken;
+  const cacheKey = `${resourceBasePath ?? ""}::${authorityKey}::${source}`;
   const resource = observeChatMediaResource<AssistantAttachmentAvailability>(
     "assistant-attachment",
     cacheKey,
@@ -150,28 +154,35 @@ export function resolveAssistantAttachmentAvailability(
     setAssistantAttachmentAvailability(resource, retryAvailability);
     return retryAvailability;
   };
-  if (typeof fetch === "function") {
+  if (resolveMedia || typeof fetch === "function") {
     const headers = new Headers({ Accept: "application/json" });
     if (normalizedAuthToken) {
       headers.set("Authorization", `Bearer ${normalizedAuthToken}`);
     }
-    const controller = new AbortController();
-    resource.abortController = controller;
-    const timeout = setTimeout(
-      () =>
-        controller.abort(
-          new DOMException("assistant attachment metadata fetch timed out", "TimeoutError"),
-        ),
-      ASSISTANT_ATTACHMENT_METADATA_FETCH_TIMEOUT_MS,
-    );
-    const pending = fetch(buildAssistantAttachmentMetaUrl(source, resourceBasePath), {
-      method: "GET",
-      headers,
-      credentials: "same-origin",
-      signal: controller.signal,
-    })
-      .then(async (res) => {
-        const payload = (await res.json().catch(() => null)) as {
+    const controller = resolveMedia ? undefined : new AbortController();
+    if (controller) {
+      resource.abortController = controller;
+    }
+    const timeout = controller
+      ? setTimeout(
+          () =>
+            controller.abort(
+              new DOMException("assistant attachment metadata fetch timed out", "TimeoutError"),
+            ),
+          ASSISTANT_ATTACHMENT_METADATA_FETCH_TIMEOUT_MS,
+        )
+      : undefined;
+    const metadata = resolveMedia
+      ? resolveMedia(source)
+      : fetch(buildAssistantAttachmentMetaUrl(source, resourceBasePath), {
+          method: "GET",
+          headers,
+          credentials: "same-origin",
+          signal: controller?.signal,
+        }).then(async (res) => await res.json().catch(() => null));
+    const pending = metadata
+      .then((value) => {
+        const payload = value as {
           available?: boolean;
           mediaTicket?: string;
           mediaTicketExpiresAt?: string;
@@ -234,8 +245,10 @@ export function resolveAssistantAttachmentAvailability(
         return unavailable;
       })
       .finally(() => {
-        clearTimeout(timeout);
-        if (resource.abortController === controller) {
+        if (timeout) {
+          clearTimeout(timeout);
+        }
+        if (controller && resource.abortController === controller) {
           resource.abortController = undefined;
         }
         if (resource.pending === pending) {
@@ -253,13 +266,16 @@ export function retryAssistantAttachmentAvailability(
   resourceBasePath: string | undefined,
   authToken: string | null | undefined,
   onRequestUpdate: (() => void) | undefined,
+  resolveMedia?: AssistantMediaResolver,
+  connectionEpoch?: number,
 ): void {
   if (!isLocalAssistantAttachmentSource(source)) {
     onRequestUpdate?.();
     return;
   }
   const normalizedAuthToken = authToken?.trim() ?? "";
-  const cacheKey = `${resourceBasePath ?? ""}::${normalizedAuthToken}::${source}`;
+  const authorityKey = resolveMedia ? `gateway:${connectionEpoch ?? 0}` : normalizedAuthToken;
+  const cacheKey = `${resourceBasePath ?? ""}::${authorityKey}::${source}`;
   const resource = observeChatMediaResource<AssistantAttachmentAvailability>(
     "assistant-attachment",
     cacheKey,

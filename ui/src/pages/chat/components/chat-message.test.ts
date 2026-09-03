@@ -4036,17 +4036,14 @@ describe("grouped chat rendering", () => {
     expect(container.textContent).toContain("unsafe.pdf");
   });
 
-  it("renders verified local assistant attachments through the authenticated media route", async () => {
+  it("renders local assistant attachments through a WebSocket-minted media capability", async () => {
     const source = `/tmp/openclaw/${crypto.randomUUID()} test image.png`;
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.includes("meta=1")) {
-        const headers = init?.headers as Headers;
-        expect(headers.get("Authorization")).toBe("Bearer session-token");
-        return { ok: true, json: async () => mediaTicketPayload("ticket-local") };
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const resolveAssistantMedia = vi.fn(async () => ({
+      ...mediaTicketPayload("ticket-local"),
+      available: true as const,
+    }));
     const container = document.createElement("div");
     const renderMessage = () =>
       renderAssistantMessage(
@@ -4057,7 +4054,8 @@ describe("grouped chat rendering", () => {
         {
           showToolCalls: false,
           resourceBasePath: "/openclaw",
-          assistantAttachmentAuthToken: "session-token",
+          connectionEpoch: 7,
+          resolveAssistantMedia,
           localMediaPreviewRoots: ["/tmp/openclaw"],
           onRequestUpdate: renderMessage,
         },
@@ -4069,12 +4067,13 @@ describe("grouped chat rendering", () => {
     ).toBe("Checking...");
     await flushAssistantAttachmentAvailabilityChecks();
 
-    const expectedMetaUrl = `/openclaw/__openclaw__/assistant-media?source=${encodeURIComponent(source).replaceAll("%20", "+")}&meta=1`;
-    const [, fetchInit] = requireFetchCallForUrl(fetchMock, expectedMetaUrl);
-    expectSameOriginGet(fetchInit);
+    expect(resolveAssistantMedia).toHaveBeenCalledWith(source);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(
       container.querySelector<HTMLImageElement>(".chat-message-image")?.getAttribute("src"),
-    ).toBe(expectedMetaUrl.replace("&meta=1", "&mediaTicket=ticket-local"));
+    ).toBe(
+      `/openclaw/__openclaw__/assistant-media?source=${encodeURIComponent(source).replaceAll("%20", "+")}&mediaTicket=ticket-local`,
+    );
   });
 
   it("stops checking when local assistant attachment metadata fetch stalls", async () => {

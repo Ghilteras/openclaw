@@ -757,11 +757,11 @@ If you disable gateway auth (not recommended on shared hosts), the avatar route 
 
 When gateway auth is configured, assistant local-media previews use a two-step route:
 
-- `GET /__openclaw__/assistant-media?meta=1&source=<path>` requires the normal Control UI operator auth; the browser sends the gateway token as a bearer header when checking availability.
-- Successful metadata responses include a short-lived `mediaTicket` scoped to that exact source path.
+- The authenticated Control UI WebSocket calls `assistant.media.get`, which requires `operator.read`, to check one source and mint a short-lived `mediaTicket` scoped to that exact path.
+- Older Control UI clients can still use authenticated `GET /__openclaw__/assistant-media?meta=1&source=<path>` during the compatibility window.
 - Browser-rendered image, audio, video, and document URLs use `mediaTicket=<ticket>` instead of the active gateway token or password. The ticket expires quickly and cannot authorize a different source.
 
-This keeps media rendering compatible with browser-native media elements without putting reusable gateway credentials in visible media URLs.
+This keeps media rendering compatible with browser-native media elements without putting reusable gateway credentials in visible media URLs or requiring a separate HTTP bearer when the WebSocket is authenticated through Tailscale or a trusted proxy. Local assistant media and browser screenshots use this flow; generated media uses the artifact-specific flow below.
 
 Generated images under `/api/chat/media/outgoing/...` use the same capability
 principle through `artifacts.download`. The authenticated WebSocket request

@@ -15,7 +15,7 @@ import {
 } from "../components/settings-sidebar-lazy.ts";
 import type { ThemeModeChangeDetail } from "../components/theme-mode-toggle.ts";
 import { t } from "../i18n/index.ts";
-import { canCallGatewayMethod } from "../lib/gateway-methods.ts";
+import { canCallGatewayMethod, isGatewayMethodAdvertised } from "../lib/gateway-methods.ts";
 import {
   formatKeyboardShortcutCombo,
   KEYBOARD_SHORTCUT_COMBOS,
@@ -646,6 +646,10 @@ export function renderApplicationShell(host: ShellViewHost) {
               .available=${browserPanelAvailable}
               .suppressed=${settingsTakeover}
               .resourceBasePath=${context.resourceBasePath}
+              .mediaCapabilityAvailable=${isGatewayMethodAdvertised(
+                gatewaySnapshot,
+                "assistant.media.get",
+              ) === true}
               .authToken=${resolveControlUiAuthToken({
                 hello: gatewaySnapshot.hello,
                 settings: { token: context.gateway.connection.token },

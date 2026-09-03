@@ -3,7 +3,8 @@ import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/i
 import { redactToolPayloadText } from "../../logging/redact.js";
 import { isTrustedSecretSurfaceUnavailableError } from "../../secrets/runtime-degraded-state.js";
 import { truncateUtf16Safe } from "../../utils.js";
-import type { ControlUiSessionPreview } from "../control-ui-contract.js";
+import { resolveAssistantIdentity } from "../assistant-identity.js";
+import type { AssistantMediaGetResult, ControlUiSessionPreview } from "../control-ui-contract.js";
 import {
   CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE,
   ControlUiGitHubError,
@@ -14,6 +15,7 @@ import {
   type ControlUiGitHubPreviewTarget,
 } from "../control-ui-github-preview.js";
 import { parseControlUiSessionPullRequestsSubscribeParams } from "../control-ui-session-pr-subscriptions.js";
+import { resolveControlUiAssistantMedia } from "../control-ui.js";
 import { resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId } from "../session-request-agent.js";
 import { createSessionListEntryFilter } from "../session-sharing.js";
 import { buildGatewaySessionRow } from "../session-utils.js";
@@ -42,6 +44,11 @@ type LoadSessionPreview = (
   client: GatewayClient | null,
 ) => SessionPreviewSource | null | Promise<SessionPreviewSource | null>;
 
+type LoadAssistantMedia = (
+  source: string,
+  context: GatewayRequestContext,
+) => Promise<AssistantMediaGetResult>;
+
 const SESSION_PREVIEW_TEXT_MAX_CHARS = 200;
 
 function boundedPreviewText(value: string | undefined, maxChars = SESSION_PREVIEW_TEXT_MAX_CHARS) {
@@ -55,6 +62,26 @@ function parseSessionPreviewKey(params: unknown): string | null {
   }
   const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey.trim() : "";
   return sessionKey && sessionKey.length <= 512 ? sessionKey : null;
+}
+
+function parseAssistantMediaSource(params: unknown): string | null {
+  if (!isRecord(params) || Object.keys(params).some((key) => key !== "source")) {
+    return null;
+  }
+  const source = typeof params.source === "string" ? params.source.trim() : "";
+  return source && source.length <= 8192 ? source : null;
+}
+
+async function loadAssistantMedia(
+  source: string,
+  context: GatewayRequestContext,
+): Promise<AssistantMediaGetResult> {
+  const cfg = context.getRuntimeConfig();
+  return await resolveControlUiAssistantMedia(
+    source,
+    cfg,
+    resolveAssistantIdentity({ cfg }).agentId,
+  );
 }
 
 function projectSessionPreview(source: SessionPreviewSource | null): ControlUiSessionPreview {
@@ -135,8 +162,21 @@ function loadControlUiSessionPreview(
 export function createControlUiHandlers(
   loadGitHubPreview: LoadGitHubPreview = loadControlUiGitHubPreview,
   loadSessionPreview: LoadSessionPreview = loadControlUiSessionPreview,
+  loadMedia: LoadAssistantMedia = loadAssistantMedia,
 ): GatewayRequestHandlers {
   return {
+    "assistant.media.get": async ({ params, context, respond }) => {
+      const source = parseAssistantMediaSource(params);
+      if (!source) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "invalid assistant.media.get params"),
+        );
+        return;
+      }
+      respond(true, await loadMedia(source, context), undefined);
+    },
     "controlUi.githubPreview": async ({ params, respond }) => {
       const target = parseControlUiGitHubPreviewTarget(params);
       if (!target) {

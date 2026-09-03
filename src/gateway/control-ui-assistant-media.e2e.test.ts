@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
+import { connectGatewayClient, disconnectGatewayClient } from "./test-helpers.e2e.js";
 import { installGatewayTestHooks, testState, withGatewayServer } from "./test-helpers.js";
 
 installGatewayTestHooks({ scope: "suite" });
@@ -26,16 +27,16 @@ describe("Control UI assistant media e2e", () => {
       async ({ port }) => {
         const route = `http://127.0.0.1:${port}/__openclaw__/assistant-media`;
         const sourceParam = encodeURIComponent(filePath);
-
-        const metadata = await fetch(`${route}?meta=1&source=${sourceParam}`, {
-          headers: { Authorization: `Bearer ${CONTROL_UI_E2E_TOKEN}` },
+        const client = await connectGatewayClient({
+          url: `ws://127.0.0.1:${port}`,
+          token: CONTROL_UI_E2E_TOKEN,
+          scopes: ["operator.read"],
         });
-        expect(metadata.status).toBe(200);
-        const payload = (await metadata.json()) as {
+        const payload = await client.request<{
           available?: boolean;
           mediaTicket?: string;
           mediaTicketExpiresAt?: string;
-        };
+        }>("assistant.media.get", { source: filePath });
         expect(payload.available).toBe(true);
         expect(payload.mediaTicket).toMatch(/^v1\./);
         expect(Date.parse(payload.mediaTicketExpiresAt ?? "")).not.toBeNaN();
@@ -126,6 +127,7 @@ describe("Control UI assistant media e2e", () => {
           `${route}?source=${encodeURIComponent(otherFilePath)}&mediaTicket=${encodeURIComponent(payload.mediaTicket ?? "")}`,
         );
         expect(wrongSource.status).toBe(401);
+        await disconnectGatewayClient(client);
       },
       {
         serverOptions: {

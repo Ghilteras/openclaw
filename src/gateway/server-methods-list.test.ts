@@ -465,9 +465,8 @@ describe("listGatewayMethods", () => {
     // A descriptor without a matching entry in the lazy handler routing table
     // advertises a method that then dispatches as "unknown method" — exactly
     // how terminal.attach/list/text and later sessions.dispatch first shipped
-    // broken. Aux methods are injected at server construction; assistant media
-    // is served by the control-ui handler.
-    const injectedElsewhere = new Set<string>([...GATEWAY_AUX_METHODS, "assistant.media.get"]);
+    // broken. Aux methods are injected at server construction.
+    const injectedElsewhere = new Set<string>(GATEWAY_AUX_METHODS);
     const missing = listCoreGatewayMethodNames()
       .filter((method) => !injectedElsewhere.has(method))
       .filter((method) => typeof coreGatewayHandlers[method] !== "function");

@@ -1,5 +1,6 @@
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import { asNonArrayRecord, asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
+import type { AssistantMediaGetResult } from "../../../../../src/gateway/control-ui-contract.js";
 import type { ImageLightboxItem } from "../../../components/image-lightbox.ts";
 import { t } from "../../../i18n/index.ts";
 import type { MessageContentItem } from "../../../lib/chat/chat-types.ts";
@@ -31,11 +32,15 @@ export type ArtifactDownloadResolver = (params: {
   artifactId: string;
 }) => Promise<{ url: string; expiresAt?: string } | null>;
 
+/** Mints a short-lived capability for one local assistant-media source. */
+export type AssistantMediaResolver = (source: string) => Promise<AssistantMediaGetResult | null>;
+
 export type ImageRenderOptions = {
   connectionEpoch?: number;
   localMediaPreviewRoots?: readonly string[];
   resourceBasePath?: string;
   authToken?: string | null;
+  resolveAssistantMedia?: AssistantMediaResolver;
   onRequestUpdate?: () => void;
   onRequestOpenImage?: () => number;
   onOpenImage?: (item: ImageLightboxItem, requestVersion?: number) => void;

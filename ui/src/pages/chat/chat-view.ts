@@ -57,7 +57,10 @@ import type {
 } from "./components/chat-composer-types.ts";
 import { isChatRunWorking, renderChatComposer } from "./components/chat-composer.ts";
 import { isImageLightboxEvent, openInlineChatImage } from "./components/chat-image-lightbox.ts";
-import type { ArtifactDownloadResolver } from "./components/chat-message-media.ts";
+import type {
+  ArtifactDownloadResolver,
+  AssistantMediaResolver,
+} from "./components/chat-message-media.ts";
 import type { ChatPermissionPickerProps } from "./components/chat-permission-picker.ts";
 import { renderChatPullRequests } from "./components/chat-pull-requests.ts";
 import { renderChatSessionSuggestions } from "./components/chat-session-suggestions.ts";
@@ -202,6 +205,7 @@ export type ChatProps = ChatTaskSuggestionTrayProps &
     localMediaPreviewRoots?: string[];
     connectionEpoch?: number;
     assistantAttachmentAuthToken?: string | null;
+    resolveAssistantMedia?: AssistantMediaResolver;
     resolveArtifactDownload?: ArtifactDownloadResolver;
     autoExpandToolCalls?: boolean;
     attachmentLimits?: { maxBytes: number; maxImageBytes: number };
@@ -364,6 +368,7 @@ export function renderChat(props: ChatProps) {
       localMediaPreviewRoots: props.localMediaPreviewRoots,
       connectionEpoch: props.connectionEpoch,
       assistantAttachmentAuthToken: props.assistantAttachmentAuthToken,
+      resolveAssistantMedia: props.resolveAssistantMedia,
       resolveArtifactDownload: props.resolveArtifactDownload,
       canvasPluginSurfaceUrl: props.canvasPluginSurfaceUrl,
       embedSandboxMode: props.embedSandboxMode,

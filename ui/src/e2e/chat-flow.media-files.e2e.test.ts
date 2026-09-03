@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, it } from "vitest";
+import { defaultControlUiFeatureMethods } from "../test-helpers/control-ui-e2e.ts";
 import {
   buildLocalWebchatAudioMessage,
   captureUiProofEnabled,
@@ -109,19 +110,6 @@ suite.define(() => {
         const url = new URL(request.url());
         requestedMediaUrls.push(url);
         expect(url.searchParams.get("source")).toBe(expectedSource);
-        if (url.searchParams.get("meta") === "1") {
-          expect(request.headers().authorization).toBe("Bearer e2e-device-token");
-          await route.fulfill({
-            contentType: "application/json",
-            body: JSON.stringify({
-              available: true,
-              mediaTicket: ticket,
-              mediaTicketExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
-            }),
-          });
-          return;
-        }
-
         expect(url.searchParams.get("mediaTicket")).toBe(ticket);
         expect(request.headers().authorization).toBeUndefined();
         await route.fulfill(
@@ -138,6 +126,14 @@ suite.define(() => {
       });
 
       await installMockGateway(page, {
+        featureMethods: [...defaultControlUiFeatureMethods, "assistant.media.get"],
+        methodResponses: {
+          "assistant.media.get": {
+            available: true,
+            mediaTicket: ticket,
+            mediaTicketExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+          },
+        },
         historyMessages: [
           kind === "image"
             ? {
@@ -170,10 +166,9 @@ suite.define(() => {
         });
         await expect
           .poll(() => requestedMediaUrls.length, { timeout: 10_000 })
-          .toBe(kind === "image" ? 2 : 1);
-        expect(requestedMediaUrls[0]?.searchParams.get("meta")).toBe("1");
+          .toBe(kind === "image" ? 1 : 0);
         if (kind === "image") {
-          expect(requestedMediaUrls[1]?.searchParams.get("mediaTicket")).toBe(ticket);
+          expect(requestedMediaUrls[0]?.searchParams.get("mediaTicket")).toBe(ticket);
         } else {
           expect(
             await media.locator(".chat-assistant-attachment-card__download").getAttribute("href"),
@@ -206,7 +201,7 @@ suite.define(() => {
               proof: "control-ui-local-media-bootstrap",
               kind,
               source,
-              metadataAuthenticated: true,
+              metadataAuthenticatedByGateway: true,
               ticketScoped: true,
               rawRequestHasBearer: false,
               requests: requestedMediaUrls.map((url) => ({

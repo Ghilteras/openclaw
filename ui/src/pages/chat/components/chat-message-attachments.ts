@@ -369,6 +369,7 @@ export function renderAssistantAttachments(
     onRequestUpdate,
     onRequestOpenImage,
     onOpenImage,
+    resolveAssistantMedia,
     resolveArtifactDownload,
   } = options;
   const renderAttachment = ({ attachment }: AttachmentItem) => {
@@ -379,6 +380,8 @@ export function renderAssistantAttachments(
       resourceBasePath,
       authToken,
       onRequestUpdate,
+      resolveAssistantMedia,
+      connectionEpoch,
     );
     const managedAvailability =
       assistantAvailability.status === "available"
@@ -429,7 +432,7 @@ export function renderAssistantAttachments(
       assistantAvailability.status === "available"
         ? (assistantAvailability.height ?? attachment.height)
         : attachment.height;
-    const playbackAuthToken = localSource ? (authToken ?? null) : null;
+    const playbackAuthToken = null;
     const safeAttachmentUrl =
       attachment.kind === "audio"
         ? safeAudioAttachmentHref(attachmentUrl ?? "")
@@ -446,6 +449,8 @@ export function renderAssistantAttachments(
               resourceBasePath,
               authToken,
               onRequestUpdate,
+              resolveAssistantMedia,
+              connectionEpoch,
             )
         : managedAvailability?.status === "unavailable" &&
             Boolean(attachment.artifactId && resolveArtifactDownload)
@@ -477,6 +482,8 @@ export function renderAssistantAttachments(
                         runtime.resourceBasePath,
                         runtime.authToken,
                         sidebarUpdate,
+                        runtime.resolveAssistantMedia,
+                        runtime.connectionEpoch,
                       );
                       if (nextAssistantAvailability.status !== "available") {
                         return null;
@@ -503,7 +510,7 @@ export function renderAssistantAttachments(
                             ),
                         playback:
                           nextAssistantAvailability.playback ?? attachment.playback ?? "native",
-                        authToken: localSource ? (runtime.authToken ?? null) : null,
+                        authToken: null,
                         sizeBytes: nextAssistantAvailability.sizeBytes ?? attachment.sizeBytes,
                         durationMs: nextAssistantAvailability.durationMs ?? attachment.durationMs,
                         width: nextAssistantAvailability.width ?? attachment.width,

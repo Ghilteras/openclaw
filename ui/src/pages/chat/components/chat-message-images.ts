@@ -130,6 +130,8 @@ export function resolveRenderableMessageImages(
           opts?.resourceBasePath,
           opts?.authToken,
           opts?.onRequestUpdate,
+          opts?.resolveAssistantMedia,
+          opts?.connectionEpoch,
         )
       : { status: "available" as const };
     if (availability.status !== "available") {

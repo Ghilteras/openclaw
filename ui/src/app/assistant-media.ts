@@ -1,4 +1,8 @@
 import { normalizeRouteBasePath } from "@openclaw/uirouter";
+import type { AssistantMediaGetResult } from "../../../src/gateway/control-ui-contract.js";
+import type { GatewayBrowserClient } from "../api/gateway.ts";
+
+const ASSISTANT_MEDIA_RESOLVE_TIMEOUT_MS = 30_000;
 
 export function buildAssistantMediaUrl(
   source: string,
@@ -11,4 +15,16 @@ export function buildAssistantMediaUrl(
     params.set("mediaTicket", normalizedMediaTicket);
   }
   return `${normalizeRouteBasePath(resourceBasePath)}/__openclaw__/assistant-media?${params.toString()}`;
+}
+
+/** Mint a narrow local-media capability through the caller's authenticated Gateway session. */
+export async function resolveAssistantMedia(
+  client: GatewayBrowserClient,
+  source: string,
+): Promise<AssistantMediaGetResult> {
+  return await client.request<AssistantMediaGetResult>(
+    "assistant.media.get",
+    { source },
+    { timeoutMs: ASSISTANT_MEDIA_RESOLVE_TIMEOUT_MS },
+  );
 }

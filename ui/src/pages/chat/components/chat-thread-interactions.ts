@@ -31,7 +31,7 @@ import type { LinkFaviconFetcher } from "../link-favicon-loader.ts";
 import type { RealtimeTalkConversationEntry } from "../realtime-talk-conversation.ts";
 import type { ChatRunUiStatus } from "../run-lifecycle.ts";
 import type { BackgroundTasksProps } from "./chat-background-tasks.types.ts";
-import type { ArtifactDownloadResolver } from "./chat-message-media.ts";
+import type { ArtifactDownloadResolver, AssistantMediaResolver } from "./chat-message-media.ts";
 import {
   dismissConfirmedActionPopovers,
   openChatRewindConfirmation,
@@ -103,6 +103,7 @@ export type ChatThreadProps = {
   localMediaPreviewRoots?: string[];
   connectionEpoch?: number;
   assistantAttachmentAuthToken?: string | null;
+  resolveAssistantMedia?: AssistantMediaResolver;
   resolveArtifactDownload?: ArtifactDownloadResolver;
   canvasPluginSurfaceUrl?: string | null;
   embedSandboxMode?: EmbedSandboxMode;

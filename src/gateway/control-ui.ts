@@ -58,6 +58,7 @@ import {
   type ControlUiBootstrapConfig,
   type ControlUiEnvironment,
   type ControlUiPluginFrameGrantAck,
+  type AssistantMediaGetResult,
 } from "./control-ui-contract.js";
 import { buildControlUiCspHeader, computeInlineScriptHashes } from "./control-ui-csp.js";
 import {
@@ -221,7 +222,8 @@ function isValidAgentPathSegment(agentId: string): boolean {
   return /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(agentId);
 }
 
-function normalizeAssistantMediaSource(source: string): string | null {
+/** Canonicalize a local assistant-media reference before policy checks or ticket signing. */
+export function normalizeAssistantMediaSource(source: string): string | null {
   const trimmed = source.trim();
   if (!trimmed) {
     return null;
@@ -429,6 +431,34 @@ async function resolveAssistantMediaAvailability(
   }
 }
 
+/** Resolve one allowed local source and mint the capability used by its HTTP byte fetch. */
+export async function resolveControlUiAssistantMedia(
+  source: string,
+  config: OpenClawConfig,
+  agentId?: string,
+): Promise<AssistantMediaGetResult> {
+  const normalizedSource = normalizeAssistantMediaSource(source);
+  if (!normalizedSource) {
+    return { available: false, code: "invalid-source", reason: "Invalid media source" };
+  }
+  const availability = await resolveAssistantMediaAvailability(
+    normalizedSource,
+    getAgentScopedMediaLocalRoots(config, agentId),
+  );
+  if (!availability.available) {
+    return availability;
+  }
+  const ticket = createAssistantMediaTicket(normalizedSource);
+  if (!ticket.mediaTicket || !ticket.mediaTicketExpiresAt) {
+    return {
+      available: false,
+      code: "attachment-unavailable",
+      reason: "Attachment unavailable",
+    };
+  }
+  return { ...availability, ...ticket };
+}
+
 export async function handleControlUiAssistantMediaRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -479,11 +509,13 @@ export async function handleControlUiAssistantMediaRequest(
     : getDefaultLocalRootsCore();
 
   if (isMetaRequest) {
-    const availability = await resolveAssistantMediaAvailability(source, localRoots);
+    const availability = opts?.config
+      ? await resolveControlUiAssistantMedia(source, opts.config, opts.agentId)
+      : await resolveAssistantMediaAvailability(source, localRoots);
     sendJson(
       res,
       200,
-      availability.available
+      availability.available && !("mediaTicket" in availability)
         ? { ...availability, ...createAssistantMediaTicket(source) }
         : availability,
     );

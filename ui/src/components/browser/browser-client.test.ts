@@ -2,6 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n/index.ts";
 import { fetchBrowserScreenshotDataUrl } from "./browser-client.ts";
 
+function createAssistantMediaClient() {
+  return {
+    request: vi.fn().mockResolvedValue({
+      available: true,
+      mediaTicket: "ticket-browser-shot",
+      mediaTicketExpiresAt: "2026-09-02T20:00:00.000Z",
+    }),
+  };
+}
+
 afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -20,13 +30,14 @@ describe("fetchBrowserScreenshotDataUrl", () => {
 
     await expect(
       fetchBrowserScreenshotDataUrl({
+        client: createAssistantMediaClient() as never,
+        useMediaCapability: true,
         resourceBasePath: "",
-        authToken: null,
         path: "/tmp/browser shot.png",
       }),
     ).resolves.toBe("data:image/png;base64,aW1hZ2UtYnl0ZXM=");
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "/__openclaw__/assistant-media?source=%2Ftmp%2Fbrowser+shot.png",
+      "/__openclaw__/assistant-media?source=%2Ftmp%2Fbrowser+shot.png&mediaTicket=ticket-browser-shot",
     );
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -40,8 +51,9 @@ describe("fetchBrowserScreenshotDataUrl", () => {
 
     await expect(
       fetchBrowserScreenshotDataUrl({
+        client: createAssistantMediaClient() as never,
+        useMediaCapability: true,
         resourceBasePath: "/openclaw",
-        authToken: null,
         path: "/tmp/missing.png",
       }),
     ).rejects.toThrow("Screenshot fetch failed (404).");
@@ -59,8 +71,9 @@ describe("fetchBrowserScreenshotDataUrl", () => {
 
     await expect(
       fetchBrowserScreenshotDataUrl({
+        client: createAssistantMediaClient() as never,
+        useMediaCapability: true,
         resourceBasePath: "/openclaw",
-        authToken: null,
         path: "/tmp/missing.png",
       }),
     ).rejects.toThrow("Screenshot fetch failed (404).");
@@ -81,8 +94,9 @@ describe("fetchBrowserScreenshotDataUrl", () => {
 
     await expect(
       fetchBrowserScreenshotDataUrl({
+        client: createAssistantMediaClient() as never,
+        useMediaCapability: true,
         resourceBasePath: "/openclaw",
-        authToken: null,
         path: "/tmp/missing.png",
       }),
     ).rejects.toThrow("Screenshot fetch failed (404).");
@@ -112,12 +126,18 @@ describe("fetchBrowserScreenshotDataUrl", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const request = fetchBrowserScreenshotDataUrl({
+      client: createAssistantMediaClient() as never,
+      useMediaCapability: true,
       resourceBasePath: "/openclaw",
-      authToken: null,
       path: "/tmp/browser shot.png",
     });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
     const [url, init] = fetchMock.mock.calls[0] ?? [];
-    expect(url).toBe("/openclaw/__openclaw__/assistant-media?source=%2Ftmp%2Fbrowser+shot.png");
+    expect(url).toBe(
+      "/openclaw/__openclaw__/assistant-media?source=%2Ftmp%2Fbrowser+shot.png&mediaTicket=ticket-browser-shot",
+    );
     expect(init?.signal?.aborted).toBe(false);
 
     const outcome = expect(request).rejects.toMatchObject({ name: "TimeoutError" });
@@ -155,10 +175,14 @@ describe("fetchBrowserScreenshotDataUrl", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const request = fetchBrowserScreenshotDataUrl({
+      client: createAssistantMediaClient() as never,
+      useMediaCapability: true,
       resourceBasePath: "/openclaw",
-      authToken: null,
       path: "/tmp/browser shot.png",
     });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
     const [, init] = fetchMock.mock.calls[0] ?? [];
     await Promise.resolve();
     await Promise.resolve();
@@ -191,8 +215,9 @@ describe("fetchBrowserScreenshotDataUrl", () => {
 
     await expect(
       fetchBrowserScreenshotDataUrl({
+        client: createAssistantMediaClient() as never,
+        useMediaCapability: true,
         resourceBasePath: "/openclaw",
-        authToken: null,
         path: "/tmp/missing.png",
       }),
     ).rejects.toThrow("Falha ao buscar captura de tela (503).");

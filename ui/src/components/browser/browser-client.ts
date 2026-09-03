@@ -8,7 +8,7 @@ import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import { asNullableRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
 import { readStringValue } from "@openclaw/normalization-core/string-coerce";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
-import { buildAssistantMediaUrl } from "../../app/assistant-media.ts";
+import { buildAssistantMediaUrl, resolveAssistantMedia } from "../../app/assistant-media.ts";
 import { t } from "../../i18n/index.ts";
 
 const BROWSER_REQUEST_METHOD = "browser.request";
@@ -318,16 +318,25 @@ export async function inspectBrowserElementAt(
 
 /**
  * Browser screenshots are written to the gateway's media store; the Control UI
- * fetches the bytes over the authenticated assistant-media HTTP route (the
- * same one chat history uses for local media previews).
+ * mints an exact-source capability over the authenticated Gateway connection,
+ * then fetches bytes from the same assistant-media route chat history uses.
  */
 export async function fetchBrowserScreenshotDataUrl(params: {
+  client?: GatewayBrowserClient | null;
+  authToken?: string | null;
+  useMediaCapability?: boolean;
   resourceBasePath: string;
-  authToken: string | null;
   path: string;
 }): Promise<string> {
+  const capability =
+    params.useMediaCapability && params.client
+      ? await resolveAssistantMedia(params.client, params.path)
+      : null;
+  if (capability && !capability.available) {
+    throw new Error(capability.reason);
+  }
   const headers = new Headers({ Accept: "image/*" });
-  if (params.authToken) {
+  if (!capability && params.authToken) {
     headers.set("Authorization", `Bearer ${params.authToken}`);
   }
   const controller = new AbortController();
@@ -340,12 +349,19 @@ export async function fetchBrowserScreenshotDataUrl(params: {
   );
   let blob: Blob;
   try {
-    const res = await fetch(buildAssistantMediaUrl(params.path, params.resourceBasePath), {
-      method: "GET",
-      headers,
-      credentials: "same-origin",
-      signal: controller.signal,
-    });
+    const res = await fetch(
+      buildAssistantMediaUrl(
+        params.path,
+        params.resourceBasePath,
+        capability?.available ? capability.mediaTicket : undefined,
+      ),
+      {
+        method: "GET",
+        headers,
+        credentials: "same-origin",
+        signal: controller.signal,
+      },
+    );
     if (!res.ok) {
       // A response stream can take indefinitely to cancel; release it without
       // delaying the stable HTTP error or defeating the request deadline.

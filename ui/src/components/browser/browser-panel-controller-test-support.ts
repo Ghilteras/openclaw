@@ -56,6 +56,7 @@ export class TestBrowserPanelHost implements BrowserPanelControllerHost {
   readonly renderRoot = document.createElement("div");
   readonly resourceBasePath = "";
   readonly authToken = null;
+  readonly mediaCapabilityAvailable = true;
   available = true;
   isConnected = true;
   open = true;
