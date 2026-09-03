@@ -58,16 +58,16 @@ DOCKER_ENV_ARGS=(
   -e "KITCHEN_SINK_SCENARIOS=$KITCHEN_SINK_SCENARIOS"
   -e "KITCHEN_SINK_CLI_TIMEOUT=$KITCHEN_SINK_CLI_TIMEOUT"
 )
-authorization_status=0
-if openclaw_frozen_target_omissions_authorized; then
+capability_status=0
+openclaw_resolve_frozen_plugin_prerelease_capabilities \
+  "${OPENCLAW_DOCKER_E2E_REPO_ROOT:-$ROOT_DIR}" || capability_status=$?
+[ "$capability_status" -eq 0 ] || exit "$capability_status"
+if [[ "$OPENCLAW_FROZEN_PLUGIN_PRERELEASE_PROFILE" == "legacy" ]]; then
   DOCKER_ENV_ARGS+=(
     -e OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS
     -e OPENCLAW_SELECTED_SHA
     -e OPENCLAW_TOOLING_SHA
   )
-else
-  authorization_status=$?
-  [ "$authorization_status" -eq 1 ] || exit "$authorization_status"
 fi
 if [[ "${OPENCLAW_KITCHEN_SINK_LIVE_CLAWHUB:-0}" = "1" ]]; then
   for env_name in \

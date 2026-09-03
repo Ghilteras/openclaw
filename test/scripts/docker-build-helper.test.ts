@@ -6417,7 +6417,7 @@ source "$ROOT_DIR/scripts/lib/docker-e2e-logs.sh"
     expect(missing).toEqual([]);
   });
 
-  it("forwards authorized frozen-target context into plugin Docker lanes", () => {
+  it("resolves plugin Docker legacy fixtures from the selected source profile", () => {
     for (const runnerPath of [
       "scripts/e2e/bundled-plugin-install-uninstall-docker.sh",
       KITCHEN_SINK_PLUGIN_DOCKER_E2E_PATH,
@@ -6426,7 +6426,9 @@ source "$ROOT_DIR/scripts/lib/docker-e2e-logs.sh"
     ]) {
       const runner = readFileSync(runnerPath, "utf8");
       expect(runner).toContain('source "$ROOT_DIR/scripts/lib/frozen-target-compat.sh"');
-      expect(runner).toContain("openclaw_frozen_target_omissions_authorized");
+      expect(runner).toContain("openclaw_resolve_frozen_plugin_prerelease_capabilities");
+      expect(runner).toContain("OPENCLAW_DOCKER_E2E_REPO_ROOT");
+      expect(runner).toContain('OPENCLAW_FROZEN_PLUGIN_PRERELEASE_PROFILE" == "legacy"');
       expect(runner).toContain("OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS");
       expect(runner).toContain("OPENCLAW_SELECTED_SHA");
       expect(runner).toContain("OPENCLAW_TOOLING_SHA");

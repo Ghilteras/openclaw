@@ -17,6 +17,6 @@ export function hasExpectedPluginUninstallConfigState(config, pluginId) {
   // That target predates the durable disable marker but still removes all plugin state.
   return (
     process.env.OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS === "1" &&
-    !config.plugins?.entries?.[pluginId]
+    !Object.hasOwn(config.plugins?.entries ?? {}, pluginId)
   );
 }

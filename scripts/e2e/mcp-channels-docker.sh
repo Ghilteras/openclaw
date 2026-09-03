@@ -21,16 +21,16 @@ trap cleanup EXIT
 docker_e2e_build_or_reuse "$IMAGE_NAME" mcp-channels
 OPENCLAW_TEST_STATE_SCRIPT_B64="$(docker_e2e_test_state_shell_b64 mcp-channels empty)"
 DOCKER_ENV_ARGS=()
-authorization_status=0
-if openclaw_frozen_target_omissions_authorized; then
+capability_status=0
+openclaw_resolve_frozen_plugin_prerelease_capabilities \
+  "${OPENCLAW_DOCKER_E2E_REPO_ROOT:-$ROOT_DIR}" || capability_status=$?
+[ "$capability_status" -eq 0 ] || exit "$capability_status"
+if [[ "$OPENCLAW_FROZEN_PLUGIN_PRERELEASE_PROFILE" == "legacy" ]]; then
   DOCKER_ENV_ARGS+=(
     -e OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS
     -e OPENCLAW_SELECTED_SHA
     -e OPENCLAW_TOOLING_SHA
   )
-else
-  authorization_status=$?
-  [ "$authorization_status" -eq 1 ] || exit "$authorization_status"
 fi
 
 echo "Running in-container gateway + MCP smoke..."
