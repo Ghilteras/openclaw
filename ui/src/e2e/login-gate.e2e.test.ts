@@ -137,6 +137,10 @@ suite.define(() => {
     const context = await suite.browser.newContext({
       hasTouch: true,
       isMobile: true,
+      recordVideo: {
+        dir: RECOVERY_ARTIFACT_DIR,
+        size: { height: 844, width: 390 },
+      },
       serviceWorkers: "block",
       viewport: { height: 844, width: 390 },
     });
