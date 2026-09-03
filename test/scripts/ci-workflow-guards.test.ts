@@ -4385,6 +4385,7 @@ NODE
       "checks-ui-e2e": "ubuntu-24.04",
       "checks-ui-e2e-real-gateway": "ubuntu-24.04",
       "control-ui-i18n": "ubuntu-24.04",
+      "control-ui-performance": "ubuntu-24.04",
       "docker-seed-e2e": "ubuntu-24.04",
       "macos-node": "macos-15",
       "macos-swift": "macos-26",
@@ -5171,6 +5172,7 @@ NODE
       "checks-ui-e2e",
       "checks-ui-e2e-real-gateway",
       "control-ui-i18n",
+      "control-ui-performance",
       "docker-seed-e2e",
       "native-i18n",
       "qa-smoke-ci-profile",
@@ -11286,11 +11288,33 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         true,
       );
       let ownsPrivateServer = false;
-      const visit = (node: ts.Node) => {
+      const visit = (node: ts.Node, inSuiteServer = false) => {
         if (ownsPrivateServer) {
           return;
         }
         if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+          // A Gateway created by the suite's server factory supplies its own UI;
+          // a separate backend in a test can still use the shared UI bundle.
+          if (inSuiteServer && node.expression.text === "createOpenClawTestInstance") {
+            ownsPrivateServer = true;
+            return;
+          }
+          const options = node.arguments[0];
+          if (
+            node.expression.text === "createControlUiE2eSuite" &&
+            options &&
+            ts.isObjectLiteralExpression(options)
+          ) {
+            for (const property of options.properties) {
+              if (
+                (ts.isMethodDeclaration(property) || ts.isPropertyAssignment(property)) &&
+                (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+                property.name.text === "startServer"
+              ) {
+                visit(property, true);
+              }
+            }
+          }
           if (
             node.expression.text === "createSessionManagementE2eSuite" &&
             node.arguments[0]?.kind === ts.SyntaxKind.TrueKeyword
@@ -11308,7 +11332,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
             return;
           }
         }
-        ts.forEachChild(node, visit);
+        ts.forEachChild(node, (child) => visit(child, inSuiteServer));
       };
       visit(sourceFile);
       return ownsPrivateServer;
@@ -11324,6 +11348,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(privateServerFiles).toEqual(uiE2ePrivateServerTestFiles);
     expect(helperPrivateServerFiles.toSorted()).toEqual([
       "ui/src/e2e/child-session-load-errors.e2e.test.ts",
+      "ui/src/e2e/cron-duration-save.real-gateway.e2e.test.ts",
       "ui/src/e2e/mobile-chat-session-menu.e2e.test.ts",
       "ui/src/e2e/mobile-sidebar-session-menu.e2e.test.ts",
       "ui/src/e2e/session-management.delete.e2e.test.ts",
@@ -11898,19 +11923,18 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     );
     const proofUpload = uiE2eRealGateway.steps[proofUploadIndex];
     const realGatewayIndex = uiE2eRealGateway.steps.indexOf(realGatewayStep);
+    // Same-origin admission compares exact build IDs, including the build timestamp.
+    // Include private QA so media bootstrap cannot rebuild runtime behind the UI.
     const realGatewayBuild = expectDefined(
-      uiE2eRealGateway.steps.find(
-        (step: WorkflowStep) => step.name === "Build Control UI bundle for real-Gateway tests",
-      ),
-      "real-Gateway runtime and Control UI build",
+      uiE2eRealGateway.steps.find((step: WorkflowStep) => step.run === "pnpm build:ci-artifacts"),
+      "paired runtime and Control UI build",
     );
-    expect(realGatewayBuild.run.trim().split("\n")).toEqual([
-      "pnpm build qaRuntime",
-      "pnpm ui:build",
-    ]);
     expect(realGatewayBuild.if).toBeUndefined();
     expect(realGatewayBuild["continue-on-error"]).toBeUndefined();
-    expect(uiE2eRealGateway.steps.indexOf(realGatewayBuild)).toBeLessThan(realGatewayIndex);
+    expect(realGatewayBuild.env).toEqual({ OPENCLAW_BUILD_PRIVATE_QA: "1" });
+    const realGatewayBuildIndex = uiE2eRealGateway.steps.indexOf(realGatewayBuild);
+    expect(realGatewayBuildIndex).toBeGreaterThan(uiE2eRealGateway.steps.indexOf(realGatewaySetup));
+    expect(realGatewayBuildIndex).toBeLessThan(realGatewayIndex);
     expect(realGatewayStep.env).toEqual({
       OPENCLAW_CAPTURE_UI_PROOF:
         "${{ github.event_name == 'workflow_dispatch' && inputs.capture_ui_proof && '1' || '0' }}",
@@ -12878,6 +12902,37 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(additionalBoundaryFingerprint.run).toContain("enabled=false");
   });
 
+  it.skipIf(process.platform === "win32")(
+    "keeps missing performance coverage fatal outside historical targets",
+    () => {
+      const job = readCiWorkflow().jobs["control-ui-performance"];
+      expect(job.needs).toEqual(["preflight"]);
+      expect(job.env.CHECKOUT_BASE_SHA).toBe("${{ needs.preflight.outputs.diff_base_revision }}");
+      const step = job.steps.find(
+        (candidate: WorkflowStep) => candidate.name === "Check Control UI performance against base",
+      );
+      const root = tempDirs.make("openclaw-performance-workflow-");
+      const summary = path.join(root, "summary.md");
+      writeFileSync(path.join(root, "package.json"), "{}");
+      for (const compatibility of ["true", "false"]) {
+        const result = runWorkflowShellScript(step.run, {
+          cwd: root,
+          env: {
+            ...process.env,
+            COMPATIBILITY_TARGET: compatibility,
+            GITHUB_STEP_SUMMARY: summary,
+          },
+        });
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(
+          compatibility === "true" ? 0 : 1,
+        );
+      }
+      expect(readFileSync(summary, "utf8")).toContain(
+        "unavailable on the selected compatibility target",
+      );
+    },
+  );
+
   it("emits one final CI gate after every selected lane", () => {
     const workflow = readCiWorkflow();
     const gate = workflow.jobs["ci-gate"];
@@ -12885,6 +12940,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     const selectedJobs = [
       "pnpm-store-warmup",
       "build-artifacts",
+      "control-ui-performance",
       "native-i18n",
       "checks-ui",
       "checks-ui-e2e",
@@ -13112,6 +13168,21 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       label: "manual Node 22 without artifacts",
       context: { preflightOutputs: { run_build_artifacts: "false" } },
       expected: { "checks-node-compat": false },
+    },
+    {
+      label: "UI performance without runtime artifact changes",
+      context: { preflightOutputs: { run_build_artifacts: "false", run_ui_tests: "true" } },
+      expected: { "control-ui-performance": true },
+    },
+    {
+      label: "UI performance for shared runtime build changes",
+      context: { preflightOutputs: { run_build_artifacts: "true", run_ui_tests: "false" } },
+      expected: { "control-ui-performance": true },
+    },
+    {
+      label: "UI performance outside build and UI scope",
+      context: { preflightOutputs: { run_build_artifacts: "false", run_ui_tests: "false" } },
+      expected: { "control-ui-performance": false },
     },
     {
       label: "ordinary manual screenshot override",
