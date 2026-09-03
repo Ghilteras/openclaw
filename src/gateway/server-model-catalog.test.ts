@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelCatalogSnapshot } from "../agents/model-catalog.types.js";
 import {
   preparePublishedModelCatalogOwnerIdentity,
   resolvePublishedModelCatalogOwner,
 } from "../agents/prepared-model-catalog-owner.js";
+import * as preparedModelCatalog from "../agents/prepared-model-catalog.js";
 import type { PublishedModelCatalogOwnerCandidate } from "../agents/prepared-model-catalog.types.js";
 import { setPreparedModelRuntimeAuthLoader } from "../agents/prepared-model-runtime-auth.js";
 import { PreparedModelRuntimePublicationSupersededError } from "../agents/prepared-model-runtime.errors.js";
@@ -21,6 +22,21 @@ import {
   loadPreparedGatewayModelCatalogSnapshot,
   type GatewayModelCatalogSnapshot,
 } from "./server-model-catalog.js";
+
+// The Gateway reaches the published owner through a lazy import, so the spy must target the
+// live module namespace rather than a hoisted module mock.
+let loadPublishedPreparedModelCatalogOwnerSnapshot: ReturnType<
+  typeof vi.spyOn<typeof preparedModelCatalog, "loadPublishedPreparedModelCatalogOwnerSnapshot">
+>;
+beforeEach(() => {
+  loadPublishedPreparedModelCatalogOwnerSnapshot = vi.spyOn(
+    preparedModelCatalog,
+    "loadPublishedPreparedModelCatalogOwnerSnapshot",
+  );
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const snapshot: ModelCatalogSnapshot = {
   entries: [{ provider: "openai", id: "gpt-5.5", name: "GPT-5.5" }],
@@ -90,16 +106,14 @@ describe("gateway prepared model catalog", () => {
       },
     );
 
-    const prepared = await loadPreparedGatewayModelCatalogSnapshot({
-      getConfig: () => config,
-      loadPublishedPreparedModelCatalogOwnerSnapshot: async () => ({
-        ...ownerSnapshot(config),
-        oauthRefreshProviderIds: resolvePreparedOAuthRefreshProviderIds({
-          oauthProviders: [{ id: "anthropic" }],
-          providerRegistrations: pluginRegistry.providers,
-        }),
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () => ({
+      ...ownerSnapshot(config),
+      oauthRefreshProviderIds: resolvePreparedOAuthRefreshProviderIds({
+        oauthProviders: [{ id: "anthropic" }],
+        providerRegistrations: pluginRegistry.providers,
       }),
-    });
+    }));
+    const prepared = await loadPreparedGatewayModelCatalogSnapshot({ getConfig: () => config });
 
     expect(prepared.oauthRefreshProviderIds).toEqual(["anthropic", "grok", "x-ai", "xai"]);
     expect(prepared.oauthRefreshProviderIds).not.toContain("minimax-portal");
@@ -161,9 +175,9 @@ describe("gateway prepared model catalog", () => {
         ...input,
         catalogOwner: preparePublishedModelCatalogOwnerIdentity(input),
       };
+      loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () => candidate);
       const project = loadGatewayModelCatalogSnapshot({
         getConfig: () => config,
-        loadPublishedPreparedModelCatalogOwnerSnapshot: async () => candidate,
       });
       if (!bound) {
         await expect(project).rejects.toMatchObject({
@@ -189,22 +203,23 @@ describe("gateway prepared model catalog", () => {
   it("rejects a bound catalog without prepared auth", async () => {
     const config = ownerConfig();
     const candidate = { ...ownerSnapshot(config), authStore: undefined };
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () => candidate);
     await expect(
       loadGatewayModelCatalogSnapshot({
         getConfig: () => config,
-        loadPublishedPreparedModelCatalogOwnerSnapshot: async () => candidate,
       }),
     ).rejects.toThrow("missing prepared auth state");
   });
 
   it("reads the published read-only generation directly", async () => {
     const config = ownerConfig();
-    const loadPublishedPreparedModelCatalogOwnerSnapshot = vi.fn(async () => ownerSnapshot(config));
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () =>
+      ownerSnapshot(config),
+    );
 
     await expect(
       loadGatewayModelCatalog({
         getConfig: () => config,
-        loadPublishedPreparedModelCatalogOwnerSnapshot,
       }),
     ).resolves.toBe(snapshot.entries);
     expect(loadPublishedPreparedModelCatalogOwnerSnapshot).toHaveBeenCalledWith({
@@ -215,7 +230,7 @@ describe("gateway prepared model catalog", () => {
 
   it("forwards the requested agent lifecycle owner", async () => {
     const config = ownerConfig("worker");
-    const loadPublishedPreparedModelCatalogOwnerSnapshot = vi.fn(async () => ({
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () => ({
       ...ownerSnapshot(config, snapshot, "worker"),
       workspaceDir: "/tmp/gateway-workspace",
     }));
@@ -224,7 +239,6 @@ describe("gateway prepared model catalog", () => {
       agentId: "worker",
       agentDir: "/tmp/gateway-agent",
       getConfig: () => config,
-      loadPublishedPreparedModelCatalogOwnerSnapshot,
       workspaceDir: "/tmp/gateway-workspace",
     });
     expect(projected).toMatchObject({
@@ -252,12 +266,11 @@ describe("gateway prepared model catalog", () => {
       routeVariants: [],
     });
 
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () =>
+      ownerSnapshot(config, fullCatalog),
+    );
     await expect(
-      loadGatewayModelCatalogSnapshot({
-        getConfig: () => config,
-        loadPublishedPreparedModelCatalogOwnerSnapshot: async () =>
-          ownerSnapshot(config, fullCatalog),
-      }),
+      loadGatewayModelCatalogSnapshot({ getConfig: () => config }),
     ).resolves.toMatchObject({ catalogComplete: true });
   });
 
@@ -278,11 +291,10 @@ describe("gateway prepared model catalog", () => {
       providerAuth: { openai: { mode: "api_key" } },
     }));
     setPreparedModelRuntimeAuthLoader(candidate, loadAuth);
-    const loadPublishedPreparedModelCatalogOwnerSnapshot = vi.fn(async () => candidate);
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () => candidate);
 
     const prepared = await loadPreparedGatewayModelCatalogSnapshot({
       getConfig: () => config,
-      loadPublishedPreparedModelCatalogOwnerSnapshot,
     });
     expect(prepared.authStore).toEqual(candidate.authStore);
     expect(loadAuth).not.toHaveBeenCalled();
@@ -290,7 +302,6 @@ describe("gateway prepared model catalog", () => {
     const publicLoader = vi.fn(async () =>
       loadGatewayModelCatalogSnapshot({
         getConfig: () => config,
-        loadPublishedPreparedModelCatalogOwnerSnapshot,
       }),
     );
     registerGatewayModelCatalogPrivateAccess(publicLoader, {
@@ -298,7 +309,6 @@ describe("gateway prepared model catalog", () => {
         loadPreparedGatewayModelCatalogSnapshot({
           ...params,
           getConfig: () => config,
-          loadPublishedPreparedModelCatalogOwnerSnapshot,
         }),
       readPrepared: async () => undefined,
     });
@@ -335,10 +345,11 @@ describe("gateway prepared model catalog", () => {
       providerAuth: {},
     }));
 
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () => candidate);
+
     const publicLoader = vi.fn(async () =>
       loadGatewayModelCatalogSnapshot({
         getConfig: () => config,
-        loadPublishedPreparedModelCatalogOwnerSnapshot: async () => candidate,
       }),
     );
     registerGatewayModelCatalogPrivateAccess(publicLoader, {
@@ -346,7 +357,6 @@ describe("gateway prepared model catalog", () => {
         loadPreparedGatewayModelCatalogSnapshot({
           ...params,
           getConfig: () => config,
-          loadPublishedPreparedModelCatalogOwnerSnapshot: async () => candidate,
         }),
       readPrepared: async () => undefined,
     });
@@ -402,15 +412,13 @@ describe("gateway prepared model catalog", () => {
     setPreparedModelRuntimeAuthLoader(stale, async () => {
       throw new PreparedModelRuntimePublicationSupersededError("superseded");
     });
-    const loadPublishedPreparedModelCatalogOwnerSnapshot = vi
-      .fn()
+    loadPublishedPreparedModelCatalogOwnerSnapshot
       .mockResolvedValueOnce(stale)
       .mockResolvedValueOnce(current);
 
     await expect(
       loadPreparedGatewayModelCatalogSnapshot({
         getConfig: () => staleConfig,
-        loadPublishedPreparedModelCatalogOwnerSnapshot,
         refreshAuth: true,
       }),
     ).resolves.toMatchObject({
@@ -430,15 +438,13 @@ describe("gateway prepared model catalog", () => {
       entries: [{ provider: "openai", id: "current", name: "Current" }],
       routeVariants: [],
     };
-    const loadPublishedPreparedModelCatalogOwnerSnapshot = vi
-      .fn()
+    loadPublishedPreparedModelCatalogOwnerSnapshot
       .mockRejectedValueOnce(new PreparedModelRuntimePublicationSupersededError("superseded"))
       .mockResolvedValueOnce(ownerSnapshot(config, currentCatalog));
 
     await expect(
       loadGatewayModelCatalog({
         getConfig: () => config,
-        loadPublishedPreparedModelCatalogOwnerSnapshot,
       }),
     ).resolves.toEqual(currentCatalog.entries);
     expect(loadPublishedPreparedModelCatalogOwnerSnapshot).toHaveBeenCalledTimes(2);
@@ -462,13 +468,14 @@ describe("gateway prepared model catalog", () => {
         ],
       },
     } as OpenClawConfig;
-    const loadPublishedPreparedModelCatalogOwnerSnapshot = vi.fn(async () => ownerSnapshot(config));
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () =>
+      ownerSnapshot(config),
+    );
 
     await expect(
       loadGatewayModelCatalogSnapshot({
         agentId: "worker",
         getConfig: () => config,
-        loadPublishedPreparedModelCatalogOwnerSnapshot,
       }),
     ).rejects.toThrow("did not identify one configured agent");
   });
@@ -480,14 +487,13 @@ describe("gateway prepared model catalog", () => {
       entries: [{ provider: "openai", id: "latest", name: "Latest" }],
       routeVariants: [],
     };
-    const loadPublishedPreparedModelCatalogOwnerSnapshot = vi.fn(async () =>
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () =>
       ownerSnapshot(latestConfig, latestSnapshot),
     );
 
     await expect(
       loadGatewayModelCatalogSnapshot({
         getConfig: () => initialConfig,
-        loadPublishedPreparedModelCatalogOwnerSnapshot,
       }),
     ).resolves.toMatchObject({ config: latestConfig, entries: latestSnapshot.entries });
     expect(loadPublishedPreparedModelCatalogOwnerSnapshot).toHaveBeenCalledOnce();
@@ -495,12 +501,13 @@ describe("gateway prepared model catalog", () => {
 
   it("selects the full prepared owner when requested", async () => {
     const config = ownerConfig();
-    const loadPublishedPreparedModelCatalogOwnerSnapshot = vi.fn(async () => ownerSnapshot(config));
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () =>
+      ownerSnapshot(config),
+    );
 
     await expect(
       loadGatewayModelCatalogSnapshot({
         getConfig: () => config,
-        loadPublishedPreparedModelCatalogOwnerSnapshot,
         readOnly: false,
         refreshFullCatalog: true,
       }),
@@ -519,14 +526,13 @@ describe("gateway prepared model catalog", () => {
       routeVariants: [],
       providerOutcomes: [{ provider: "openai", status: "auth-rejected" }],
     };
-    const loadPublishedPreparedModelCatalogOwnerSnapshot = vi.fn(async () =>
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () =>
       ownerSnapshot(config, modelCatalog),
     );
 
     await expect(
       loadGatewayModelCatalogSnapshot({
         getConfig: () => config,
-        loadPublishedPreparedModelCatalogOwnerSnapshot,
         readOnly: false,
       }),
     ).resolves.toMatchObject({ providerOutcomes: modelCatalog.providerOutcomes });
@@ -534,12 +540,10 @@ describe("gateway prepared model catalog", () => {
 
   it("does not hide lifecycle publication failures behind stale data", async () => {
     const error = new Error("generation failed");
-    const loadPublishedPreparedModelCatalogOwnerSnapshot = vi.fn(async () => {
+    loadPublishedPreparedModelCatalogOwnerSnapshot.mockImplementation(async () => {
       throw error;
     });
 
-    await expect(
-      loadGatewayModelCatalogSnapshot({ loadPublishedPreparedModelCatalogOwnerSnapshot }),
-    ).rejects.toBe(error);
+    await expect(loadGatewayModelCatalogSnapshot()).rejects.toBe(error);
   });
 });

@@ -19,7 +19,6 @@ import {
   reserveProviderLoginFlow,
   resolveProviderChannelLoginChoice,
   runProviderChannelLoginFlow,
-  type ModelsAuthLoginFlowOptions,
   type ProviderChannelLoginChoice,
 } from "../../plugin-sdk/provider-auth-login-flow-runtime.js";
 import { defaultRuntime, type RuntimeEnv } from "../../runtime.js";

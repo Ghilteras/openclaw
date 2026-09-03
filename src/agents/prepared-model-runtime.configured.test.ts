@@ -48,6 +48,8 @@ describe("catalog row normalization", () => {
       contextWindow: 1_000_000,
       contextTokens: 128_000,
       compat: { supportsStore: true },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      maxTokens: 8_192,
     } satisfies ProviderRuntimeModel;
 
     expect(toStaticCatalogEntry(model)).toEqual(modelCatalogRowToEntry(model));

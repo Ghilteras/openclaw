@@ -271,7 +271,7 @@ it("acquires the canonical manifest-derived utility model selection", async () =
       ],
       agentDir: "/tmp/canonical-agent",
     }),
-    expect.objectContaining({ catalogMode: "static", pluginMetadataSnapshot: metadataSnapshot }),
+    expect.objectContaining({ pluginMetadataSnapshot: metadataSnapshot }),
   );
   expect(result).toMatchObject({
     selection: {

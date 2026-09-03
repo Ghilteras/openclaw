@@ -1,17 +1,36 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { SecretRef } from "../config/types.secrets.js";
 import type { ProviderModelRouteCandidate } from "../plugin-sdk/provider-model-types.js";
 import { createModelAuthAvailabilityResolver } from "./model-auth-availability.js";
 import {
   authStore,
-  dualRoutes,
   evaluate,
   platformRoute,
-  routeResolverFactory,
   subscriptionRoute,
 } from "./model-auth-availability.test-support.js";
-import type { createOpenAIModelRoutesResolver } from "./openai-model-routes.js";
+import { dualRoutes, openAIModelRoutesMock } from "./openai-model-routes.test-support.js";
+
+vi.mock("./openai-model-routes.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./openai-model-routes.js")>();
+  return {
+    ...actual,
+    createOpenAIModelRoutesResolver: (
+      params: Parameters<typeof actual.createOpenAIModelRoutesResolver>[0],
+    ) =>
+      openAIModelRoutesMock.resolution === undefined
+        ? actual.createOpenAIModelRoutesResolver(params)
+        : () => openAIModelRoutesMock.resolution,
+  };
+});
+
+// The compiled unit lane has no plugin manifests, so the real resolver finds no OpenAI routes.
+beforeEach(() => {
+  openAIModelRoutesMock.resolution = dualRoutes;
+});
+afterEach(() => {
+  openAIModelRoutesMock.resolution = undefined;
+});
 
 describe("createModelAuthAvailabilityResolver", () => {
   it.each([
@@ -709,7 +728,6 @@ describe("createModelAuthAvailabilityResolver", () => {
       }),
       env: {},
       externalCliProviderIds: ["acme-cli"],
-      routeResolverFactory: routeResolverFactory(null),
     });
 
     expect(resolver.resolveProviderAuthAvailability("acme-cli")).toBeUndefined();
@@ -741,7 +759,6 @@ describe("createModelAuthAvailabilityResolver", () => {
         runtimeExternalCliProfileIds: [cliProfileId],
       }),
       env: {},
-      routeResolverFactory: routeResolverFactory(null),
     });
 
     expect(
@@ -801,7 +818,6 @@ describe("createModelAuthAvailabilityResolver", () => {
   });
 
   it("passes one physical route group to auth selection for an unknown model", () => {
-    const resolveRoutes = vi.fn(() => dualRoutes);
     const resolver = createModelAuthAvailabilityResolver({
       cfg: { auth: { order: { openai: ["openai:chatgpt", "openai:platform"] } } },
       authStore: authStore({
@@ -815,7 +831,6 @@ describe("createModelAuthAvailabilityResolver", () => {
         },
       }),
       env: {},
-      routeResolverFactory: (() => resolveRoutes) as typeof createOpenAIModelRoutesResolver,
     });
     const observedRoutes = [
       { api: "openai-chatgpt-responses" as const, baseUrl: subscriptionRoute.baseUrl },
@@ -831,11 +846,6 @@ describe("createModelAuthAvailabilityResolver", () => {
       availability: true,
       selectedProfileId: "openai:chatgpt",
       selectedRoute: subscriptionRoute,
-    });
-    expect(resolveRoutes).toHaveBeenCalledOnce();
-    expect(resolveRoutes).toHaveBeenCalledWith({
-      modelId: "gpt-future-observed",
-      observedRoutes,
     });
   });
 

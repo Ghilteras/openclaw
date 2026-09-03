@@ -123,7 +123,6 @@ describe("prepared model runtime snapshots", () => {
         runtimePluginSelections: [{ provider: "selected", modelId: "model" }],
       },
       {
-        catalogMode: "static",
         pluginMetadataSnapshot: mocks.pluginMetadataSnapshot as never,
       },
     );
@@ -1038,7 +1037,7 @@ describe("prepared model runtime snapshots", () => {
     const initialConfig = {};
     const skippedConfig = { agents: { defaults: { model: "openai/gpt-5.4" } } };
     const latestConfig = { agents: { defaults: { model: "openai/gpt-5.5" } } };
-    await refreshPreparedModelRuntimeSnapshots(initialConfig, { catalogMode: "static" });
+    await refreshPreparedModelRuntimeSnapshots(initialConfig);
     const finishLatestBuildGate = createDeferred();
     let finishLatestBuild: (() => void) | undefined;
     mocks.prepareStaticCatalog.mockImplementationOnce(async () => {
@@ -1054,8 +1053,8 @@ describe("prepared model runtime snapshots", () => {
       markPreparedModelRuntimeSnapshotsStale("test overlapping config commit", {
         waitForReplacement: true,
       });
-      skipped = refreshPreparedModelRuntimeSnapshots(skippedConfig, { catalogMode: "static" });
-      latest = refreshPreparedModelRuntimeSnapshots(latestConfig, { catalogMode: "static" });
+      skipped = refreshPreparedModelRuntimeSnapshots(skippedConfig);
+      latest = refreshPreparedModelRuntimeSnapshots(latestConfig);
       read = prepareModelRuntimeSnapshot({
         agentId: "default",
         agentDir: state.agentDir("default"),

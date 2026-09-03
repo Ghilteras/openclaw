@@ -193,7 +193,6 @@ describe("prepared model runtime snapshots", () => {
   it.each([
     ["omitted options", undefined],
     ["partial options", { retainIdleRunOwner: true }],
-    ["explicit static mode", { catalogMode: "static" as const }],
   ])("defaults %s to static turn facts without live catalog discovery", async (_name, options) => {
     const lease = await acquireAgentRunPreparedModelRuntime(
       {
@@ -519,7 +518,7 @@ describe("prepared model runtime snapshots", () => {
       await Promise.resolve();
       expect(mocks.prepareStaticCatalog).not.toHaveBeenCalled();
 
-      refresh = refreshPreparedModelRuntimeSnapshots(latestConfig, { catalogMode: "static" });
+      refresh = refreshPreparedModelRuntimeSnapshots(latestConfig);
       await vi.waitFor(() => expect(finishReplacement).toEqual(expect.any(Function)));
       finishReplacement();
       await refresh;
@@ -766,7 +765,7 @@ describe("prepared model runtime snapshots", () => {
       .mockRejectedValueOnce(new Error("unexpected auth replay"));
 
     await expect(
-      refreshPreparedModelRuntimeSnapshots({}, { gatewayLifecycle: true, catalogMode: "static" }),
+      refreshPreparedModelRuntimeSnapshots({}, { gatewayLifecycle: true }),
     ).resolves.toBeUndefined();
     expect(mocks.ensureOpenClawModelsJson).not.toHaveBeenCalled();
     expect(mocks.loadAgentRuntimePluginRegistryHandle).toHaveBeenCalledTimes(2);

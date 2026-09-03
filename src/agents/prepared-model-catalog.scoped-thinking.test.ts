@@ -183,6 +183,7 @@ describe("loadProviderScopedThinkingCatalog", () => {
       activeProjectKeys: [],
       config: { skills: { entries: { marker: { enabled: false } } } },
       providerAuth: {},
+      oauthRefreshProviderIds: [],
       metadataSnapshot: createPluginMetadataSnapshot({
         config: {},
         manifestRegistry: { plugins: [], diagnostics: [] },

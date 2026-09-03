@@ -42,7 +42,6 @@ describe("prepared model runtime scoped refresh", () => {
       const buildCounts: number[] = [];
       const options = {
         gatewayLifecycle: true,
-        catalogMode: "static" as const,
         onBuildStats: (stats: { agentCount: number }) => buildCounts.push(stats.agentCount),
       };
       const freeInput = {

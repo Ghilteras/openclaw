@@ -13,10 +13,6 @@ import { isCliRuntimeAliasForProvider } from "./model-runtime-aliases.js";
 /** Persisted runtime fields used to recover session runtime compatibility. */
 type SessionRuntimeCompatEntry = Pick<
   SessionEntry,
-  "agentHarnessId" | "agentRuntimeOverride" | "modelSelectionLocked" | "pluginOwnerId"
->;
-type SessionRuntimeOverrideEntry = Pick<
-  SessionEntry,
   | "agentHarnessId"
   | "agentRuntimeOverride"
   | "modelSelectionLocked"

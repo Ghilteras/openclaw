@@ -41,6 +41,7 @@ import {
   EXTERNAL_AUTH_PATH_ENV,
   writeFixturePlugin,
 } from "./prepared-model-catalog-worker.test-support.js";
+import * as preparedModelCatalog from "./prepared-model-catalog.js";
 import {
   getPreparedModelFullCatalogAuth,
   loadPreparedModelRuntimeAuth,
@@ -200,7 +201,6 @@ async function createStaticSnapshot(
     ],
     new Map(),
     30_000,
-    "static",
     undefined,
     providedMetadataSnapshot,
   ).pending;
@@ -313,7 +313,6 @@ describe("prepared model catalog worker boundary", () => {
       ],
       new Map(),
       30_000,
-      "static",
     );
     let snapshot: Awaited<typeof build.pending>[number]["snapshot"] | undefined;
     let driftedAgentDir: string | undefined;
@@ -325,11 +324,11 @@ describe("prepared model catalog worker boundary", () => {
       );
       const auth = getPreparedModelFullCatalogAuth(modelCatalog)!;
       const candidate = { ...snapshot, ...auth, modelCatalog };
-      const project = () =>
-        loadPreparedGatewayModelCatalogSnapshot({
-          getConfig: () => config,
-          loadPublishedPreparedModelCatalogOwnerSnapshot: async () => candidate,
-        });
+      vi.spyOn(
+        preparedModelCatalog,
+        "loadPublishedPreparedModelCatalogOwnerSnapshot",
+      ).mockImplementation(async () => candidate);
+      const project = () => loadPreparedGatewayModelCatalogSnapshot({ getConfig: () => config });
       const expectedOwner = { agentId: "main", agentDir, workspaceDir, catalogComplete: true };
       await expect(project()).resolves.toMatchObject(expectedOwner);
 
@@ -387,7 +386,6 @@ describe("prepared model catalog worker boundary", () => {
     const buildCounts: number[] = [];
     const options = {
       gatewayLifecycle: true,
-      catalogMode: "static" as const,
       onBuildStats: (stats: { agentCount: number }) => buildCounts.push(stats.agentCount),
     };
     const mainInput = { agentId: "main", agentDir: fixture.agentDir, config: initialConfig };
@@ -650,14 +648,15 @@ describe("prepared model catalog worker boundary", () => {
       if (!fullAuth) {
         throw new Error("full catalog omitted prepared auth");
       }
-      return await loadPreparedGatewayModelCatalogSnapshot({
-        getConfig: () => config,
-        loadPublishedPreparedModelCatalogOwnerSnapshot: async () => ({
-          ...owner,
-          providerAuth: fullAuth.providerAuth,
-          authStore: fullAuth.authStore,
-        }),
-      });
+      vi.spyOn(
+        preparedModelCatalog,
+        "loadPublishedPreparedModelCatalogOwnerSnapshot",
+      ).mockImplementation(async () => ({
+        ...owner,
+        providerAuth: fullAuth.providerAuth,
+        authStore: fullAuth.authStore,
+      }));
+      return await loadPreparedGatewayModelCatalogSnapshot({ getConfig: () => config });
     };
     const projectModels = async () => {
       const projected = await project();
@@ -673,7 +672,10 @@ describe("prepared model catalog worker boundary", () => {
       } as unknown as GatewayRequestContext;
       return {
         projected,
-        result: await buildModelsListResult({ context, params: { view: "all" } }),
+        result: await buildModelsListResult({
+          source: { kind: "gateway", context },
+          params: { view: "all" },
+        }),
       };
     };
     const writeDurableProfile = (key?: string) =>
@@ -875,6 +877,7 @@ describe("prepared model catalog worker boundary", () => {
         env: fixture.env,
         authStore,
         credentials: {},
+        providerAuth: {},
         providerIds: [PROVIDER_ID],
         configuredModelRefs: [],
         configuredRuntimeModels: [],

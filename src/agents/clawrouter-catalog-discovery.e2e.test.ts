@@ -180,12 +180,15 @@ describe("ClawRouter cold prepared catalog", () => {
       preparedProviderAuth: result.providerAuth,
     });
     const catalog = await buildModelsListResult({
-      context: { getRuntimeConfig: () => config } as GatewayRequestContext,
+      source: {
+        kind: "published",
+        context: { getRuntimeConfig: () => config } as GatewayRequestContext,
+        config,
+        snapshot: result.snapshot,
+        projector,
+      },
       agentId,
       params: { view: refreshedAuth ? "all" : "configured", preparedOnly: true },
-      preloadedCatalog: { agentId, config, snapshot: result.snapshot },
-      preloadedOnly: true,
-      catalogProjector: projector,
     });
     expect(catalog.models).toContainEqual(
       expect.objectContaining({

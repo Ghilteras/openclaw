@@ -37,7 +37,6 @@ describe("prepared model runtime reload auth adoption", () => {
 
     await refreshPreparedModelRuntimeSnapshots(input.config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
     // Publication kicked birth discovery; an ordinary read joins that in-flight build.
     await (await prepareModelRuntimeSnapshot(input)).loadFullModelCatalog?.();
@@ -62,7 +61,6 @@ describe("prepared model runtime reload auth adoption", () => {
     const config = { agents: { defaults: { model: "openai/gpt-5.5" } } };
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
     const snapshot = await prepareModelRuntimeSnapshot({
       agentId: "default",
@@ -92,7 +90,6 @@ describe("prepared model runtime reload auth adoption", () => {
     const replacementConfig = { plugins: {} };
     await refreshPreparedModelRuntimeSnapshots(initialConfig, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
     const phases: string[] = [];
     const unregister = registerPreparedModelRuntimePublicationListener(({ phase }) =>
@@ -107,7 +104,6 @@ describe("prepared model runtime reload auth adoption", () => {
       const dispatch = loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
       await refreshPreparedModelRuntimeSnapshots(replacementConfig, {
         gatewayLifecycle: true,
-        catalogMode: "static",
       });
       await dispatch;
       expect(phases).toContain("published");
@@ -122,7 +118,6 @@ describe("prepared model runtime reload auth adoption", () => {
     const config = {};
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
     const failure = new Error("auth refresh build failed");
     mocks.discoverAuthStorage.mockImplementationOnce(() => {
@@ -149,18 +144,15 @@ describe("prepared model runtime reload auth adoption", () => {
 
   it("commits no published owner when the final independent owner fails", async () => {
     mocks.configuredAgentIds = ["default", "secondary"];
-    await refreshPreparedModelRuntimeSnapshots(
-      {},
-      { gatewayLifecycle: true, catalogMode: "static" },
-    );
+    await refreshPreparedModelRuntimeSnapshots({}, { gatewayLifecycle: true });
     const failure = new Error("secondary auth refresh failed");
     mocks.discoverAuthStorage.mockImplementationOnce(() => mocks.authStorage);
     mocks.discoverAuthStorage.mockImplementationOnce(() => {
       throw failure;
     });
-    await expect(
-      refreshPreparedModelRuntimeSnapshots({}, { gatewayLifecycle: true, catalogMode: "static" }),
-    ).rejects.toBe(failure);
+    await expect(refreshPreparedModelRuntimeSnapshots({}, { gatewayLifecycle: true })).rejects.toBe(
+      failure,
+    );
     await expect(loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" })).rejects.toThrow(
       "not published",
     );

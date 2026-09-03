@@ -59,9 +59,9 @@ describe("prepared fixture containment", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it.each(["static", "live"] as const)("contains native %s model capture", async (catalogMode) => {
+  it("contains native model capture", async () => {
     mocks.configuredAgentIds = ["default", "worker"];
-    await refreshPreparedModelRuntimeSnapshots({}, { catalogMode });
+    await refreshPreparedModelRuntimeSnapshots({});
     expect(mocks.discoverModels).toHaveBeenCalled();
     for (const agentId of ["default", "worker"]) {
       expect(fs.readFileSync).toHaveBeenCalledWith(
@@ -90,14 +90,14 @@ describe("prepared build candidate lifetime", () => {
       input: { ...input, readOnly: true },
       catalogOwner: preparePublishedModelCatalogOwnerIdentity({ ...input, readOnly: true }),
     };
-    const first = startSerializedSnapshotBuildBatch([candidate], new Map(), 1_000, "static");
+    const first = startSerializedSnapshotBuildBatch([candidate], new Map(), 1_000);
     try {
       await expect(first.pending).rejects.toThrow("prepared model runtime publication timed out");
       expect(mocks.prepareStaticCatalog).toHaveBeenCalledOnce();
 
       build.resolve({ entries: [], routeVariants: [] });
       await first.completion;
-      const retry = startSerializedSnapshotBuildBatch([candidate], new Map(), 1_000, "static");
+      const retry = startSerializedSnapshotBuildBatch([candidate], new Map(), 1_000);
       await expect(retry.pending).resolves.toHaveLength(1);
       await retry.completion;
       expect(mocks.prepareStaticCatalog).toHaveBeenCalledTimes(2);
@@ -151,7 +151,7 @@ describe("prepared build candidate lifetime", () => {
       ...(generation === undefined ? {} : { isGenerationCurrent: () => generation }),
       ...(build === undefined ? {} : { isBuildCurrent: () => build }),
     };
-    const started = startSerializedSnapshotBuildBatch([candidate], new Map(), 1_000, "static");
+    const started = startSerializedSnapshotBuildBatch([candidate], new Map(), 1_000);
     try {
       if (!allowed) {
         await expect(started.pending).rejects.toThrow("superseded");
@@ -184,7 +184,7 @@ describe("prepared build candidate lifetime", () => {
         isBuildCurrent: () => false,
         ...(checkpoint === "before" ? { isPreparationCurrent: () => false } : {}),
       };
-      const build = startSerializedSnapshotBuildBatch([candidate], new Map(), 1_000, "static");
+      const build = startSerializedSnapshotBuildBatch([candidate], new Map(), 1_000);
       try {
         await expect(build.pending).rejects.toThrow("superseded");
         expect(mocks.prepareStaticCatalog).toHaveBeenCalledTimes(checkpoint === "before" ? 0 : 1);

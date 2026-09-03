@@ -209,7 +209,7 @@ describe("models-config write serialization", () => {
       const agentDir = path.join(home, "agent");
       const configuredProvider = {
         baseUrl: "https://models.example/v1",
-        api: "openai-completions",
+        api: "openai-completions" as const,
         apiKey: "configured-provider-key",
         models: [{ id: "configured-model", name: "Configured model" }],
       };
@@ -499,7 +499,10 @@ describe("models-config write serialization", () => {
           modelCatalogProviders: new Map(),
           setupProviders: new Map(),
         },
-      } as unknown as Pick<PluginMetadataSnapshot, "index" | "owners">;
+      } as unknown as Pick<
+        PluginMetadataSnapshot,
+        "index" | "manifestRegistry" | "owners" | "pluginIds"
+      >;
       planOpenClawModelsJsonMock.mockImplementation(
         async (params: { existingParsed?: unknown }) => {
           expect(params.existingParsed).toEqual({

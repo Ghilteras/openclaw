@@ -116,7 +116,6 @@ describe("detectInferenceBackends", () => {
         platform: "linux",
         deps: {
           probeLocalCommand: probeDeps({ codex: true }),
-          readCodexCliCredentials: () => ({ type: "oauth", email: "saved@example.com" }),
         },
       });
 
@@ -135,7 +134,6 @@ describe("detectInferenceBackends", () => {
       platform: "linux",
       deps: {
         probeLocalCommand: probeDeps({ codex: true }),
-        readCodexCliCredentials: () => ({ type: "oauth" }),
       },
     });
 

@@ -64,7 +64,6 @@ describe("prepared model runtime plugin metadata ownership", () => {
         });
         await buildPreparedPluginModelCatalog({
           agentFacts: { input, credentials: {} },
-          catalogMode: "static",
           modelRegistry,
           pluginGeneration: { ...pluginGeneration, pluginRegistry: registry },
         });

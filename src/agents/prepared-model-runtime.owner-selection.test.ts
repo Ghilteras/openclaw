@@ -66,7 +66,6 @@ describe("prepared model runtime owner selection", () => {
     );
     await refreshPreparedModelRuntimeSnapshots(config, {
       allowGatewaySubagentBinding: true,
-      catalogMode: "static",
       gatewayLifecycle: true,
       defaultWorkspaceDir: "/tmp/gateway-launch-workspace",
     });
@@ -91,7 +90,6 @@ describe("prepared model runtime owner selection", () => {
       "default",
     );
     await refreshPreparedModelRuntimeSnapshots(config, {
-      catalogMode: "static",
       gatewayLifecycle: true,
       defaultWorkspaceDir: "/tmp/gateway-launch-workspace",
     });
@@ -127,33 +125,26 @@ describe("prepared model runtime owner selection", () => {
     lease.release();
   });
 
-  it.each(["static", undefined] as const)(
-    "keeps isolated executable catalogs free of automatic discovery (%s)",
-    async (catalogMode) => {
-      const discovered = { id: "live-only", name: "Live catalog row", provider: "custom" };
-      mocks.buildPreparedModelCatalogSnapshot.mockResolvedValue({
-        entries: [discovered],
-        routeVariants: [discovered],
-      });
-      const lease = await acquireReadOnlyPreparedModelRuntime(
-        {
-          config: {},
-          agentDir: state.agentDir("isolated-probe-agent"),
-          workspaceDir: state.workspaceDir,
-          loadRuntimePlugins: true,
-        },
-        undefined,
-        catalogMode,
-      );
-      try {
-        expect(lease.snapshot.modelCatalog.entries.map(({ id }) => id)).toEqual([]);
-        expect(mocks.buildPreparedModelCatalogSnapshot).not.toHaveBeenCalled();
-      } finally {
-        lease.release();
-      }
-      expect(getPreparedModelRuntimeTestApi().getPreparedModelRuntimeOwnerCountForTest()).toBe(0);
-    },
-  );
+  it("keeps isolated executable catalogs free of automatic discovery", async () => {
+    const discovered = { id: "live-only", name: "Live catalog row", provider: "custom" };
+    mocks.buildPreparedModelCatalogSnapshot.mockResolvedValue({
+      entries: [discovered],
+      routeVariants: [discovered],
+    });
+    const lease = await acquireReadOnlyPreparedModelRuntime({
+      config: {},
+      agentDir: state.agentDir("isolated-probe-agent"),
+      workspaceDir: state.workspaceDir,
+      loadRuntimePlugins: true,
+    });
+    try {
+      expect(lease.snapshot.modelCatalog.entries.map(({ id }) => id)).toEqual([]);
+      expect(mocks.buildPreparedModelCatalogSnapshot).not.toHaveBeenCalled();
+    } finally {
+      lease.release();
+    }
+    expect(getPreparedModelRuntimeTestApi().getPreparedModelRuntimeOwnerCountForTest()).toBe(0);
+  });
 
   it("publishes provider selections kept on the core runtime by request parameters", async () => {
     mocks.configuredAgentIds = ["default"];
@@ -169,7 +160,6 @@ describe("prepared model runtime owner selection", () => {
     };
 
     await refreshPreparedModelRuntimeSnapshots(config, {
-      catalogMode: "static",
       gatewayLifecycle: true,
     });
 
@@ -186,7 +176,6 @@ describe("prepared model runtime owner selection", () => {
     );
     await refreshPreparedModelRuntimeSnapshots(config, {
       allowGatewaySubagentBinding: true,
-      catalogMode: "static",
       gatewayLifecycle: true,
     });
     const configured = getPreparedModelRuntimeSnapshot({
@@ -227,23 +216,6 @@ describe("prepared model runtime owner selection", () => {
     expect(mocks.ensureOpenClawModelsJson).not.toHaveBeenCalled();
   });
 
-  it("replaces a static run owner when an explicit live acquisition follows", async () => {
-    const input = {
-      config: {},
-      agentId: "default",
-      agentDir: state.agentDir("catalog-mode-upgrade"),
-      workspaceDir: "/tmp/catalog-mode-upgrade-workspace",
-    };
-    const staticLease = await acquireAgentRunPreparedModelRuntime(input);
-    const liveLease = await acquireAgentRunPreparedModelRuntime(input, { catalogMode: "live" });
-
-    expect(liveLease.snapshot).not.toBe(staticLease.snapshot);
-    expect(mocks.prepareStaticCatalog).toHaveBeenCalledOnce();
-    expect(mocks.ensureOpenClawModelsJson).not.toHaveBeenCalled();
-    staticLease.release();
-    liveLease.release();
-  });
-
   it("rejects unpublished plugin generations while matching pending callers share their owner", async () => {
     mocks.configuredAgentIds = ["default"];
     const config = {};
@@ -266,15 +238,12 @@ describe("prepared model runtime owner selection", () => {
     let matchingPendingA: ReturnType<typeof acquireAgentRunPreparedModelRuntime> | undefined;
     try {
       pendingA = acquireAgentRunPreparedModelRuntime(input, {
-        catalogMode: "live",
         pluginGeneration: generationA!,
       });
       matchingPendingA = acquireAgentRunPreparedModelRuntime(input, {
-        catalogMode: "live",
         pluginGeneration: generationA!,
       });
       const pendingB = acquireAgentRunPreparedModelRuntime(input, {
-        catalogMode: "live",
         pluginGeneration: generationB,
       }).catch((error: unknown) => error);
       await Promise.resolve();
@@ -317,7 +286,6 @@ describe("prepared model runtime owner selection", () => {
     };
     const publicationOptions = {
       allowGatewaySubagentBinding: true,
-      catalogMode: "static" as const,
       gatewayLifecycle: true,
     };
     const runInput = (config: typeof previousConfig) => ({
@@ -336,7 +304,6 @@ describe("prepared model runtime owner selection", () => {
     expect(previousSnapshot).toBeDefined();
 
     const outerLease = await acquireAgentRunPreparedModelRuntime(runInput(previousConfig), {
-      catalogMode: "static",
       pluginGeneration: admitted!.pluginGeneration,
     });
     expect(outerLease.snapshot).toBe(previousSnapshot);
@@ -361,7 +328,6 @@ describe("prepared model runtime owner selection", () => {
             admitted!.pluginGeneration,
             async () =>
               await acquireAgentRunPreparedModelRuntime(runInput(previousConfig), {
-                catalogMode: "static",
                 pluginGeneration: admitted!.pluginGeneration,
               }),
           );
@@ -454,7 +420,6 @@ describe("prepared model runtime owner selection", () => {
     mocks.configuredAgentIds = ["default"];
     const config = { agents: { defaults: { model: "openai/gpt-5.5" } } };
     await refreshPreparedModelRuntimeSnapshots(config, {
-      catalogMode: "static",
       gatewayLifecycle: true,
     });
     const acquire = async (modelId: string) => {
@@ -484,7 +449,6 @@ describe("prepared model runtime owner selection", () => {
     mocks.configuredAgentIds = ["default"];
     const config = { agents: { defaults: { model: "openai/gpt-5.5" } } };
     await refreshPreparedModelRuntimeSnapshots(config, {
-      catalogMode: "static",
       gatewayLifecycle: true,
     });
     const configuredInput = {
@@ -516,7 +480,6 @@ describe("prepared model runtime owner selection", () => {
     mocks.configuredAgentIds = ["default"];
     const config = { agents: { defaults: { model: "openai/gpt-5.5" } } };
     await refreshPreparedModelRuntimeSnapshots(config, {
-      catalogMode: "static",
       gatewayLifecycle: true,
     });
     for (let index = 0; index < 3; index += 1) {
@@ -647,7 +610,6 @@ describe("prepared model runtime owner selection", () => {
 
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
       onBuildStats: (value) => {
         stats = value;
       },
@@ -716,7 +678,6 @@ describe("prepared model runtime owner selection", () => {
 
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
 
     for (const agentId of mocks.configuredAgentIds) {
@@ -774,7 +735,6 @@ describe("prepared model runtime owner selection", () => {
       { agents: { defaults: { model: "openai/gpt-5.5" } } },
       {
         gatewayLifecycle: true,
-        catalogMode: "static",
         onBuildStats: (stats) => {
           runtimeRegistryCount = stats.runtimeRegistryCount;
         },
@@ -829,7 +789,6 @@ describe("prepared model runtime owner selection", () => {
       { agents: { defaults: { model: "openai/gpt-5.5" } } },
       {
         gatewayLifecycle: true,
-        catalogMode: "static",
         onBuildStats: (stats) => {
           runtimeRegistryCount = stats.runtimeRegistryCount;
         },
@@ -863,7 +822,6 @@ describe("prepared model runtime owner selection", () => {
 
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
 
     expect(mocks.loadAgentRuntimePluginRegistryHandle).toHaveBeenCalledTimes(2);
@@ -890,7 +848,6 @@ describe("prepared model runtime owner selection", () => {
     const initialConfig = { agents: { defaults: { model: "openai/gpt-5.5" } } };
     await refreshPreparedModelRuntimeSnapshots(initialConfig, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
     const snapshot = getPreparedModelRuntimeSnapshot({
       agentId: "agent-a",
@@ -915,7 +872,7 @@ describe("prepared model runtime owner selection", () => {
       await vi.waitFor(() => expect(releaseLazyPlan).toBeTypeOf("function"));
       replacement = refreshPreparedModelRuntimeSnapshots(
         { agents: { defaults: { model: "openai/gpt-5.6" } } },
-        { gatewayLifecycle: true, catalogMode: "live" },
+        { gatewayLifecycle: true },
       );
       await Promise.resolve();
       expect(mocks.runPreparedModelCatalogWorker).toHaveBeenCalledOnce();

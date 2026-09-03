@@ -37,7 +37,6 @@ import { resolvePreparedOAuthRefreshProviderIds } from "./prepared-model-runtime
 import { notifyPreparedModelRuntimePublication } from "./prepared-model-runtime.publication-events.js";
 import type {
   PreparedModelRuntimeBuildStats,
-  PreparedModelRuntimeCatalogMode,
   PreparedModelRuntimeInput,
   PreparedModelRuntimePluginGeneration,
   PreparedModelRuntimeSnapshot,

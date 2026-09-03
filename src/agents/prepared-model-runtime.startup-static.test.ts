@@ -268,7 +268,8 @@ describe("prepared model runtime Gateway catalog mode", () => {
         resolveSyntheticAuth: (provider: string) => { apiKey?: string } | undefined;
       }) => {
         const auth = args.resolveSyntheticAuth("openai");
-        return auth?.apiKey ? { openai: { type: "api_key", key: auth.apiKey } } : {};
+        const credentials = auth?.apiKey ? { openai: { type: "api_key", key: auth.apiKey } } : {};
+        return { credentials, providerAuth: {} };
       },
     );
 
@@ -315,7 +316,6 @@ describe("prepared model runtime Gateway catalog mode", () => {
       mocks.resolveProviderPolicySurface.mockReturnValue(policy);
       await refreshPreparedModelRuntimeSnapshots(config, {
         gatewayLifecycle: true,
-        catalogMode: "static",
       });
       const snapshot = getPreparedModelRuntimeSnapshot({
         agentId: "default",
@@ -492,7 +492,6 @@ describe("prepared model runtime Gateway catalog mode", () => {
 
     const stale = refreshPreparedModelRuntimeSnapshots(staleConfig, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
     // Surface refresh failures before hook entry instead of waiting for the test timeout.
     await Promise.race([
@@ -503,7 +502,6 @@ describe("prepared model runtime Gateway catalog mode", () => {
     ]);
     const latest = refreshPreparedModelRuntimeSnapshots(latestConfig, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
     releaseStaleHook?.();
 
@@ -536,7 +534,6 @@ describe("prepared model runtime Gateway catalog mode", () => {
     let generatedCatalogReadCount = -1;
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
       onBuildStats: (stats) => {
         configuredRuntimeModelCount = stats.configuredRuntimeModelCount;
         generatedCatalogReadCount = stats.generatedCatalogReadCount;
@@ -727,7 +724,6 @@ describe("prepared model runtime Gateway catalog mode", () => {
 
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
 
     expect(resolveDynamicModel).toHaveBeenCalledOnce();
@@ -811,7 +807,6 @@ describe("prepared model runtime Gateway catalog mode", () => {
 
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
 
     expect(mocks.prepareStaticCatalog).toHaveBeenCalledWith(

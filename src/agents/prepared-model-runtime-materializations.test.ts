@@ -33,7 +33,6 @@ function createOwner(params: {
     catalogOwner: undefined,
     input: { agentId: params.agentId, agentDir: params.agentDir, config: {} },
     environmentFingerprint: "test-env",
-    catalogMode: "static",
     provenance: "configured",
     generation: 1,
     needsRefresh: params.needsRefresh === true,

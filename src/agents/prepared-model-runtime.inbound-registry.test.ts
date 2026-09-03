@@ -83,7 +83,6 @@ describe("prepared reply dispatch runtime", () => {
     );
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
     const published = (await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" }))!;
     const input = {
@@ -94,7 +93,6 @@ describe("prepared reply dispatch runtime", () => {
       runtimePluginSelections: [{ provider: "selected", modelId: "model", runtime: "openclaw" }],
     };
     const lease = await acquireAgentRunPreparedModelRuntime(input, {
-      catalogMode: "static",
       pluginGeneration: published.pluginGeneration,
     });
     expect(lease.snapshot.pluginRegistry === selectedRegistry).toBe(true);
@@ -155,7 +153,6 @@ describe("prepared reply dispatch runtime", () => {
     }));
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
       allowGatewaySubagentBinding: true,
       pluginMetadataSnapshot: createPluginMetadataSnapshot({
         config,
@@ -172,7 +169,6 @@ describe("prepared reply dispatch runtime", () => {
       runtimePluginSelections: [{ provider: "custom", modelId: "model", runtime }],
     });
     const options = {
-      catalogMode: "static" as const,
       pluginGeneration: published.pluginGeneration,
     };
     const leases = await Promise.all(
@@ -240,7 +236,6 @@ describe("prepared reply dispatch runtime", () => {
     });
     await refreshPreparedModelRuntimeSnapshots(firstConfig, {
       gatewayLifecycle: true,
-      catalogMode: "static",
       allowGatewaySubagentBinding: true,
       pluginMetadataSnapshot: mocks.pluginMetadataSnapshot as never,
     });
@@ -274,7 +269,6 @@ describe("prepared reply dispatch runtime", () => {
     let read: ReturnType<typeof loadPublishedGatewayReplyDispatchRuntime> | undefined;
     try {
       refresh = refreshPreparedModelRuntimeSnapshots(replacementConfig, {
-        catalogMode: "static",
         allowGatewaySubagentBinding: true,
         pluginMetadataSnapshot: mocks.pluginMetadataSnapshot as never,
       });
@@ -313,7 +307,6 @@ describe("prepared reply dispatch runtime", () => {
     const config = retainLegacyDefaultAgentId({ agents: { entries: { default: {} } } }, "default");
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
       allowGatewaySubagentBinding: true,
       defaultWorkspaceDir: "/tmp/gateway-launch-workspace",
     });
@@ -365,7 +358,6 @@ describe("prepared reply dispatch runtime", () => {
     const config = { agents: { defaults: { model: "openai/gpt-5.5" } } };
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
     expect(mocks.loadAgentRuntimePluginRegistryHandle).toHaveBeenCalledTimes(2);
     const configuredRuntimeBefore = await loadPublishedGatewayReplyDispatchRuntime({
@@ -438,7 +430,6 @@ describe("prepared reply dispatch runtime", () => {
     const config = { agents: { defaults: { model: "openai/gpt-5.5" } } };
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
-      catalogMode: "static",
     });
     const defaultRuntime = await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
     const workerRuntime = await loadPublishedGatewayReplyDispatchRuntime({ agentId: "worker" });
@@ -477,7 +468,6 @@ describe("prepared reply dispatch runtime", () => {
       {},
       {
         gatewayLifecycle: true,
-        catalogMode: "static",
       },
     );
     const defaultRuntime = await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
