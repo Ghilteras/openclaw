@@ -12,6 +12,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 
 type JsonRecord = Record<string, unknown>;
 type MobileClientMetadata = {
@@ -164,10 +165,6 @@ const GATEWAY_PROTOCOL_VERSION = 4;
 const GATEWAY_MIN_NODE_PROTOCOL_VERSION = 3;
 const PAIRING_AUDIT_SCOPES = ["operator.pairing"];
 const RESPONSE_TIMEOUT_MS = 15_000;
-
-function isRecord(value: unknown): value is JsonRecord {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function requireString(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0) {

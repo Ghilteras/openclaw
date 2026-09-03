@@ -249,7 +249,8 @@ const sharedRecipe: ConfigStep[] = [
   },
 ];
 
-const watchDirectNodeSharedIntents = new Set(["gateway"]);
+const connectionOnlySharedIntents = new Set(["gateway"]);
+const connectionOnlyScenarios = new Set(["mobile-pairing-reconnect", "watchos-direct-node"]);
 
 export function resolveUpgradeSurvivorConfigSteps(
   scenario = "base",
@@ -264,7 +265,8 @@ export function resolveUpgradeSurvivorConfigSteps(
   const sharedSteps = sharedRecipe
     .slice(0, -1)
     .filter(
-      (step) => scenario !== "watchos-direct-node" || watchDirectNodeSharedIntents.has(step.intent),
+      (step) =>
+        !connectionOnlyScenarios.has(scenario) || connectionOnlySharedIntents.has(step.intent),
     )
     .map((step) => {
       if (scenario === "mobile-pairing-reconnect" && step.id === "gateway") {

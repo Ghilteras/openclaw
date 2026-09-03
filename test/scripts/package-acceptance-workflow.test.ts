@@ -5390,6 +5390,14 @@ test "$package_manager" = "pnpm@12.1.0"
       default: "",
       required: false,
     });
+    expect(
+      readWorkflow(UPDATE_MIGRATION_WORKFLOW).on?.workflow_dispatch?.inputs
+        ?.allow_frozen_target_scenario_omissions,
+    ).toMatchObject({
+      default: false,
+      required: false,
+      type: "boolean",
+    });
     expect(workflow).toContain("default: plugin-deps-cleanup");
     expect(workflow).not.toMatch(/\n {2}schedule:/u);
     expect(job.with).toMatchObject({
@@ -5397,6 +5405,8 @@ test "$package_manager" = "pnpm@12.1.0"
       package_ref: "${{ inputs.package_ref }}",
       published_upgrade_survivor_baselines: "${{ inputs.baselines }}",
       published_upgrade_survivor_scenarios: "${{ inputs.scenarios }}",
+      allow_frozen_target_scenario_omissions:
+        "${{ inputs.allow_frozen_target_scenario_omissions }}",
     });
     expect(workflow).toContain("telegram_mode: none");
     expect(workflow).toContain("secrets: inherit");
@@ -6279,6 +6289,7 @@ describe("package artifact reuse", () => {
     expect(weekly.secrets).toBeUndefined();
     expect(weekly.with).not.toHaveProperty("docker_e2e_bare_image");
     expect(weekly.with).not.toHaveProperty("docker_e2e_functional_image");
+    expect(weekly.with).not.toHaveProperty("allow_frozen_target_scenario_omissions");
     expect(readWorkflow(UPDATE_MIGRATION_WORKFLOW).on?.schedule).toBeUndefined();
   });
 

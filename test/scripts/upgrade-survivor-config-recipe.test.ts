@@ -211,6 +211,7 @@ esac
     const steps = resolveUpgradeSurvivorConfigSteps("mobile-pairing-reconnect");
     const gateway = JSON.parse(steps.find((step) => step.id === "gateway")?.argv[3] ?? "{}");
 
+    expect(steps.map((step) => step.intent)).toEqual(["update", "gateway", "validate"]);
     expect(gateway.auth).toEqual({
       mode: "password",
       password: {
