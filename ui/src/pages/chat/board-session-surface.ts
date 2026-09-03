@@ -68,7 +68,9 @@ function dockLabel(dock: BoardVisibleChatDock): string {
 }
 
 function modeLabel(icon: TemplateResult, label: string) {
-  return html`${icon}<span class="chat-pane__face-label">${label}</span>`;
+  return html`<span class="chat-pane__face-option">
+    ${icon}<span class="chat-pane__face-label">${label}</span>
+  </span>`;
 }
 
 export function renderBoardViewSwitch(props: {

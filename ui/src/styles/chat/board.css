@@ -17,10 +17,15 @@
 }
 
 .chat-pane__face-switch .settings-segmented__btn {
-  gap: 5px;
   font-size: 11px;
   padding: 2px 9px;
   border-radius: var(--radius-full);
+}
+
+.chat-pane__face-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .chat-pane__face-switch .settings-segmented__btn svg {
