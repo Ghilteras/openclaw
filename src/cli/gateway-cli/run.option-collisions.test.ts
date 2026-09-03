@@ -1,5 +1,8 @@
+import fs from "node:fs/promises";
 // Gateway run option collision tests cover gateway run flag registration boundaries.
 import { createServer } from "node:http";
+import os from "node:os";
+import path from "node:path";
 import { Command } from "commander";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CONFIG_AUDIT_STORE_LABEL } from "../../config/io.audit.js";
@@ -1955,6 +1958,62 @@ describe("gateway run option collisions", () => {
     expect(bootLifecycle.recover).toHaveBeenCalledWith("boot-id", process.env, undefined);
     expect(gatewayLogMessages.some((message) => message.includes("breaker recovered"))).toBe(true);
   });
+
+  it.each(["initial", "restart", "cause", "aggregate"] as const)(
+    "retains the actual legacy-session refusal without triage (%s)",
+    async (kind) => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "gateway-legacy-refusal-"));
+      const storePath = path.join(root, "sessions.json");
+      const original = '{"main":{"sessionId":"legacy","updatedAt":1}}';
+      await fs.writeFile(storePath, original);
+      try {
+        const { assertSessionStoreMigrationComplete } =
+          await import("../../config/sessions/startup-migration.js");
+        let refusal: unknown;
+        try {
+          assertSessionStoreMigrationComplete({ cfg: {}, targets: [{ storePath }] });
+        } catch (error) {
+          refusal = error;
+        }
+        expect(refusal).toBeInstanceOf(Error);
+        const message = (refusal as Error).message;
+        expect(message).toBe(
+          `Legacy session store requires migration: ${storePath}. Run "openclaw doctor --fix" against the same state/config before starting OpenClaw.`,
+        );
+        const failure =
+          kind === "cause"
+            ? new Error("startup wrapper", { cause: refusal })
+            : kind === "aggregate"
+              ? new AggregateError([refusal], message)
+              : refusal;
+        runGatewayLoop.mockImplementationOnce(
+          async (
+            params: GatewayLoopParams & {
+              beginBoot?: (now: number) => Promise<void>;
+              onRestartStartupFailure?: (error: unknown, signal: AbortSignal) => Promise<void>;
+            },
+          ) => {
+            await params.beginBoot?.(1000);
+            if (kind === "restart") {
+              await params.onRestartStartupFailure?.(failure, new AbortController().signal);
+            }
+            throw failure;
+          },
+        );
+        await withEnvAsync({ CODEX_THREAD_ID: undefined }, async () => {
+          await expect(runGatewayCli(["gateway", "run", "--allow-unconfigured"])).rejects.toThrow(
+            "__exit__:1",
+          );
+        });
+        expect(triageAfterFailure).not.toHaveBeenCalled();
+        expect(parkCurrentLaunchAgentForMaintenance).not.toHaveBeenCalled();
+        expect(runtimeErrors.join("\n")).toContain(message);
+        expect(await fs.readFile(storePath, "utf8")).toBe(original);
+      } finally {
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("skips failure bundles but exits nonzero for unconfirmed gateway lock conflicts", async () => {
     const port = await getFreePort();

@@ -21,6 +21,7 @@ import {
   isInvalidConfigError,
 } from "../../config/io.invalid-config.js";
 import { CONFIG_PATH, normalizeStateDirEnv, resolveGatewayPort } from "../../config/paths.js";
+import { SessionStoreMigrationRequiredError } from "../../config/sessions/migration-required.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { hasConfiguredSecretInput } from "../../config/types.secrets.js";
 import { GATEWAY_SERVICE_RUNTIME_PID_ENV } from "../../daemon/constants.js";
@@ -40,6 +41,7 @@ import { setGatewayWsLogStyle } from "../../gateway/ws-logging.js";
 import { setVerbose } from "../../globals.js";
 import { isAbortError } from "../../infra/abort-signal.js";
 import { isTruthyEnvValue } from "../../infra/env.js";
+import { collectNestedErrorCandidates } from "../../infra/error-graph-internal.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
   completeGatewayBootLifecycle,
@@ -1066,6 +1068,9 @@ async function runGatewayCommandOnce(opts: GatewayRunOpts, hooks: GatewayRunRunt
       isGatewayLockError(error) ||
       isInvalidConfigError(error) ||
       isTailscaleRouteOwnershipConflictError(error) ||
+      collectNestedErrorCandidates(error).some(
+        (candidate) => candidate instanceof SessionStoreMigrationRequiredError,
+      ) ||
       resolveGatewayStartupMaintenanceReason(error)
     ) {
       return;
