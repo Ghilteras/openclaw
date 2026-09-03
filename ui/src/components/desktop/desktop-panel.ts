@@ -459,8 +459,7 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
       if (!target) {
         throw new Error("Desktop render target is unavailable");
       }
-      const desktopClient = this.desktopClientFactory();
-      const connection = await desktopClient.connect({
+      const connection = await this.desktopClientFactory().connect({
         background: getComputedStyle(target).backgroundColor,
         isCurrent: () => pending.operationId === this.operationId,
         wsUrl: pending.observed.wsPath,
@@ -580,8 +579,7 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
   }
 
   private async launchApp(app: DesktopAppId): Promise<void> {
-    const client = this.client;
-    const source = this.source;
+    const { client, source } = this;
     if (
       !client ||
       (this.embedded && !this.presented) ||
