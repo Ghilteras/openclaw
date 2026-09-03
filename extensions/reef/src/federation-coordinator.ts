@@ -35,6 +35,7 @@ export class ReefFederationCoordinator {
   constructor(
     private readonly runtime: Pick<PluginRuntime, "gateway">,
     private readonly state: FederationState,
+    private readonly currentPeerKeyEpoch: (peer: string) => number | undefined,
   ) {}
 
   /** Validate, approve, and dispatch one remote prompt through canonical agent admission. */
@@ -115,14 +116,29 @@ export class ReefFederationCoordinator {
       }
     }
 
+    const currentMount = this.state.getMount(frame.mountId);
+    const currentPeerKeyEpoch = this.currentPeerKeyEpoch(params.peer);
+    const staleAuthority = this.validateMount({
+      ...params,
+      peerKeyEpoch: currentPeerKeyEpoch ?? -1,
+      mount: currentMount,
+    });
+    if (staleAuthority) {
+      this.state.resolveProposal(frame.proposalId, digest, {
+        status: "denied",
+        ...(approvalId ? { approvalId } : {}),
+      });
+      return this.denied(frame, staleAuthority);
+    }
+
     try {
       const runId = `reef:${frame.proposalId}`;
       const result = await this.runtime.gateway.request<AgentResponse>(
         "agent",
         {
           message: frame.text,
-          sessionKey: mount!.sessionKey,
-          expectedExistingSessionId: mount!.sessionId,
+          sessionKey: currentMount!.sessionKey,
+          expectedExistingSessionId: currentMount!.sessionId,
           idempotencyKey: runId,
           deliver: false,
           inputProvenance: {

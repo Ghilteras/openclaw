@@ -43,11 +43,12 @@ function promptFrame(
   };
 }
 
-function fixture(options?: { allowAlways?: boolean; role?: ReefFederationMount["role"] }) {
+function fixture(fixtureOptions?: { allowAlways?: boolean; role?: ReefFederationMount["role"] }) {
+  let currentPeerKeyEpoch = 1;
   let currentMount = {
     ...mount,
-    allowAlways: options?.allowAlways ?? false,
-    role: options?.role ?? mount.role,
+    allowAlways: fixtureOptions?.allowAlways ?? false,
+    role: fixtureOptions?.role ?? mount.role,
   };
   const proposals = new Map<string, ReefFederationProposal>();
   const state = {
@@ -105,8 +106,15 @@ function fixture(options?: { allowAlways?: boolean; role?: ReefFederationMount["
   const coordinator = new ReefFederationCoordinator(
     { gateway: { isAvailable: async () => true, request: gatewayRequest } },
     state,
+    () => currentPeerKeyEpoch,
   );
-  return { coordinator, request, state, proposals };
+  const updateMount = (patch: Partial<ReefFederationMount>) => {
+    currentMount = { ...currentMount, ...patch };
+  };
+  const updatePeerKeyEpoch = (keyEpoch: number) => {
+    currentPeerKeyEpoch = keyEpoch;
+  };
+  return { coordinator, request, state, proposals, updateMount, updatePeerKeyEpoch };
 }
 
 async function handle(
@@ -197,6 +205,30 @@ describe("Reef federation coordinator", () => {
       reason: "stale-session",
     });
     expect(request).not.toHaveBeenCalled();
+  });
+
+  it("revalidates grant and peer authority after host approval", async () => {
+    const revoked = fixture();
+    revoked.request.mockImplementationOnce(async () => {
+      revoked.updateMount({ grantGeneration: 1 });
+      return { id: "plugin:approval-1", decision: "allow-once" };
+    });
+    await expect(handle(revoked.coordinator)).resolves.toMatchObject({
+      type: "session.prompt.denied",
+      reason: "grant-revoked",
+    });
+    expect(revoked.request.mock.calls.some(([method]) => method === "agent")).toBe(false);
+
+    const rotated = fixture();
+    rotated.request.mockImplementationOnce(async () => {
+      rotated.updatePeerKeyEpoch(2);
+      return { id: "plugin:approval-2", decision: "allow-once" };
+    });
+    await expect(handle(rotated.coordinator)).resolves.toMatchObject({
+      type: "session.prompt.denied",
+      reason: "grant-revoked",
+    });
+    expect(rotated.request.mock.calls.some(([method]) => method === "agent")).toBe(false);
   });
 
   it("rejects a guest-side mount offered back to the host", async () => {

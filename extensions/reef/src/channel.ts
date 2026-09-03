@@ -363,7 +363,10 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
         handle: ctx.account.config.handle!,
       });
       const federation = new ReefFederationState(runtime);
-      const federationCoordinator = new ReefFederationCoordinator(runtime, federation);
+      const federationCoordinator = new ReefFederationCoordinator(runtime, federation, (peer) => {
+        const friend = trust.get(peer);
+        return friend && !friend.safetyNumberChanged ? friend.keyEpoch : undefined;
+      });
       const flow = new ReefMessageFlow({
         config: ctx.account.config,
         trust,

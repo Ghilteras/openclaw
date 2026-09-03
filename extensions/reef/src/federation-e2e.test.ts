@@ -90,6 +90,7 @@ describe("Reef federated prompt E2E", () => {
         },
       },
       hostState,
+      (peer) => hostTrust.values.get(peer)?.keyEpoch,
     );
     const outcomes: string[] = [];
     let sequence = 0;
