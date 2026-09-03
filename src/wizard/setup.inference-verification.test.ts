@@ -5,14 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { resolveRunWorkspaceDir } from "../agents/workspace-run.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { ActivateSetupInferenceDeps } from "../system-agent/setup-inference-core.js";
+import type { SetupInferenceDeps } from "../system-agent/setup-inference-core.js";
 import { verifySetupInferenceConfig } from "../system-agent/setup-inference.js";
 import type { WizardPrompter } from "./prompts.js";
 
 const mocks = vi.hoisted(() => ({
   repair: vi.fn(),
   verify: vi.fn(),
-  runEmbedded: vi.fn<NonNullable<ActivateSetupInferenceDeps["runEmbeddedAgent"]>>(),
+  runEmbedded: vi.fn<NonNullable<SetupInferenceDeps["runEmbeddedAgent"]>>(),
 }));
 
 vi.mock("../system-agent/setup-inference.js", () => ({

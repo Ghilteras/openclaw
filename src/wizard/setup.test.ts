@@ -370,6 +370,8 @@ vi.mock("../plugins/provider-auth-choices.js", () => ({
 
 vi.mock("../plugins/setup-registry.js", () => ({
   resolvePluginSetupProviderCore: resolvePluginSetupProvider,
+  resolvePluginSetupCliBackend: () => undefined,
+  resolvePluginSetupRegistry: () => ({ providers: [], cliBackends: [] }),
 }));
 
 vi.mock("../plugins/provider-auth-choice.runtime.js", () => ({
@@ -3032,7 +3034,7 @@ describe("runSetupWizard", () => {
     expect(persistedWizardConfigs().at(-1)?.agents?.defaults?.model).toBeUndefined();
   });
 
-  it("does not persist staged model or auth choices when live verification is cancelled", async () => {
+  it("keeps the config unpersisted when live verification is cancelled after sign-in saved", async () => {
     const stateDir = await makeCaseDir("cancelled-auth-verification-");
     const agentDir = path.join(stateDir, "agent");
     const persistCalls = prepareMockAuthProfilesIn(agentDir);
@@ -3061,11 +3063,14 @@ describe("runSetupWizard", () => {
     ).rejects.toThrow("cancelled");
 
     expect(replaceConfigFile).not.toHaveBeenCalled();
-    expect(persistCalls).toEqual([]);
-    await expect(fs.access(agentDir)).rejects.toThrow();
+    // Sign-in saves the credential before the turn; only the config waits for verification.
+    expect(persistCalls).toEqual([undefined]);
+    expect(readAuthProfileStoreForTest(agentDir).profiles["openai:default"]).toEqual(
+      stagedOpenAiProfile("test-cancelled-key").credential,
+    );
   });
 
-  it("keeps failed model/auth fixes in the verification loop without persisting them", async () => {
+  it("keeps failed model/auth fixes out of the config while each sign-in is saved", async () => {
     const stateDir = await makeCaseDir("failed-auth-profile-retry-");
     const agentDir = path.join(stateDir, "agent");
     await upsertAuthProfileWithLock({ ...stagedOpenAiProfile("test-original-key"), agentDir });
@@ -3116,9 +3121,6 @@ describe("runSetupWizard", () => {
       ) as Parameters<ApplyAuthChoice>[0];
       expect(secondRetry.config.models?.providers?.openai?.apiKey).toBe("test-original-key");
       expect(select).toHaveBeenCalledTimes(4);
-      expect(thirdVerification.authProfiles).toEqual([
-        stagedOpenAiProfile("test-retry-still-invalid-key"),
-      ]);
       expect(
         persistedWizardConfigs().some(
           (config) =>
@@ -3128,7 +3130,7 @@ describe("runSetupWizard", () => {
         ),
       ).toBe(false);
       expect(readAuthProfileStoreForTest(agentDir).profiles["openai:default"]).toEqual(
-        stagedOpenAiProfile("test-original-key").credential,
+        stagedOpenAiProfile("test-retry-still-invalid-key").credential,
       );
     } finally {
       await removeOAuthTestTempRoot(stateDir);
@@ -3153,7 +3155,6 @@ describe("runSetupWizard", () => {
         ok: true,
         modelRef: "openai/gpt-5.5",
         latencyMs: 300,
-        authProfiles: [stagedOpenAiProfile("test-retry-valid-key")],
       });
     const select = vi.fn(async () => "fix") as unknown as WizardPrompter["select"];
     const prompter = buildWizardPrompter({ confirm: vi.fn(async () => true), select });
@@ -3173,7 +3174,6 @@ describe("runSetupWizard", () => {
       expect(retryVerification.config.models?.providers?.openai?.apiKey).toBe(
         "test-retry-valid-key",
       );
-      expect(retryVerification.authProfiles).toEqual([stagedOpenAiProfile("test-retry-valid-key")]);
       expect(
         persistedWizardConfigs().some(
           (config) => config.models?.providers?.openai?.apiKey === "test-retry-valid-key",
@@ -3182,7 +3182,7 @@ describe("runSetupWizard", () => {
       expect(readAuthProfileStoreForTest(agentDir).profiles["openai:default"]).toEqual(
         stagedOpenAiProfile("test-retry-valid-key").credential,
       );
-      expect(persistCalls).toEqual([[stagedOpenAiProfile("test-retry-valid-key")]]);
+      expect(persistCalls).toEqual([undefined, undefined]);
     } finally {
       await removeOAuthTestTempRoot(stateDir);
     }
@@ -3208,7 +3208,6 @@ describe("runSetupWizard", () => {
         ok: false,
         status: "timeout",
         error: "request timed out",
-        authProfiles: [stagedOpenAiProfile("test-refreshed-key")],
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -3224,13 +3223,6 @@ describe("runSetupWizard", () => {
       expect(applyAuthChoice).toHaveBeenCalledTimes(2);
       expect(promptAuthChoiceGrouped).toHaveBeenCalledTimes(2);
       expect(verifySetupInferenceConfig).toHaveBeenCalledTimes(3);
-      const finalVerification = getMockCallArg(
-        verifySetupInferenceConfig,
-        2,
-        0,
-        "final verification",
-      ) as Parameters<VerifySetupInferenceConfig>[0];
-      expect(finalVerification.authProfiles).toEqual([stagedOpenAiProfile("test-refreshed-key")]);
       expect(readAuthProfileStoreForTest(agentDir).profiles["openai:default"]).toEqual(
         stagedOpenAiProfile("test-staged-key").credential,
       );

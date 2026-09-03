@@ -21,7 +21,7 @@ import {
   listOpenClawRegisteredAgentDatabases,
   registerOpenClawAgentDatabase,
 } from "../state/openclaw-agent-db-registry.js";
-import type { ActivateSetupInferenceDeps } from "../system-agent/setup-inference-core.js";
+import type { SetupInferenceDeps } from "../system-agent/setup-inference-core.js";
 import {
   WizardCancelledError,
   WizardNavigationError,
@@ -34,7 +34,7 @@ const mocks = vi.hoisted(() => ({
   currentConfig: undefined as { value: Record<string, unknown> } | undefined,
   provider: undefined as MigrationProviderPlugin | undefined,
   verify: vi.fn(),
-  runEmbedded: vi.fn<NonNullable<ActivateSetupInferenceDeps["runEmbeddedAgent"]>>(),
+  runEmbedded: vi.fn<NonNullable<SetupInferenceDeps["runEmbeddedAgent"]>>(),
 }));
 
 vi.mock("../plugins/migration-provider-runtime.js", () => ({
