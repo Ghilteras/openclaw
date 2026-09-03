@@ -203,7 +203,7 @@ function appendTranscriptEvent(
   return true;
 }
 
-function scheduleTranscriptProjectionReconcile(
+export function scheduleTranscriptProjectionReconcile(
   database: OpenClawAgentDatabase,
   sessionId: string,
   projectionNeedsRebuild: boolean,
@@ -642,7 +642,7 @@ function readTranscriptEventIdentity(event: unknown) {
     : undefined;
 }
 
-function canonicalizeTranscriptEventMedia(event: TranscriptEvent): TranscriptEvent {
+export function canonicalizeTranscriptEventMedia(event: TranscriptEvent): TranscriptEvent {
   if (!isRecord(event)) {
     return event;
   }
@@ -662,7 +662,7 @@ export function readMessageIdempotencyKey(message: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function readEventTimestamp(event: unknown): number | undefined {
+export function readEventTimestamp(event: unknown): number | undefined {
   if (!isRecord(event)) {
     return undefined;
   }

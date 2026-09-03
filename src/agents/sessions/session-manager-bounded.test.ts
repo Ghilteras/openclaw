@@ -4,10 +4,13 @@ import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js"
 import {
   appendTranscriptMessage,
   loadTranscriptEvents,
+  readSessionTranscriptWatermark,
+  replaceTranscriptEventsSync,
   SessionTranscriptProjectionUnavailableError,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
 import { readSessionTranscriptBoundedActiveContextCore } from "../../config/sessions/session-accessor.sqlite-active-context.js";
+import { SYNC_REBUILD_MAX_ROWS } from "../../config/sessions/session-transcript-index.js";
 import { runWithSessionTranscriptReadFence } from "../../config/sessions/session-transcript-read-fence.js";
 import { waitForSessionTranscriptIndexReconcile } from "../../config/sessions/session-transcript-reconcile.js";
 import { SessionManager } from "./session-manager.js";
@@ -219,6 +222,57 @@ it("bounds runtime hydration while preserving older durable transcript rows on r
   ]);
 });
 
+it("keeps a long transcript projection available when removing a trailing entry", async () => {
+  const dir = tempDirs.make("openclaw-session-manager-long-suffix-");
+  const scope = {
+    agentId: "main",
+    sessionId: "long-suffix-session",
+    sessionKey: "agent:main:long-suffix-session",
+    storePath: path.join(dir, "sessions.json"),
+  };
+  await upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 1 });
+  const events = [
+    {
+      type: "session",
+      version: 3,
+      id: scope.sessionId,
+      timestamp: new Date(0).toISOString(),
+      cwd: dir,
+    },
+    ...Array.from({ length: SYNC_REBUILD_MAX_ROWS }, (_value, index) => ({
+      type: "message",
+      id: `message-${index}`,
+      parentId: index === 0 ? null : `message-${index - 1}`,
+      timestamp: new Date(index + 1).toISOString(),
+      message: { role: index % 2 === 0 ? "user" : "assistant", content: `message ${index}` },
+    })),
+  ];
+  expect(replaceTranscriptEventsSync(scope, events)).toBe(true);
+  await waitForSessionTranscriptIndexReconcile({
+    agentId: scope.agentId,
+    path: path.join(dir, "openclaw-agent.sqlite"),
+  });
+  const generationBefore = readSessionTranscriptWatermark(scope)?.generation;
+
+  const manager = SessionManager.openBounded(scope, {
+    cwd: dir,
+    maxBytes: 4096,
+    maxEvents: 4,
+  });
+  expect(
+    manager.removeTrailingEntries((entry) => entry.id === `message-${SYNC_REBUILD_MAX_ROWS - 1}`),
+  ).toBe(1);
+
+  expect(readSessionTranscriptWatermark(scope)?.generation).toBe(generationBefore);
+  expect(() =>
+    SessionManager.openBounded(scope, {
+      cwd: dir,
+      maxBytes: 4096,
+      maxEvents: 4,
+    }),
+  ).not.toThrow();
+});
+
 it("preserves inactive siblings when the bounded active branch fits its limits", async () => {
   const dir = tempDirs.make("openclaw-session-manager-bounded-branch-");
   const scope = {
@@ -255,12 +309,15 @@ it("preserves inactive siblings when the bounded active branch fits its limits",
     path: path.join(dir, "openclaw-agent.sqlite"),
   });
   const manager = openBounded();
+  const generationBefore = readSessionTranscriptWatermark(scope).generation;
 
   expect(manager.buildSessionContext().messages).toMatchObject([
     { content: "root" },
     { content: "active" },
   ]);
   expect(manager.removeTrailingEntries((entry) => entry.id === activeId)).toBe(1);
+  expect(readSessionTranscriptWatermark(scope).generation).toBe(generationBefore);
+  expect(openBounded).not.toThrow();
   await expect(loadTranscriptEvents(scope)).resolves.toEqual(
     expect.arrayContaining([
       expect.objectContaining({

@@ -1,4 +1,11 @@
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../../../test/helpers/temp-dir.js";
+import {
+  loadTranscriptEvents,
+  readSessionTranscriptWatermark,
+  upsertSessionEntryCore,
+} from "../../../config/sessions/session-accessor.js";
 import type { AssistantMessage, ToolResultMessage, UserMessage } from "../../../llm/types.js";
 import type { AgentMessage } from "../../runtime/index.js";
 import { SessionManager } from "../../sessions/session-manager.js";
@@ -10,6 +17,7 @@ import {
 } from "./attempt-sessions-yield.js";
 
 const SESSIONS_YIELD_INTERRUPT_CUSTOM_TYPE = "openclaw.sessions_yield_interrupt";
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 function makeAssistantMessage(overrides: Partial<AssistantMessage> = {}): AssistantMessage {
   return {
@@ -259,5 +267,55 @@ describe("stripSessionsYieldArtifacts", () => {
             entry.customType === SESSIONS_YIELD_INTERRUPT_CUSTOM_TYPE),
       ),
     ).toBe(false);
+  });
+
+  it.each([
+    { assistantCount: 1, label: "immediate yield" },
+    { assistantCount: 3, label: "multiple tool turns before yield" },
+  ])("keeps SQLite projection available after $label cleanup", async ({ assistantCount }) => {
+    const dir = tempDirs.make("openclaw-sessions-yield-sqlite-");
+    const scope = {
+      agentId: "main",
+      sessionId: `sessions-yield-${assistantCount}`,
+      sessionKey: `agent:main:sessions-yield-${assistantCount}`,
+      storePath: path.join(dir, "sessions.json"),
+    };
+    await upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 1 });
+    const sessionManager = SessionManager.open(scope, dir);
+    const toolResult = makeToolResultMessage();
+    sessionManager.appendMessage(toolResult);
+    const assistants = Array.from({ length: assistantCount }, (_value, index) =>
+      makeAssistantMessage({
+        content: [{ type: "text", text: `assistant ${index}` }],
+        ...(index === assistantCount - 1 ? { stopReason: "aborted" as const } : {}),
+      }),
+    );
+    for (const assistant of assistants) {
+      sessionManager.appendMessage(assistant);
+    }
+    sessionManager.appendCustomMessageEntry(
+      SESSIONS_YIELD_INTERRUPT_CUSTOM_TYPE,
+      "[sessions_yield interrupt]",
+      false,
+    );
+    const generationBefore = readSessionTranscriptWatermark(scope).generation;
+    const session = buildSession(
+      [toolResult, ...assistants, makeYieldInterruptMessage()],
+      sessionManager,
+    );
+
+    stripSessionsYieldArtifacts(session);
+
+    expect(session.agent.state.messages).toEqual([toolResult]);
+    expect(readSessionTranscriptWatermark(scope).generation).toBe(generationBefore);
+    expect(SessionManager.open(scope, dir).buildSessionContext().messages).toEqual([toolResult]);
+    expect(await loadTranscriptEvents(scope)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "custom_message",
+          customType: SESSIONS_YIELD_INTERRUPT_CUSTOM_TYPE,
+        }),
+      ]),
+    );
   });
 });

@@ -3,6 +3,7 @@ import {
   appendTranscriptEventSync,
   appendTranscriptMessageSync,
   ensureSessionEntrySync,
+  replaceTranscriptSuffixEventsSync,
   type TranscriptEntryAnchor,
 } from "../../config/sessions/session-accessor.js";
 import {
@@ -43,6 +44,15 @@ export class SessionManagerPersistence extends SessionManagerCore {
     options?: { preserveTrailing?: (entry: SessionEntry) => boolean },
   ): number {
     this.ensureCompletePersistedHistory();
+    const expectedPersistedEntries = this.getPersistedFileEntries();
+    const originalState = {
+      appendMode: this.appendMode,
+      appendParentId: this.appendParentId,
+      fileEntries: this.fileEntries.slice(),
+      leafId: this.leafId,
+      opaqueFileEntries: this.opaqueFileEntries.map((entry) => ({ ...entry })),
+      pendingDeliberateAppend: this.pendingDeliberateAppend,
+    };
     let preservedStart = this.fileEntries.length;
     while (preservedStart > 1) {
       const entry = this.fileEntries[preservedStart - 1];
@@ -145,7 +155,29 @@ export class SessionManagerPersistence extends SessionManagerCore {
     this.buildIndex();
     this.leafId = this.resolveCanonicalParentId(replacementParentId);
     this.appendParentId = replacementParentId;
-    this.replacePersistedTranscript();
+    const persistenceTarget = this.persistenceTarget;
+    if (persistenceTarget) {
+      try {
+        if (
+          !replaceTranscriptSuffixEventsSync(
+            persistenceTarget,
+            expectedPersistedEntries,
+            this.getPersistedFileEntries(),
+          )
+        ) {
+          throw new Error(`SQLite session changed before trimming ${this.sessionId}`);
+        }
+      } catch (error) {
+        this.fileEntries = originalState.fileEntries;
+        this.opaqueFileEntries = originalState.opaqueFileEntries;
+        this.buildIndex();
+        this.leafId = originalState.leafId;
+        this.appendParentId = originalState.appendParentId;
+        this.appendMode = originalState.appendMode;
+        this.pendingDeliberateAppend = originalState.pendingDeliberateAppend;
+        throw error;
+      }
+    }
     return removedEntries.length;
   }
 

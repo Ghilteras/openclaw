@@ -20,6 +20,7 @@ import {
   rewriteSqliteTranscriptEventRowsInTransaction,
   updateSqliteTranscriptEventJsonInTransaction,
 } from "./session-accessor.sqlite-transcript-store.js";
+import { replaceSqliteTranscriptSuffixInTransaction } from "./session-accessor.sqlite-transcript-suffix.js";
 import {
   SYNC_REBUILD_MAX_BYTES,
   sessionTranscriptIndexNeedsReconcile,
@@ -391,6 +392,57 @@ describe("SQLite exact transcript rewrite", () => {
         db.prepare("SELECT text FROM session_transcript_fts WHERE message_id = 'user'").get()?.text,
       ).toBe("repaired");
       expect(work.counts.deletes).toBeLessThanOrEqual(1);
+    });
+  });
+});
+
+describe("SQLite exact transcript suffix replacement", () => {
+  it("preserves generation while updating raw, identity, active, and FTS rows", async () => {
+    await withRewriteFixture(({ db, snapshot, scope }) => {
+      const before = snapshot();
+      runOpenClawAgentWriteTransaction((database) => {
+        replaceSqliteTranscriptSuffixInTransaction(
+          database,
+          scope,
+          rewriteEvents,
+          rewriteEvents.slice(0, 2),
+        );
+      }, scope);
+
+      const after = snapshot();
+      expect(after.generation).toBe(before.generation);
+      expect(after.raw).toHaveLength(2);
+      expect(after.identities).toHaveLength(2);
+      expect(after.active).toHaveLength(2);
+      expect(after.search).toMatchObject([{ message_id: "user", text: "question" }]);
+      expect(sessionTranscriptIndexNeedsReconcile(db, scope.sessionId)).toBe(false);
+    });
+  });
+
+  it("preserves generation when an already-dirty projection needs reconciliation", async () => {
+    await withRewriteFixture(async ({ db, snapshot, scope }) => {
+      const before = snapshot();
+      db.prepare(
+        "UPDATE session_transcript_index_state SET needs_rebuild = 1 WHERE session_id = ?",
+      ).run(scope.sessionId);
+
+      runOpenClawAgentWriteTransaction((database) => {
+        replaceSqliteTranscriptSuffixInTransaction(
+          database,
+          scope,
+          rewriteEvents,
+          rewriteEvents.slice(0, 2),
+        );
+      }, scope);
+
+      expect(snapshot().generation).toBe(before.generation);
+      await waitForSessionTranscriptIndexReconcile(scope);
+      expect(snapshot()).toMatchObject({
+        generation: before.generation,
+        raw: expect.arrayContaining([expect.objectContaining({ seq: 1 })]),
+      });
+      expect(snapshot().raw).toHaveLength(2);
+      expect(sessionTranscriptIndexNeedsReconcile(db, scope.sessionId)).toBe(false);
     });
   });
 });

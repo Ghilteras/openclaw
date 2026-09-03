@@ -50,6 +50,7 @@ import {
   replaceSqliteTranscriptEventsInTransaction,
   rewriteSqliteTranscriptEventRowsInTransaction,
 } from "./session-accessor.sqlite-transcript-store.js";
+import { replaceSqliteTranscriptSuffixInTransaction } from "./session-accessor.sqlite-transcript-suffix.js";
 import type { SessionTranscriptWriteTransactionContext } from "./session-accessor.types.js";
 import type { TranscriptEntryAnchor } from "./transcript-entry-anchor.js";
 import {
@@ -90,6 +91,25 @@ type SqliteTranscriptWriteLockContext = {
 type SqliteTranscriptSnapshotState =
   | { kind: "current"; rows: SqliteTranscriptSnapshotRow[] }
   | { kind: "stale" };
+
+// Verify that a synchronous transcript mutation still owns the current session lifecycle.
+function transcriptWriteScopeIsCurrent(
+  fresh: ReturnType<typeof readSessionEntryRow>,
+  resolved: ResolvedTranscriptScope,
+  scope: SessionTranscriptWriteScope,
+): boolean {
+  if (!fresh || fresh.entry.sessionId !== resolved.sessionId) {
+    return false;
+  }
+  // SAFETY: InternalSessionEntry is the persisted superset that owns activeWriterRunId.
+  const entry = fresh.entry as InternalSessionEntry;
+  return !(
+    (scope.expectedLifecycleRevision !== undefined &&
+      entry.lifecycleRevision !== scope.expectedLifecycleRevision) ||
+    (scope.expectedWriterRunId !== undefined &&
+      entry.activeWriterRunId !== scope.expectedWriterRunId)
+  );
+}
 
 export async function replaceTranscriptEvents(
   scope: SessionTranscriptAccessScope,
@@ -148,17 +168,34 @@ export function replaceTranscriptEventsSync(
   runOpenClawAgentWriteTransaction((database) => {
     assertOwnedTranscriptWriteCommit(fencedScope);
     const fresh = readSessionEntryRow(database, resolved.sessionKey);
-    if (
-      !fresh ||
-      fresh.entry.sessionId !== resolved.sessionId ||
-      (fencedScope.expectedLifecycleRevision !== undefined &&
-        fresh.entry.lifecycleRevision !== fencedScope.expectedLifecycleRevision) ||
-      (fencedScope.expectedWriterRunId !== undefined &&
-        (fresh.entry as InternalSessionEntry).activeWriterRunId !== fencedScope.expectedWriterRunId)
-    ) {
+    if (!transcriptWriteScopeIsCurrent(fresh, resolved, fencedScope)) {
       return;
     }
     replaceSqliteTranscriptEventsInTransaction(database, resolved, events);
+    replaced = true;
+  }, toDatabaseOptions(resolved));
+  if (fencedScope.expectedWriterRunId !== undefined && !replaced) {
+    throw new SessionTranscriptWriterClaimReboundError();
+  }
+  return replaced;
+}
+
+/** Removes an exact transcript suffix synchronously without rotating its generation. */
+export function replaceTranscriptSuffixEventsSync(
+  scope: SessionTranscriptWriteScope,
+  expectedEvents: readonly TranscriptEvent[],
+  nextEvents: readonly TranscriptEvent[],
+): boolean {
+  const fencedScope = withOwnedSessionTranscriptWriterFence(scope);
+  const resolved = resolveSqliteTranscriptScope(fencedScope);
+  let replaced = false;
+  runOpenClawAgentWriteTransaction((database) => {
+    assertOwnedTranscriptWriteCommit(fencedScope);
+    const fresh = readSessionEntryRow(database, resolved.sessionKey);
+    if (!transcriptWriteScopeIsCurrent(fresh, resolved, fencedScope)) {
+      return;
+    }
+    replaceSqliteTranscriptSuffixInTransaction(database, resolved, expectedEvents, nextEvents);
     replaced = true;
   }, toDatabaseOptions(resolved));
   if (fencedScope.expectedWriterRunId !== undefined && !replaced) {
