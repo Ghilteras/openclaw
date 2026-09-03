@@ -3,6 +3,12 @@ import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { SpawnResult } from "../process/exec.js";
 import type { NodeWorkerWorkspaceTransferInput } from "./node-workspace-transfer-protocol.js";
 import { hasExactOwnKeys } from "./protocol-record.js";
+import {
+  parseWorkerSkillResourceOperation,
+  validateWorkerSkillResourceInput,
+  WORKER_SKILL_RESOURCE_COMMAND,
+  type WorkerSkillResourceOperation,
+} from "./skill-resource-protocol.js";
 
 const IDENTIFIER_MAX_CHARS = 256;
 const GATEWAY_NAMESPACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
@@ -31,6 +37,7 @@ export type NodeWorkerWorkspaceExecInput = {
   resetWorkspace?: boolean;
   transfer?: NodeWorkerWorkspaceTransferInput;
   seed?: NodeWorkerWorkspaceSeedInput;
+  skillResources?: WorkerSkillResourceOperation;
 };
 
 export type NodeWorkerWorkspaceExecResult = SpawnResult & { workspaceDir: string };
@@ -68,7 +75,7 @@ export function parseNodeWorkerWorkspaceExecInput(
     !hasExactOwnKeys(
       value,
       ["gatewayNamespace", "environmentId", "sessionId", "generation", "argv"],
-      ["input", "timeoutMs", "resetWorkspace", "transfer", "seed"],
+      ["input", "timeoutMs", "resetWorkspace", "transfer", "seed", "skillResources"],
     )
   ) {
     throw new Error("INVALID_REQUEST: invalid node worker workspace request");
@@ -116,6 +123,20 @@ export function parseNodeWorkerWorkspaceExecInput(
   }
   if (value.resetWorkspace !== undefined && typeof value.resetWorkspace !== "boolean") {
     throw new Error("INVALID_REQUEST: resetWorkspace must be a boolean");
+  }
+  let skillResources: WorkerSkillResourceOperation | undefined;
+  if (value.skillResources !== undefined) {
+    if (
+      value.transfer !== undefined ||
+      value.seed !== undefined ||
+      value.resetWorkspace !== undefined ||
+      value.argv.length !== 1 ||
+      value.argv[0] !== WORKER_SKILL_RESOURCE_COMMAND
+    ) {
+      throw new Error("INVALID_REQUEST: skill resources require an exclusive workspace operation");
+    }
+    skillResources = parseWorkerSkillResourceOperation(value.skillResources);
+    validateWorkerSkillResourceInput(skillResources, value.input);
   }
   let seed: NodeWorkerWorkspaceSeedInput | undefined;
   if (value.seed !== undefined) {
@@ -205,6 +226,7 @@ export function parseNodeWorkerWorkspaceExecInput(
     ...(value.resetWorkspace === undefined ? {} : { resetWorkspace: value.resetWorkspace }),
     ...(transfer ? { transfer } : {}),
     ...(seed ? { seed } : {}),
+    ...(skillResources ? { skillResources } : {}),
   };
 }
 

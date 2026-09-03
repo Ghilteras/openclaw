@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseNodeWorkerWorkspaceExecInput } from "./node-workspace-protocol.js";
+import { WORKER_SKILL_RESOURCE_INPUT_MAX_BYTES } from "./skill-resource-protocol.js";
 
 const request = {
   gatewayNamespace: "gateway-1",
@@ -69,6 +70,73 @@ describe("node workspace seed protocol", () => {
   ])("rejects %s", (_name, invalid) => {
     expect(() =>
       parseNodeWorkerWorkspaceExecInput(JSON.stringify({ ...request, ...invalid })),
+    ).toThrow("INVALID_REQUEST:");
+  });
+});
+
+describe("node workspace skill resource protocol", () => {
+  const resourceRequest = { ...request, argv: ["openclaw-internal-skill-resources"] };
+  const identity = { resourceId: "b".repeat(32), identity: "1:18446744073709551615" };
+  const write = {
+    operation: "write",
+    ...identity,
+    path: "0/SKILL.md",
+    offset: 0,
+    sizeBytes: 3,
+    sha256: key,
+    executable: false,
+  };
+
+  it.each([
+    { skillResources: { operation: "init" } },
+    { skillResources: { operation: "cleanup", ...identity } },
+    { skillResources: write, input: "YWJj" },
+    { skillResources: { ...write, sizeBytes: 0 }, input: "" },
+  ])("preserves a closed generation-bound operation %#", (operation) => {
+    const input = { ...resourceRequest, ...operation };
+    expect(parseNodeWorkerWorkspaceExecInput(JSON.stringify(input))).toEqual(input);
+  });
+
+  it.each([
+    ["caller-selected root", { skillResources: { operation: "init", root: "/tmp/other" } }],
+    ["cleanup root", { skillResources: { operation: "cleanup", ...identity, root: "/tmp/other" } }],
+    ["traversing resource id", { skillResources: { ...write, resourceId: "../outside" } }],
+    ["numeric inode", { skillResources: { ...write, identity: 1 } }],
+    ["path traversal", { skillResources: { ...write, path: "0/../outside" } }],
+    ["absolute path", { skillResources: { ...write, path: "/outside" } }],
+    ["Windows path", { skillResources: { ...write, path: "C:/outside" } }],
+    ["deep path", { skillResources: { ...write, path: "a/".repeat(17) + "file" } }],
+    ["negative offset", { skillResources: { ...write, offset: -1 } }],
+    ["oversize file", { skillResources: { ...write, sizeBytes: 1_048_577 } }],
+    ["invalid digest", { skillResources: { ...write, sha256: "A".repeat(64) } }],
+    ["extra write field", { skillResources: { ...write, command: ["node"] } }],
+    ["ordinary argv", { argv: ["node", "-e", "process.exit()"] }],
+    ["extra argv", { argv: [...resourceRequest.argv, "/outside"] }],
+    ["missing chunk", { input: undefined }],
+    ["noncanonical base64", { input: "YWJj\n" }],
+    ["chunk over file bound", { input: "YWJjZA==" }],
+    [
+      "stdin over transport bound",
+      { input: "a".repeat(WORKER_SKILL_RESOURCE_INPUT_MAX_BYTES + 1) },
+    ],
+    ["init with input", { skillResources: { operation: "init" }, input: "" }],
+    ["cleanup with input", { skillResources: { operation: "cleanup", ...identity }, input: "" }],
+    ["workspace reset", { resetWorkspace: false }],
+    ["workspace seed", { seed: { action: "apply", key } }],
+    [
+      "workspace transfer",
+      { transfer: { direction: "upload", token: "token", baseManifestRef: `sha256:${key}` } },
+    ],
+  ])("rejects %s before filesystem dispatch", (_label, invalid) => {
+    expect(() =>
+      parseNodeWorkerWorkspaceExecInput(
+        JSON.stringify({
+          ...resourceRequest,
+          skillResources: write,
+          input: "YWJj",
+          ...invalid,
+        }),
+      ),
     ).toThrow("INVALID_REQUEST:");
   });
 });

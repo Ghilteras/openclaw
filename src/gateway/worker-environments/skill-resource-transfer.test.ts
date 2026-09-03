@@ -3,34 +3,51 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import { NodeWorkerWorkspaceRuntime } from "../../node-host/node-worker-workspace.js";
+import type { SpawnResult } from "../../process/exec.js";
 import { loadWorkspaceSkills } from "../../skills/loading/workspace-skill-loader.js";
 import { buildSkillSnapshot } from "../../skills/loading/workspace-skill-prompt.js";
 import { applySkillEnvOverridesFromSnapshot } from "../../skills/runtime/env-overrides.js";
+import { buildSkillResourceCommand } from "../../worker/skill-resource-receiver.js";
 import { transferSkillResources } from "./skill-resource-transfer.js";
-import type { WorkerWorkspaceTunnelHandle } from "./tunnel-contract.js";
+import type { WorkerWorkspaceCommand, WorkerWorkspaceTunnelHandle } from "./tunnel-contract.js";
 
 const temps = useAutoCleanupTempDirTracker(afterEach);
+const runCommand = async (command: WorkerWorkspaceCommand): Promise<SpawnResult> => {
+  command.assertCurrent?.();
+  return new Promise((resolve, reject) => {
+    const child = spawn(command.argv[0]!, command.argv.slice(1), {
+      stdio: "pipe",
+      signal: command.signal,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (bytes) => {
+      stdout += bytes;
+    });
+    child.stderr.on("data", (bytes) => {
+      stderr += bytes;
+    });
+    child.on("error", reject);
+    child.on("close", (code) =>
+      resolve({ stdout, stderr, code, termination: "exit", signal: null, killed: false }),
+    );
+    child.stdin.end(command.input);
+  });
+};
 const tunnel: Pick<WorkerWorkspaceTunnelHandle, "runWorkspaceCommand"> = {
   runWorkspaceCommand: async (command) => {
-    command.assertCurrent?.();
-    return new Promise((resolve, reject) => {
-      const child = spawn(command.argv[0]!, command.argv.slice(1), {
-        stdio: "pipe",
-        signal: command.signal,
-      });
-      let stdout = "",
-        stderr = "";
-      child.stdout.on("data", (bytes) => {
-        stdout += bytes;
-      });
-      child.stderr.on("data", (bytes) => {
-        stderr += bytes;
-      });
-      child.on("error", reject);
-      child.on("close", (code) =>
-        resolve({ stdout, stderr, code, termination: "exit", signal: null, killed: false }),
-      );
-      child.stdin.end(command.input);
+    const context = command.skillResources;
+    if (!context) {
+      throw new Error("Missing skill resource operation");
+    }
+    return runCommand({
+      ...command,
+      argv: buildSkillResourceCommand({
+        parentDir: path.dirname(context.workspaceDir),
+        generation: context.generation,
+        operation: context.operation,
+      }),
     });
   },
 };
@@ -49,8 +66,13 @@ async function createSource() {
   await fs.writeFile(path.join(baseDir, "scripts/check.sh"), "#!/bin/sh\nprintf ready\n", {
     mode: 0o700,
   });
+  const remoteRoot = await fs.realpath(temps.make("remote-skill-worker-"));
+  const workspaceDir = path.join(remoteRoot, "workspace");
+  await fs.mkdir(workspaceDir);
   return {
     workspace,
+    workspaceDir,
+    generation: 1,
     filePath,
     binary,
     snapshot: buildSkillSnapshot(workspace, {
@@ -60,13 +82,87 @@ async function createSource() {
 }
 
 describe("remote-exec skill resources", () => {
+  it("transfers resources through the real node workspace guard and cleans only its owned bundle", async () => {
+    const { filePath, binary, snapshot } = await createSource();
+    const nodeRoot = await fs.realpath(temps.make("remote-skill-node-"));
+    const tempDir = path.join(nodeRoot, "tmp");
+    await fs.mkdir(tempDir);
+    const runtime = new NodeWorkerWorkspaceRuntime({
+      root: path.join(nodeRoot, "state", "node-host"),
+      env: {
+        ...process.env,
+        HOME: nodeRoot,
+        TMPDIR: tempDir,
+        TMP: tempDir,
+        TEMP: tempDir,
+      },
+    });
+    const identity = {
+      gatewayNamespace: "skill-resource-test",
+      environmentId: "skill-environment",
+      sessionId: "skill-session",
+      generation: 1,
+    };
+    const { workspaceDir } = await runtime.exec({ ...identity, argv: ["node", "-e", ""] });
+    await fs.writeFile(path.join(workspaceDir, "project.txt"), "project remains unchanged\n");
+    const sibling = path.join(path.dirname(workspaceDir), ".1.skill-resources-" + "a".repeat(32));
+    await fs.mkdir(sibling);
+    await fs.writeFile(path.join(sibling, "keep.txt"), "another owner");
+    const resources = await transferSkillResources({
+      snapshot,
+      workspaceDir,
+      generation: identity.generation,
+      assertCurrent: () => {},
+      tunnel: {
+        runWorkspaceCommand: async (command) => {
+          command.assertCurrent?.();
+          const execution = runtime.exec(
+            {
+              ...identity,
+              argv: [...command.argv],
+              input: command.input,
+              timeoutMs: command.timeoutMs,
+              skillResources: command.skillResources?.operation,
+            },
+            command.signal,
+          );
+          await expect(
+            execution,
+            `node resource operation=${command.skillResources?.operation.operation}`,
+          ).resolves.toMatchObject({ code: 0 });
+          command.assertCurrent?.();
+          return await execution;
+        },
+      },
+    });
+    expect(resources).toBeDefined();
+    const remote = resources!.mounts[0]!.containerPath;
+    expect(path.relative(workspaceDir, remote)).toMatch(/^\.\.[/\\]/);
+    expect(await fs.readFile(path.join(remote, "SKILL.md"))).toEqual(await fs.readFile(filePath));
+    expect(await fs.readFile(path.join(remote, "data.bin"))).toEqual(binary);
+    expect((await fs.stat(path.join(remote, "scripts/check.sh"))).mode & 0o777).toBe(0o500);
+    expect((await fs.stat(path.join(remote, "data.bin"))).mode & 0o777).toBe(0o400);
+    await expect(runtime.exec({ ...identity, argv: ["node", "-e", "", nodeRoot] })).rejects.toThrow(
+      "workspace command argv resolves outside its workspace",
+    );
+    await resources!.cleanup();
+    await expect(fs.stat(remote)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readFile(path.join(sibling, "keep.txt"), "utf8")).toBe("another owner");
+    expect(await fs.readdir(workspaceDir)).toEqual(["project.txt"]);
+    expect(await fs.readFile(path.join(workspaceDir, "project.txt"), "utf8")).toBe(
+      "project remains unchanged\n",
+    );
+  });
+
   it("rejects remote directory identities that collide when rounded to numbers", async () => {
-    const { snapshot } = await createSource();
+    const { snapshot, workspaceDir, generation } = await createSource();
     let initializedRoot: string | undefined;
     try {
       await expect(
         transferSkillResources({
           snapshot,
+          workspaceDir,
+          generation,
           assertCurrent: () => {},
           tunnel: {
             runWorkspaceCommand: async (command) => {
@@ -77,21 +173,22 @@ describe("remote-exec skill resources", () => {
                   const original = fs[method];
                   fs[method] = (...args) => {
                     const stat = original(...args);
-                    const ino = 9007199254740992n + (process.argv[1] === 'init' ? 0n : 1n);
+                    const ino = 9007199254740992n + (JSON.parse(process.argv[3]).operation === 'init' ? 0n : 1n);
                     stat.ino = typeof stat.ino === 'bigint' ? ino : Number(ino);
                     return stat;
                   };
                 }
               }`;
-              const result = await tunnel.runWorkspaceCommand({
-                ...command,
-                argv: [
-                  ...command.argv.slice(0, 2),
-                  identityShim + command.argv[2],
-                  ...command.argv.slice(3),
-                ],
+              const argv = buildSkillResourceCommand({
+                parentDir: path.dirname(workspaceDir),
+                generation,
+                operation: command.skillResources!.operation,
               });
-              if (command.argv[3] === "init") {
+              const result = await runCommand({
+                ...command,
+                argv: [...argv.slice(0, 2), identityShim + argv[2], ...argv.slice(3)],
+              });
+              if (command.skillResources?.operation.operation === "init") {
                 initializedRoot = JSON.parse(result.stdout).root;
               }
               return result;
@@ -111,11 +208,14 @@ describe("remote-exec skill resources", () => {
   it.each(["complete", "cancelled", "retired"] as const)(
     "preserves complete resources outside the project and cleans up only its current owner (%s)",
     async (outcome) => {
-      const { workspace, filePath, binary, snapshot } = await createSource();
+      const { workspace, workspaceDir, generation, filePath, binary, snapshot } =
+        await createSource();
       const controller = new AbortController();
       let current = true;
       const resources = await transferSkillResources({
         tunnel,
+        workspaceDir,
+        generation,
         signal: controller.signal,
         assertCurrent: () => {
           if (!current) {
@@ -158,7 +258,7 @@ describe("remote-exec skill resources", () => {
   it.runIf(process.platform !== "win32")(
     "omits a stale discovered skill from the transferred snapshot and prompt",
     async () => {
-      const { workspace, snapshot } = await createSource();
+      const { workspace, workspaceDir, generation, snapshot } = await createSource();
       const staleBaseDir = path.join(workspace, "skills", "stale");
       await fs.mkdir(staleBaseDir, { recursive: true });
       await fs.writeFile(
@@ -184,6 +284,8 @@ describe("remote-exec skill resources", () => {
 
       const resources = await transferSkillResources({
         tunnel,
+        workspaceDir,
+        generation,
         assertCurrent: () => {},
         snapshot,
       });
@@ -215,7 +317,7 @@ describe("remote-exec skill resources", () => {
   it.runIf(process.platform !== "win32")(
     "retains a skill identity when a same-named node skill remains active",
     async () => {
-      const { workspace } = await createSource();
+      const { workspace, workspaceDir, generation } = await createSource();
       const staleBaseDir = path.join(workspace, "skills", "stale");
       await fs.mkdir(staleBaseDir, { recursive: true });
       await fs.writeFile(
@@ -247,6 +349,8 @@ describe("remote-exec skill resources", () => {
 
       const resources = await transferSkillResources({
         tunnel,
+        workspaceDir,
+        generation,
         assertCurrent: () => {},
         snapshot,
       });
@@ -266,13 +370,15 @@ describe("remote-exec skill resources", () => {
   it.runIf(process.platform !== "win32")(
     "removes every stale skill from the transferred snapshot when no bundles remain",
     async () => {
-      const { filePath, snapshot } = await createSource();
+      const { filePath, workspaceDir, generation, snapshot } = await createSource();
       const baseDir = path.dirname(filePath);
       await fs.rm(baseDir, { recursive: true });
       await fs.symlink(path.join(path.dirname(baseDir), "missing-source-target"), baseDir, "dir");
 
       const resources = await transferSkillResources({
         tunnel,
+        workspaceDir,
+        generation,
         assertCurrent: () => {},
         snapshot,
       });
@@ -288,13 +394,15 @@ describe("remote-exec skill resources", () => {
   );
 
   it("cleans the accepted remote directory when cancellation arrives with initialization", async () => {
-    const { snapshot } = await createSource();
+    const { snapshot, workspaceDir, generation } = await createSource();
     const controller = new AbortController();
     let initializedRoot: string | undefined;
     try {
       await expect(
         transferSkillResources({
           snapshot,
+          workspaceDir,
+          generation,
           signal: controller.signal,
           assertCurrent: () => {},
           tunnel: {

@@ -1,15 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
   isPrivateNodeInvokeCommand,
   NODE_WORKER_ENVIRONMENT_STOP_COMMAND,
   NODE_WORKER_PRIVATE_COMMANDS,
   NODE_WORKER_SUPERVISOR_LAUNCH_COMMAND,
+  NODE_WORKER_WORKSPACE_EXEC_COMMAND,
 } from "../infra/node-commands.js";
 import {
   NODE_WORKER_BUNDLE_RETENTION_VERSION,
   NODE_WORKER_BUNDLE_STATUS_VERSION,
   NODE_WORKER_ENVIRONMENT_SESSION_VERSION,
+  NODE_WORKER_WORKSPACE_SKILL_RESOURCES_VERSION,
   type NodeRunnerInventoryIssue,
   type NodeRunnerInventoryDeclaration,
   type NodeWorkerCapacitySnapshot,
@@ -165,6 +168,7 @@ function isWorkerSupervisorProofCurrent(
   requireLaunchEligibility: boolean,
   requiredCommands: readonly string[] = [],
   requireEnvironmentSession = false,
+  requireWorkspaceSkillResources = false,
 ): boolean {
   const node = state.context.getNode(proof.nodeId);
   if (!node || node.client.invalidated === true || node.connId !== proof.connId) {
@@ -180,6 +184,9 @@ function isWorkerSupervisorProofCurrent(
     (!requireLaunchEligibility || current.workerHost.capacity.available > 0) &&
     (!requireEnvironmentSession ||
       current.workerHost.environmentSession === NODE_WORKER_ENVIRONMENT_SESSION_VERSION) &&
+    (!requireWorkspaceSkillResources ||
+      current.workerHost.workspaceSkillResources ===
+        NODE_WORKER_WORKSPACE_SKILL_RESOURCES_VERSION) &&
     requiredCommands.every((command) => current.commands.includes(command))
   );
 }
@@ -520,6 +527,10 @@ export function registerNodeRegistryPrivateRuntime(
           error: { code: "INVALID_REQUEST", message: "private node command is not allowed" },
         };
       }
+      const requireWorkspaceSkillResources =
+        params.command === NODE_WORKER_WORKSPACE_EXEC_COMMAND &&
+        isRecord(params.params) &&
+        Object.hasOwn(params.params, "skillResources");
       const isProofCurrent = () =>
         params.isDispatchAuthorized() &&
         isWorkerSupervisorProofCurrent(
@@ -529,6 +540,7 @@ export function registerNodeRegistryPrivateRuntime(
           [],
           params.command === NODE_WORKER_SUPERVISOR_LAUNCH_COMMAND ||
             params.command === NODE_WORKER_ENVIRONMENT_STOP_COMMAND,
+          requireWorkspaceSkillResources,
         );
       if (!isProofCurrent()) {
         return {
@@ -727,3 +739,5 @@ export function settleNodeRegistryPairingGenerationChange(params: {
     binding.controller.abort(NODE_INVOKE_PAIRING_CHANGED_ABORT);
   }
 }
+
+/* oxlint-disable max-lines -- Private dispatch capability fencing stays with its proof owner. */

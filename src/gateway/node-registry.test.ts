@@ -26,6 +26,7 @@ import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
 import { createDiagnosticLogRecordCapture } from "../logging/test-helpers/diagnostic-log-capture.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
+import { WORKER_SKILL_RESOURCE_COMMAND } from "../worker/skill-resource-protocol.js";
 import { listConnectedNodePluginTools } from "./node-plugin-tool-snapshot.js";
 import {
   collectNodeCatalogRuntimeState,
@@ -975,6 +976,108 @@ describe("gateway/node-registry", () => {
       expect(frames).toEqual([]);
     },
   );
+
+  it("fences skill resource capability loss during pairing lookup", async () => {
+    const pairing = { identity: "identity-a", generation: "generation-a" };
+    const entered = createDeferred();
+    const release = createDeferred<typeof pairing>();
+    let held = false;
+    const { nodeRegistry, nodeWorkerSupervisorTransport } = createPrivateNodeRegistryRuntime({
+      resolveCurrentPairingState: async () => {
+        if (!held) {
+          return pairing;
+        }
+        entered.resolve();
+        return await release.promise;
+      },
+    });
+    const frames: string[] = [];
+    registerNodeSession(
+      nodeRegistry,
+      makeClient("conn-1", "node-1", frames, {
+        clientId: GATEWAY_CLIENT_IDS.NODE_HOST,
+        commands: ["system.run"],
+      }),
+      { pairingIdentity: pairing.identity, pairingGeneration: pairing.generation },
+    );
+    const update = (supported: boolean) =>
+      updateNodeRunnerInventory({
+        registry: nodeRegistry,
+        nodeId: "node-1",
+        connId: "conn-1",
+        declaration: {
+          protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+          workerHost: {
+            enabled: true,
+            capacity: { total: 2, available: supported ? 2 : 1 },
+            environmentSession: 1,
+            ...(supported ? { workspaceSkillResources: 1 } : {}),
+          },
+        },
+      });
+    update(true);
+    const [proof] = await nodeWorkerSupervisorTransport.listCurrentNodes();
+    if (!proof) {
+      throw new Error("expected node proof");
+    }
+    held = true;
+    const invocation = nodeWorkerSupervisorTransport.invoke({
+      node: proof,
+      command: NODE_WORKER_WORKSPACE_EXEC_COMMAND,
+      params: {
+        gatewayNamespace: "gateway-1",
+        environmentId: "environment-1",
+        sessionId: "session-1",
+        generation: 1,
+        argv: [WORKER_SKILL_RESOURCE_COMMAND],
+        skillResources: { operation: "init" },
+      },
+      isDispatchAuthorized: () => true,
+    });
+    await entered.promise;
+    try {
+      update(false);
+    } finally {
+      held = false;
+      release.resolve(pairing);
+    }
+
+    await expect(invocation).resolves.toMatchObject({
+      ok: false,
+      error: { code: "APPROVAL_AUTHORITY_CLOSED" },
+    });
+    expect(frames).toEqual([]);
+  });
+
+  it("publishes skill resource capability gain and loss on one connection", async () => {
+    const { nodeRegistry, nodeWorkerSupervisorTransport } = createPrivateNodeRegistryRuntime();
+    registerNodeSession(
+      nodeRegistry,
+      makeClient("conn-1", "node-1", [], { clientId: GATEWAY_CLIENT_IDS.NODE_HOST }),
+      { pairingIdentity: "identity-a", pairingGeneration: "generation-a" },
+    );
+
+    for (const supported of [false, true, false]) {
+      expect(
+        updateNodeRunnerInventory({
+          registry: nodeRegistry,
+          nodeId: "node-1",
+          connId: "conn-1",
+          declaration: {
+            protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+            workerHost: {
+              enabled: true,
+              capacity: { total: 2, available: 2 },
+              environmentSession: 1,
+              ...(supported ? { workspaceSkillResources: 1 } : {}),
+            },
+          },
+        }),
+      ).toEqual({ changed: true });
+      const [proof] = await nodeWorkerSupervisorTransport.listCurrentNodes();
+      expect(proof?.workerHost.workspaceSkillResources).toBe(supported ? 1 : undefined);
+    }
+  });
 
   it("promotes bundle prewarm without changing runner authority", async () => {
     const { nodeRegistry, nodeWorkerSupervisorTransport } = createPrivateNodeRegistryRuntime();

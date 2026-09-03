@@ -9,6 +9,7 @@ import {
   formatNodeRunnerUpdateRequired,
   NODE_RUNNER_UPDATE_REQUIRED_ISSUE,
   NODE_WORKER_ENVIRONMENT_SESSION_VERSION,
+  NODE_WORKER_WORKSPACE_SKILL_RESOURCES_VERSION,
 } from "../../infra/node-runner-inventory.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { SpawnResult } from "../../process/exec.js";
@@ -145,6 +146,12 @@ function payloadJson(value: string | null | undefined): unknown {
   }
 }
 
+class NodeWorkspaceCapabilityUnavailableError extends Error {
+  constructor(nodeId: string) {
+    super(formatNodeRunnerUpdateRequired(nodeId, NODE_RUNNER_UPDATE_REQUIRED_ISSUE));
+  }
+}
+
 /** Owns node-channel handles without treating the persistent machine as a disposable lease. */
 export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOptions) {
   const entries = new Map<string, NodeTunnelEntry>();
@@ -199,6 +206,14 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
         throw new Error("node worker workspace authority closed");
       }
       command.assertCurrent?.();
+      if (
+        command.skillResources &&
+        (!command.assertCurrent ||
+          command.transportRetry !== "never" ||
+          command.skillResources.generation !== entry.ownerEpoch)
+      ) {
+        throw new Error("Skill resources require their exact workspace owner");
+      }
     };
     const commandTimeoutMs = command.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
     // Keep the subprocess deadline authoritative while allowing its terminal result to cross the
@@ -222,6 +237,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
       ...(command.resetWorkspace === undefined ? {} : { resetWorkspace: command.resetWorkspace }),
       ...(command.transfer === undefined ? {} : { transfer: command.transfer }),
       ...(command.seed === undefined ? {} : { seed: command.seed }),
+      ...(command.skillResources ? { skillResources: command.skillResources.operation } : {}),
     };
     while (true) {
       assertCurrent();
@@ -233,6 +249,12 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
       try {
         const { node, transport } = await findNode(entry, signal);
         assertCurrent();
+        if (
+          command.skillResources &&
+          node.workerHost.workspaceSkillResources !== NODE_WORKER_WORKSPACE_SKILL_RESOURCES_VERSION
+        ) {
+          throw new NodeWorkspaceCapabilityUnavailableError(node.nodeId);
+        }
         result = await transport.invoke({
           node,
           command: NODE_WORKER_WORKSPACE_EXEC_COMMAND,
@@ -247,6 +269,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
       } catch (error) {
         assertCurrent();
         if (
+          error instanceof NodeWorkspaceCapabilityUnavailableError ||
           command.transportRetry !== "idempotent" ||
           signal.aborted ||
           !isEnvironmentOwner(entry)

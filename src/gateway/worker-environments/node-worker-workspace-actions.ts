@@ -5,7 +5,11 @@ import {
   recordNodeSyncPath,
 } from "./node-worker-workspace-fallback.js";
 import type { NodeWorkspaceTransferService } from "./node-workspace-transfer-service.js";
-import type { WorkerWorkspaceCommand, WorkerWorkspaceTunnelHandle } from "./tunnel-contract.js";
+import type {
+  WorkerWorkspaceCommand,
+  WorkerWorkspaceSyncResult,
+  WorkerWorkspaceTunnelHandle,
+} from "./tunnel-contract.js";
 import { runInstrumentedWorkspaceReconcile } from "./workspace-finalize.js";
 import { workerProjectSeedKey } from "./workspace-git-base.js";
 import {
@@ -54,13 +58,25 @@ export function createNodeWorkerWorkspaceActions(params: {
 }): NodeWorkerWorkspaceActions {
   const { restoredWorkspace } = params;
   let workspaceReady = restoredWorkspace !== undefined;
+  let remoteWorkspaceDir = restoredWorkspace?.remoteWorkspaceDir;
   const exec = async (command: WorkerWorkspaceCommand & { resetWorkspace?: boolean }) => {
     if (!workspaceReady) {
       throw new Error("node worker workspace is unavailable before sync");
     }
+    if (
+      command.skillResources &&
+      (command.skillResources.workspaceDir !== remoteWorkspaceDir ||
+        command.skillResources.generation !== params.ownerEpoch)
+    ) {
+      throw new Error("Skill resources do not match the node workspace owner");
+    }
     return await params.runWorkspaceCommand(command);
   };
   const workspace = createNodeWorkerWorkspaceFallback(exec);
+  const rememberWorkspace = (result: WorkerWorkspaceSyncResult) => {
+    remoteWorkspaceDir = result.remoteWorkspaceDir;
+    return result;
+  };
   const quiesceWorkspace = createWorkerWorkspaceQuiescence({
     ownerSignal: params.ownerSignal,
     sharedHost: true,
@@ -296,7 +312,7 @@ export function createNodeWorkerWorkspaceActions(params: {
             const origin = await workspace.trySyncWorkspace(request, prepared.snapshot.manifestRef);
             recordNodeSyncPath(params.environmentId, params.sessionId, origin, originStartedAt);
             if (origin.kind === "synced") {
-              return await workspace.finalizeSync(request, origin.result);
+              return rememberWorkspace(await workspace.finalizeSync(request, origin.result));
             }
           }
           const transferred = await exec({
@@ -324,11 +340,13 @@ export function createNodeWorkerWorkspaceActions(params: {
           ) {
             throw new Error("Node workspace transfer failed");
           }
-          return await workspace.finalizeSync(request, {
-            mode: prepared.snapshot.manifest.baseCommit ? ("git" as const) : ("plain" as const),
-            remoteWorkspaceDir: transferred.workspaceDir,
-            manifestRef: prepared.snapshot.manifestRef,
-          });
+          return rememberWorkspace(
+            await workspace.finalizeSync(request, {
+              mode: prepared.snapshot.manifest.baseCommit ? ("git" as const) : ("plain" as const),
+              remoteWorkspaceDir: transferred.workspaceDir,
+              manifestRef: prepared.snapshot.manifestRef,
+            }),
+          );
         } finally {
           params.workspaceTransfer.revoke(params.environmentId, prepared.token);
         }

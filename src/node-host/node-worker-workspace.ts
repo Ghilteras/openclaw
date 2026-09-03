@@ -18,6 +18,8 @@ import type {
   NodeWorkerWorkspaceRetainInput,
   NodeWorkerWorkspaceRetainResult,
 } from "../worker/node-workspace-retain-protocol.js";
+import { parseWorkerSkillResourceGeneration } from "../worker/skill-resource-protocol.js";
+import { buildSkillResourceCommand } from "../worker/skill-resource-receiver.js";
 import { snapshotNodeWorkerEnv } from "./node-worker-environment.js";
 import {
   type NodeWorkerTransferGateway,
@@ -159,6 +161,8 @@ async function removeIfEmpty(target: string): Promise<void> {
     }
   }
 }
+
+/* oxlint-disable max-lines -- Workspace confinement and generation cleanup share this runtime. */
 
 function ensureContainedDirectory(parent: string, name: string): string {
   const candidate = path.join(parent, name);
@@ -449,7 +453,10 @@ export class NodeWorkerWorkspaceRuntime {
           if (!entry.isDirectory() || entry.isSymbolicLink()) {
             continue;
           }
-          const generation = parseGenerationName(entry.name);
+          // Resource bundles stay bound to the placement generation even when a
+          // transfer is interrupted before its turn-level cleanup can run.
+          const generation =
+            parseGenerationName(entry.name) ?? parseWorkerSkillResourceGeneration(entry.name);
           const artifactGeneration = parseTransferArtifactGeneration(entry.name);
           if (generation !== undefined) {
             const key = workspaceGenerationKey({ ...session, generation });
@@ -569,6 +576,7 @@ export class NodeWorkerWorkspaceRuntime {
             entry.isDirectory() &&
             !entry.isSymbolicLink() &&
             (parseGenerationName(entry.name) !== undefined ||
+              parseWorkerSkillResourceGeneration(entry.name) !== undefined ||
               parseTransferArtifactGeneration(entry.name) !== undefined),
         );
         const hasAuthoritativeRetain = [...currentSnapshot.retainedGenerations].some((key) =>
@@ -626,7 +634,7 @@ export class NodeWorkerWorkspaceRuntime {
         const sessionRoot = ensureContainedDirectory(environmentRoot, sessionHash);
         const workspaceName = String(input.generation);
         const workspacePath = path.join(sessionRoot, workspaceName);
-        if (input.transfer || input.resetWorkspace || input.seed) {
+        if (input.transfer || input.resetWorkspace || input.seed || input.skillResources) {
           try {
             const stats = fs.lstatSync(workspacePath);
             const resolved = fs.realpathSync.native(workspacePath);
@@ -704,13 +712,24 @@ export class NodeWorkerWorkspaceRuntime {
           fs.rmSync(workspacePath, { recursive: true, force: true });
         }
         const workspaceDir = ensureContainedDirectory(sessionRoot, workspaceName);
-        assertWorkspaceArgv(workspaceDir, input.argv);
+        // Only the typed resource operation may derive a generation-owned sibling.
+        // Ordinary command argv remains confined to the project workspace.
+        const argv = input.skillResources
+          ? buildSkillResourceCommand({
+              parentDir: sessionRoot,
+              generation: input.generation,
+              operation: input.skillResources,
+            })
+          : input.argv;
+        if (!input.skillResources) {
+          assertWorkspaceArgv(workspaceDir, argv);
+        }
         const commandEnv = {
           ...this.env,
           HOME: sessionRoot,
           ...(process.platform === "win32" ? { USERPROFILE: sessionRoot } : {}),
         };
-        const result = await runCommandWithTimeout(input.argv, {
+        const result = await runCommandWithTimeout(argv, {
           cwd: workspaceDir,
           baseEnv: commandEnv,
           ...(input.input === undefined ? {} : { input: input.input }),
