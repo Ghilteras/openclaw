@@ -1,5 +1,6 @@
 const UPGRADE_SURVIVOR_SCENARIOS = Object.freeze([
   "base",
+  "mobile-pairing-reconnect",
   "acpx-openclaw-tools-bridge",
   "feishu-channel",
   "bootstrap-persona",
@@ -20,19 +21,18 @@ const UPGRADE_SURVIVOR_SCENARIOS = Object.freeze([
 
 // Registry proof needs its artifact contract; versioned auth fixtures exercise
 // legacy import rather than native state from every baseline in a broad sweep.
+// Platform pairing probes run only through explicit or dedicated scheduled
+// qualification until their runtime cost justifies aggregate release coverage.
 const aggregateScenarios = UPGRADE_SURVIVOR_SCENARIOS.filter(
   (scenario) =>
+    scenario !== "mobile-pairing-reconnect" &&
+    scenario !== "watchos-direct-node" &&
     scenario !== "prerelease-plugin-registry" &&
     scenario !== "auth-profile-v2026-7-2-beta-5" &&
     scenario !== "recovery-cleanup",
 );
 const scenarioAliases = new Map([
-  [
-    "reported-issues",
-    aggregateScenarios.filter(
-      (scenario) => scenario !== "sqlite-volume" && scenario !== "watchos-direct-node",
-    ),
-  ],
+  ["reported-issues", aggregateScenarios.filter((scenario) => scenario !== "sqlite-volume")],
   ["far-reaching", aggregateScenarios],
 ]);
 
@@ -151,12 +151,25 @@ function supportsUpgradeSurvivorWatchDirectNode(baselineSpec) {
   return comparePublishedReleaseVersion(version, { year: 2026, month: 8, patch: 1 }) >= 0;
 }
 
+function supportsUpgradeSurvivorMobilePairingReconnect(baselineSpec) {
+  if (!baselineSpec) {
+    return true;
+  }
+  const version = parsePublishedReleaseVersion(baselineSpec);
+  if (!version) {
+    return true;
+  }
+  return comparePublishedReleaseVersion(version, { year: 2026, month: 7, patch: 1 }) >= 0;
+}
+
 export function supportsUpgradeSurvivorScenarioAtBaseline(scenario, baselineSpec) {
   return (
     (scenario !== "plugin-deps-cleanup" ||
       supportsUpgradeSurvivorPluginDependencyCleanup(baselineSpec)) &&
     (scenario !== "acpx-openclaw-tools-bridge" ||
       supportsUpgradeSurvivorAcpToolsBridge(baselineSpec)) &&
+    (scenario !== "mobile-pairing-reconnect" ||
+      supportsUpgradeSurvivorMobilePairingReconnect(baselineSpec)) &&
     (scenario !== "watchos-direct-node" || supportsUpgradeSurvivorWatchDirectNode(baselineSpec))
   );
 }

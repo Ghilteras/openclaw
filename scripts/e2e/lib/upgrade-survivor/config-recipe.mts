@@ -267,6 +267,9 @@ export function resolveUpgradeSurvivorConfigSteps(
       (step) => scenario !== "watchos-direct-node" || watchDirectNodeSharedIntents.has(step.intent),
     )
     .map((step) => {
+      if (scenario === "mobile-pairing-reconnect" && step.id === "gateway") {
+        return configSetJsonFile("gateway", "gateway", "gateway", "gateway-password.json");
+      }
       if (scenario !== "recovery-cleanup" || step.id !== "agents") {
         return step;
       }

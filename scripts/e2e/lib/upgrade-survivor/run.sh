@@ -36,6 +36,11 @@ case "$LIVE_OPENAI" in
     ;;
 esac
 export GATEWAY_AUTH_TOKEN_REF="upgrade-survivor-token"
+if [ "$SCENARIO" = "mobile-pairing-reconnect" ]; then
+  export GATEWAY_AUTH_PASSWORD_REF="$(
+    node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))'
+  )"
+fi
 if [ "$SCENARIO" = "watchos-direct-node" ]; then
   unset OPENAI_API_KEY DISCORD_BOT_TOKEN TELEGRAM_BOT_TOKEN
 else
@@ -58,6 +63,7 @@ RUNTIME_ROOT="$OPENCLAW_UPGRADE_SURVIVOR_RUNTIME_ROOT"
 STATE_HOME_ROOT="${OPENCLAW_UPGRADE_SURVIVOR_STATE_HOME_ROOT:-$RUNTIME_ROOT/state-home}"
 mkdir -p "$ARTIFACT_ROOT"
 mkdir -p "$RUNTIME_ROOT"
+chmod 700 "$RUNTIME_ROOT"
 export TMPDIR="${OPENCLAW_UPGRADE_SURVIVOR_TMPDIR:-$RUNTIME_ROOT/tmp}"
 export OPENCLAW_TEST_STATE_TMPDIR="${OPENCLAW_UPGRADE_SURVIVOR_TEST_STATE_TMPDIR:-$RUNTIME_ROOT/state-tmp}"
 mkdir -p "$TMPDIR" "$OPENCLAW_TEST_STATE_TMPDIR"
@@ -152,6 +158,14 @@ WATCH_TLS_SERVER_CERT="$WATCH_TLS_ROOT/server-cert.pem"
 WATCH_TLS_SERVER_EXT="$WATCH_TLS_ROOT/server.ext"
 WATCH_GATEWAY_WS_URL="wss://localhost:18789"
 WATCH_GATEWAY_HTTP_URL="https://localhost:18789"
+MOBILE_PAIRING_ROOT="$RUNTIME_ROOT/mobile-pairing"
+MOBILE_PAIRING_QR_JSON="$MOBILE_PAIRING_ROOT/qr.json"
+MOBILE_PAIRING_QR_ERR="$MOBILE_PAIRING_ROOT/qr.err"
+MOBILE_PAIRING_CREDENTIALS="$MOBILE_PAIRING_ROOT/credentials.json"
+MOBILE_PAIRING_BASELINE_EVIDENCE="$ARTIFACT_ROOT/mobile-pairing-baseline.json"
+MOBILE_PAIRING_CANDIDATE_FIRST_EVIDENCE="$ARTIFACT_ROOT/mobile-pairing-candidate-first.json"
+MOBILE_PAIRING_CANDIDATE_RESTART_EVIDENCE="$ARTIFACT_ROOT/mobile-pairing-candidate-restart.json"
+MOBILE_PAIRING_FINAL_EVIDENCE="$ARTIFACT_ROOT/mobile-pairing-final.json"
 export OPENCLAW_UPGRADE_SURVIVOR_CONFIG_COVERAGE_JSON="$CONFIG_COVERAGE_JSON"
 rm -f "$SUMMARY_JSON" "$CONFIG_COVERAGE_JSON"
 : >"$PHASE_LOG"
@@ -1045,6 +1059,73 @@ validate_baseline_config() {
   fi
 }
 
+run_mobile_pairing_client() {
+  openclaw_e2e_run_script_entrypoint \
+    scripts/e2e/lib/upgrade-survivor/mobile-pairing-client \
+    "$@"
+}
+
+bootstrap_mobile_pairing() {
+  if [ "$SCENARIO" != "mobile-pairing-reconnect" ]; then
+    return 0
+  fi
+  mkdir -p "$MOBILE_PAIRING_ROOT"
+  chmod 700 "$MOBILE_PAIRING_ROOT"
+  : >"$MOBILE_PAIRING_QR_JSON"
+  : >"$MOBILE_PAIRING_QR_ERR"
+  chmod 600 "$MOBILE_PAIRING_QR_JSON" "$MOBILE_PAIRING_QR_ERR"
+  local qr_status=0
+  openclaw_e2e_maybe_timeout "$COMMAND_TIMEOUT" \
+    openclaw qr --json --url ws://127.0.0.1:18789 \
+    >"$MOBILE_PAIRING_QR_JSON" 2>"$MOBILE_PAIRING_QR_ERR" || qr_status=$?
+  if [ "$qr_status" -ne 0 ]; then
+    rm -f "$MOBILE_PAIRING_QR_JSON" "$MOBILE_PAIRING_QR_ERR"
+    echo "baseline mobile pairing QR bootstrap failed" >&2
+    return "$qr_status"
+  fi
+  start_gateway
+  local bootstrap_status=0
+  run_mobile_pairing_client bootstrap \
+    --package-root "$(package_root)" \
+    --qr-json "$MOBILE_PAIRING_QR_JSON" \
+    --credentials "$MOBILE_PAIRING_CREDENTIALS" \
+    --evidence "$MOBILE_PAIRING_BASELINE_EVIDENCE" || bootstrap_status=$?
+  local stop_status=0
+  stop_gateway || stop_status=$?
+  rm -f "$MOBILE_PAIRING_QR_JSON" "$MOBILE_PAIRING_QR_ERR"
+  if [ "$bootstrap_status" -ne 0 ]; then
+    return "$bootstrap_status"
+  fi
+  return "$stop_status"
+}
+
+verify_mobile_pairing() {
+  local phase_name="$1"
+  local evidence_file="$2"
+  run_mobile_pairing_client verify \
+    --package-root "$(package_root)" \
+    --credentials "$MOBILE_PAIRING_CREDENTIALS" \
+    --evidence "$evidence_file" \
+    --phase "$phase_name"
+}
+
+verify_mobile_pairing_once() {
+  local phase_name="$1"
+  local evidence_file="$2"
+  if [ "$SCENARIO" != "mobile-pairing-reconnect" ]; then
+    return 0
+  fi
+  start_gateway || return "$?"
+  local verify_status=0
+  verify_mobile_pairing "$phase_name" "$evidence_file" || verify_status=$?
+  local stop_status=0
+  stop_gateway || stop_status=$?
+  if [ "$verify_status" -ne 0 ]; then
+    return "$verify_status"
+  fi
+  return "$stop_status"
+}
+
 source scripts/e2e/lib/upgrade-survivor/update-restart-auth.sh
 export OPENCLAW_UPGRADE_SURVIVOR_SYSTEMCTL_SHIM_LOG="$SYSTEMCTL_SHIM_LOG"
 export OPENCLAW_UPGRADE_SURVIVOR_SYSTEMCTL_SHIM_PID_FILE="$SYSTEMCTL_SHIM_PID_FILE"
@@ -1440,7 +1521,11 @@ check_gateway_status() {
   local status_start
   local status_end
   status_start="$(node -e "process.stdout.write(String(Date.now()))")"
-  if ! openclaw_e2e_maybe_timeout "$COMMAND_TIMEOUT" openclaw gateway status --url "$gateway_ws_url" --token "$GATEWAY_AUTH_TOKEN_REF" --require-rpc --timeout 30000 --json >"$STATUS_JSON" 2>"$STATUS_ERR"; then
+  local auth_args=(--token "$GATEWAY_AUTH_TOKEN_REF")
+  if [ "$SCENARIO" = "mobile-pairing-reconnect" ]; then
+    auth_args=(--password "$GATEWAY_AUTH_PASSWORD_REF")
+  fi
+  if ! openclaw_e2e_maybe_timeout "$COMMAND_TIMEOUT" openclaw gateway status --url "$gateway_ws_url" "${auth_args[@]}" --require-rpc --timeout 30000 --json >"$STATUS_JSON" 2>"$STATUS_ERR"; then
     echo "gateway status failed" >&2
     openclaw_e2e_print_log "$STATUS_ERR" >&2
     openclaw_e2e_print_log "$GATEWAY_LOG" >&2
@@ -1504,6 +1589,7 @@ phase validate-baseline-config validate_baseline_config
 phase resolve-candidate resolve_candidate_version
 phase configure-clawhub-fixture configure_clawhub_fixture
 phase prepare-update-restart-probe prepare_update_restart_probe
+phase bootstrap-mobile-pairing bootstrap_mobile_pairing
 # Start the published baseline before adding migration specimens: its startup
 # guards correctly reject them, and baseline Doctor would consume candidate proof.
 phase seed-state seed_state
@@ -1536,6 +1622,10 @@ phase configure-plugin-registry configure_plugin_registry
 phase update-candidate update_candidate
 # A standalone Doctor pass would conceal missing migrations in the updater.
 phase assert-automatic-migration assert_survival
+phase mobile-pairing-candidate-first verify_mobile_pairing_once \
+  candidate-first "$MOBILE_PAIRING_CANDIDATE_FIRST_EVIDENCE"
+phase mobile-pairing-candidate-restart verify_mobile_pairing_once \
+  candidate-restart "$MOBILE_PAIRING_CANDIDATE_RESTART_EVIDENCE"
 if [ "$SCENARIO" = "recovery-cleanup" ]; then
   phase assert-recovery-migration node scripts/e2e/lib/upgrade-survivor/recovery-cleanup.mjs migrated
 fi
@@ -1575,6 +1665,15 @@ if [ "$SCENARIO" = "watchos-direct-node" ]; then
   phase gateway-restart-status check_gateway_status
   phase watchos-restart-reconnect watchos_reconnect_restarted_candidate
   phase assert-restarted-survival assert_survival
+fi
+if [ "$SCENARIO" = "mobile-pairing-reconnect" ]; then
+  phase mobile-pairing-final verify_mobile_pairing final "$MOBILE_PAIRING_FINAL_EVIDENCE"
+  phase mobile-pairing-credential-continuity \
+    node scripts/e2e/lib/upgrade-survivor/assertions.mjs assert-mobile-pairing-evidence \
+    "$MOBILE_PAIRING_BASELINE_EVIDENCE" \
+    "$MOBILE_PAIRING_CANDIDATE_FIRST_EVIDENCE" \
+    "$MOBILE_PAIRING_CANDIDATE_RESTART_EVIDENCE" \
+    "$MOBILE_PAIRING_FINAL_EVIDENCE"
 fi
 if [ "$SCENARIO" = "recovery-cleanup" ]; then
   phase recovery-live node scripts/e2e/lib/upgrade-survivor/recovery-cleanup.mjs live

@@ -1128,6 +1128,7 @@ process.stdout.write(sessionDir + "\\n");
     ) as string[];
 
     expect(scenarios).toContain("base");
+    expect(scenarios).toContain("mobile-pairing-reconnect");
     expect(scenarios).toContain("acpx-openclaw-tools-bridge");
     expect(scenarios).toContain("prerelease-plugin-registry");
     expect(scenarios).toContain("sqlite-volume");
@@ -1152,6 +1153,78 @@ process.stdout.write(sessionDir + "\\n");
       expect(() => run(wrongChannel)).toThrow(/update.channel/);
     },
   );
+
+  it("requires password auth for the mobile pairing reconnect scenario", () => {
+    expect(() =>
+      assertConfig({
+        acceptedIntents: ["gateway"],
+        config: { gateway: { auth: { mode: "password" } } },
+        scenario: "mobile-pairing-reconnect",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertConfig({
+        acceptedIntents: ["gateway"],
+        config: { gateway: { auth: { mode: "token" } } },
+        scenario: "mobile-pairing-reconnect",
+      }),
+    ).toThrow(/gateway auth mode/);
+  });
+
+  it("allows token rotation and requires each reconnect to use the newest stored token", () => {
+    const root = mkdtempSync(join(tmpdir(), "openclaw-mobile-pairing-evidence-"));
+    const phases = ["baseline", "candidate-first", "candidate-restart", "final"];
+    const hashes = ["a", "b", "c", "d", "e"].map((value) => value.repeat(64));
+    const files = phases.map((phase, index) => {
+      const file = join(root, `${phase}.json`);
+      writeJson(file, {
+        phase,
+        ok: true,
+        health: true,
+        connectedDevicePresent: true,
+        pendingPairingCount: 0,
+        pendingDevicePairingCount: 0,
+        pendingNodePairingCount: 0,
+        pairedDevicePresent: true,
+        pairedNodePresent: true,
+        missingPasswordReason: true,
+        missingPasswordClose1008: true,
+        credentials: {
+          node: {
+            usedTokenHash: hashes[index],
+            storedTokenHash: hashes[index + 1],
+            deviceTokenReturned: true,
+            tokenRotated: true,
+          },
+          operator: {
+            usedTokenHash: hashes[0],
+            storedTokenHash: hashes[0],
+            deviceTokenReturned: true,
+            tokenRotated: false,
+          },
+        },
+      });
+      return file;
+    });
+    const verify = () =>
+      execFileSync(
+        process.execPath,
+        [ASSERTIONS_PATH, "assert-mobile-pairing-evidence", ...files],
+        {
+          stdio: "pipe",
+        },
+      );
+
+    try {
+      expect(verify).not.toThrow();
+      const stale = JSON.parse(readFileSync(files[2], "utf8"));
+      stale.credentials.node.usedTokenHash = hashes[0];
+      writeJson(files[2], stale);
+      expect(verify).toThrow(/newest stored token/);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
 
   it.each(["base", "sqlite-volume"])(
     "seeds recent ordered session timestamps for %s",
