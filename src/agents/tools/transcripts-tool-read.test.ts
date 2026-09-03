@@ -59,11 +59,55 @@ beforeEach(async () => {
   await store.writeSession(session);
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   activeSessions.clear();
   closeOpenClawStateDatabaseForTest();
 });
 
 describe("transcripts read actions", () => {
+  it.each([false, true])(
+    "refuses notes rewritten after authorization (active: %s)",
+    async (active) => {
+      getProvider.mockReturnValue({
+        id: "voice",
+        accessControl: {
+          channelId: "discord",
+          authorize: async ({ source }: { source: { guildId?: string } }) =>
+            source.guildId === "team" ? { ok: true } : { ok: false, error: "denied" },
+        },
+      });
+      if (active) {
+        activeSessions.set(session.sessionId, { session, providerId: "voice", phase: "active" });
+      }
+      await store.writeSummary(
+        summarizeTranscripts({ session, utterances: [{ text: "Authorized notes" }] }),
+        session,
+      );
+      const params = { action: "show", selector: transcriptSessionSelector(session) };
+      expect((await run(params, true)).details).toMatchObject({
+        text: expect.stringContaining("Authorized notes"),
+      });
+
+      const readSummary = TranscriptsStore.prototype.readSummary;
+      vi.spyOn(TranscriptsStore.prototype, "readSummary").mockImplementationOnce(
+        async function (this: TranscriptsStore, row) {
+          await store.writeSession({
+            ...session,
+            source: { providerId: "voice", guildId: "other" },
+          });
+          await store.writeSummary(
+            summarizeTranscripts({ session, utterances: [{ text: "Other guild notes" }] }),
+            session,
+          );
+          return readSummary.call(this, row);
+        },
+      );
+      const shown = await run(params, true);
+      expect(shown.details).toMatchObject({ sessionId: "meeting", skipped: true });
+      expect(JSON.stringify(shown)).not.toContain("Other guild notes");
+    },
+  );
+
   it("reads across agent ownership without widening mutation authority", async () => {
     await store.appendUtteranceForSession(session, {
       text: "Ship the design",

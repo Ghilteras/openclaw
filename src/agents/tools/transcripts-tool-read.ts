@@ -11,7 +11,9 @@ import {
 } from "./transcripts-tool-runtime.js";
 import {
   canAccessTranscriptSession,
+  isTranscriptSelectionCurrent,
   resolveTranscriptToolSession,
+  transcriptSelectionNoLongerActive,
 } from "./transcripts-tool-selection.js";
 
 const TRANSCRIPTS_SHOW_MAX_CHARS = 12_000;
@@ -78,6 +80,9 @@ export async function showPastTranscript(params: ReadParams) {
   }
   const notes = await readTranscriptNotes(store, selection.session);
   ctx.assertCallerActive?.();
+  if (!isTranscriptSelectionCurrent(selection, store)) {
+    return transcriptSelectionNoLongerActive(selection);
+  }
   const session = projectTranscriptSession(
     { ...entry, session: selection.session },
     isTranscriptSessionActive(selection.session),
