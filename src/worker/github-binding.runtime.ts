@@ -60,6 +60,9 @@ async function bindWorkerGitHubCheckout(
       }
       throw new Error(`git fetch failed (exit ${fetched.code})`);
     }
+    await requireGit(["update-ref", `refs/remotes/origin/${binding.branch}`, "FETCH_HEAD"]);
+    // A tracked upstream lets a bare `git push` and `git status -sb` work on a fresh checkout.
+    await requireGit(["branch", `--set-upstream-to=origin/${binding.branch}`, binding.branch]);
     const local = (await requireGit(["rev-parse", "HEAD"])).trim();
     const remote = (await requireGit(["rev-parse", "FETCH_HEAD"])).trim();
     if (local === remote) {
@@ -76,7 +79,6 @@ async function bindWorkerGitHubCheckout(
     if (deleted.length > 0) {
       await requireGit(["--literal-pathspecs", "checkout", "--", ...deleted]);
     }
-    await requireGit(["update-ref", `refs/remotes/origin/${binding.branch}`, "FETCH_HEAD"]);
   } catch (error) {
     // Checkout metadata helps direct publication; a failure must not discard the coding turn.
     log.warn(`GitHub checkout binding failed: ${String(error).slice(0, 2_048)}`);

@@ -115,6 +115,9 @@ describe("prepareWorkerGitHubEnvironment", () => {
       );
       expect(await git(cwd, "status", "--porcelain", "-z")).toBe(porcelain);
       expect(await fs.readFile(path.join(cwd, filename), "utf8")).toBe(content ?? pushedContent);
+      expect(
+        (await git(cwd, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")).trim(),
+      ).toBe(`origin/${binding.branch}`);
       expect(warn).not.toHaveBeenCalled();
     },
   );
