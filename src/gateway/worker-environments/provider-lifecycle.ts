@@ -81,7 +81,6 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
     stopOwner,
     destroyLease,
     beginDrain,
-    beginDestroy,
     finishProvenDestroy,
     lifecycleLease,
     finishDestroy,

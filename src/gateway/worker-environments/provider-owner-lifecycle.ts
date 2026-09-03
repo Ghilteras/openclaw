@@ -287,7 +287,6 @@ export function createWorkerProviderOwnerLifecycle(
     stopOwner,
     destroyLease,
     beginDrain,
-    beginDestroy,
     finishProvenDestroy,
     lifecycleLease,
     finishDestroy,
