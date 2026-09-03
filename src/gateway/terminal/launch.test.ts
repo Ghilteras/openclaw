@@ -402,46 +402,31 @@ describe("createTerminalLaunchPolicy", () => {
     expect(policy.isEnabled()).toBe(false);
   });
 
-  it("preserves restart-owned terminal settings while hot-applying the shell", () => {
-    const disabledPolicy = createTerminalLaunchPolicy(disabled);
-    disabledPolicy.prepareConfig(
-      {
-        gateway: { terminal: { enabled: true } },
-        agents: { defaults: { sandbox: { mode: "non-main" } } },
-      },
-      { restartPending: false },
-    );
-    disabledPolicy.commitConfig();
-    expect(disabledPolicy.isEnabled()).toBe(false);
-    expect(disabledPolicy.resolve()).toEqual({ ok: false, block: { kind: "disabled" } });
+  it("commits hot enablement and keeps failed disable restrictions until commit", () => {
+    const policy = createTerminalLaunchPolicy(disabled);
+    policy.prepareConfig({}, { restartPending: false });
+    expect(policy.isEnabled()).toBe(false);
+    expect(policy.resolve()).toEqual({ ok: false, block: { kind: "disabled" } });
 
-    const enabledPolicy = createTerminalLaunchPolicy({
-      gateway: { terminal: { enabled: true, shell: "/bin/current-shell" } },
-    });
-    enabledPolicy.prepareConfig(
-      {
-        gateway: { terminal: { enabled: false, shell: "/bin/hot-shell" } },
-        agents: { defaults: { sandbox: { mode: "non-main" } } },
-      },
-      { restartPending: false },
-    );
-    enabledPolicy.commitConfig();
-    expect(enabledPolicy.isEnabled()).toBe(true);
-    const resolved = enabledPolicy.resolve();
-    expect(resolved.ok).toBe(true);
-    if (resolved.ok) {
-      expect(resolved.plan.shell).toBe("/bin/hot-shell");
-    }
+    policy.commitConfig();
+    expect(policy.isEnabled()).toBe(true);
+    expect(policy.resolve().ok).toBe(true);
 
-    enabledPolicy.prepareConfig(disabled, { restartPending: true });
-    enabledPolicy.prepareConfig(
-      {
-        gateway: { terminal: { enabled: true } },
-        agents: { defaults: { sandbox: { mode: "non-main" } } },
-      },
-      { restartPending: false },
-    );
-    expect(enabledPolicy.isEnabled()).toBe(false);
+    policy.prepareConfig(disabled, { restartPending: false });
+    expect(policy.isEnabled()).toBe(false);
+    expect(policy.resolve()).toEqual({ ok: false, block: { kind: "disabled" } });
+    // A failed disable cannot grant access through an uncommitted relaxation.
+    policy.prepareConfig({}, { restartPending: false });
+    expect(policy.isEnabled()).toBe(false);
+    expect(policy.resolve()).toEqual({ ok: false, block: { kind: "disabled" } });
+    policy.commitConfig();
+    expect(policy.isEnabled()).toBe(true);
+    expect(policy.resolve().ok).toBe(true);
+
+    policy.prepareConfig(disabled, { restartPending: false });
+    policy.commitConfig();
+    expect(policy.isEnabled()).toBe(false);
+    expect(policy.resolve()).toEqual({ ok: false, block: { kind: "disabled" } });
   });
 });
 
