@@ -14,6 +14,14 @@ import "./tooltip.ts";
 
 type SettingsStatusKind = "ok" | "warn" | "danger" | "accent" | "muted";
 
+const CARAPACE_STATUS_CLASS: Record<SettingsStatusKind, string> = {
+  accent: "oc-status-info",
+  danger: "oc-status-error",
+  muted: "",
+  ok: "oc-status-success",
+  warn: "oc-status-warning",
+};
+
 type SettingsRowControl = TemplateResult | typeof nothing;
 
 type SettingsRowProps = {
@@ -405,18 +413,12 @@ export function renderSettingsStatus(props: {
   carapace?: boolean;
 }): TemplateResult {
   const modifier = props.kind === "muted" ? "" : ` settings-status--${props.kind}`;
-  const carapaceKind =
-    props.kind === "ok"
-      ? "oc-status-success"
-      : props.kind === "warn"
-        ? "oc-status-warning"
-        : props.kind === "danger"
-          ? "oc-status-error"
-          : props.kind === "accent"
-            ? "oc-status-info"
-            : "";
   return html`
-    <span class="settings-status${modifier}${props.carapace ? ` oc-status ${carapaceKind}` : ""}">
+    <span
+      class="settings-status${modifier}${props.carapace
+        ? ` oc-status ${CARAPACE_STATUS_CLASS[props.kind]}`
+        : ""}"
+    >
       ${props.dot === false
         ? nothing
         : html`<span

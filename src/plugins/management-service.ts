@@ -179,6 +179,20 @@ type ManagedPluginCatalogEntry = {
   removable?: boolean;
 };
 
+function resolveManagedPluginState(params: {
+  enabled: boolean;
+  hasError: boolean;
+  setupMode: ReturnType<typeof resolvePluginConfigEnablement>["mode"];
+}): ManagedPluginCatalogEntry["state"] {
+  if (params.hasError) {
+    return "error";
+  }
+  if (params.enabled) {
+    return "enabled";
+  }
+  return params.setupMode === "missing" ? "needs-setup" : "disabled";
+}
+
 type ManagedPluginCatalog = {
   plugins: ManagedPluginCatalogEntry[];
   diagnostics: unknown[];
@@ -948,13 +962,11 @@ export const listManagedPlugins = withManagedPluginCache(
         name: presentation.name,
         installed: true,
         enabled,
-        state: error
-          ? "error"
-          : enabled
-            ? "enabled"
-            : setup.mode === "missing"
-              ? "needs-setup"
-              : "disabled",
+        state: resolveManagedPluginState({
+          enabled,
+          hasError: Boolean(error),
+          setupMode: setup.mode,
+        }),
         removable,
       };
       if (record.packageName) {

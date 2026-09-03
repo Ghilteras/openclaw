@@ -243,17 +243,17 @@ Control UI base path. For example, a base path of `/openclaw` uses
 plugin is disabled.
 
 The workspace has **Plugins** and **Skills** tabs. **Plugins** opens the
-operator-facing **Your plugins** inventory. **Skills** opens the per-agent skill
+operator-facing **Installed plugins** inventory. **Skills** opens the per-agent skill
 manager at `/skills` and offers **Workshop** as a secondary action.
 
-**Your plugins** shows up to 12 installed plugins, prioritizing enabled plugins,
+**Installed plugins** shows up to 12 installed plugins, prioritizing enabled plugins,
 plugins that need setup, and plugins that need attention. Use the expanding
 search field to filter the full inventory, or choose **Show all** to browse every
 installed plugin. Each card shows the plugin description. An administrator can
 choose the card to open that plugin's settings and enable or
 disable it there. Read-only operators can use the same page to inspect it.
 
-Use the settings action beside **Your plugins**, or open `/settings/plugins`, to
+Use the settings action beside **Installed plugins**, or open `/settings/plugins`, to
 see the complete plugin inventory grouped by category. It also lists
 configured [MCP servers](/cli/mcp) and supports adding, disabling, and removing
 them inline. The same server controls live on **Settings → MCP**.
