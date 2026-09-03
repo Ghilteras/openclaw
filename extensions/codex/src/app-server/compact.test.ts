@@ -1333,12 +1333,37 @@ describe("maybeCompactCodexAppServerSession", () => {
     expect(compactDetails(result).signal).toBe("thread/compact/start");
   });
 
-  it("lets terminal interruption win after the compaction item completes", async () => {
+  it("clears post-context-engine retry state when the compaction item completes before terminal interruption", async () => {
     const fake = createFakeCodexClient({ autoCompleteCompaction: false });
     setCodexAppServerClientFactoryForTest(async () => fake.client);
-    const sessionFile = await writeTestBinding();
+    const sessionFile = await writeTestBinding({
+      nativeCompactionRetryPending: true,
+      contextEngine: {
+        schemaVersion: 1,
+        engineId: "lossless-claw",
+        policyFingerprint: "policy-1",
+        projection: {
+          schemaVersion: 1,
+          mode: "thread_bootstrap",
+          epoch: "epoch-1",
+          fingerprint: "fingerprint-1",
+        },
+      },
+    });
 
-    const pendingResult = startCompaction(sessionFile);
+    const pendingResult = maybeCompactCodexAppServerSession(
+      {
+        sessionId: "session-1",
+        sessionKey: "agent:main:session-1",
+        sessionFile,
+        workspaceDir: tempDir,
+        trigger: "budget",
+      },
+      {
+        allowNonManualNativeRequest: true,
+        nativeCompactionRequest: "after_context_engine",
+      },
+    );
     await vi.waitFor(() => expect(fake.request).toHaveBeenCalledOnce());
     fake.emit({
       method: "turn/started",
@@ -1370,14 +1395,50 @@ describe("maybeCompactCodexAppServerSession", () => {
       compacted: false,
       reason: "codex app-server compaction turn ended with status interrupted",
     });
+    await expect(readCodexAppServerBinding(sessionFile)).resolves.toMatchObject({
+      threadId: "thread-1",
+      contextEngine: {
+        schemaVersion: 1,
+        engineId: "lossless-claw",
+        policyFingerprint: "policy-1",
+      },
+    });
+    const binding = await readCodexAppServerBinding(sessionFile);
+    expect(binding?.contextEngine?.projection).toBeUndefined();
+    expect(binding?.nativeCompactionRetryPending).toBeUndefined();
   });
 
-  it("fails when the native compaction turn terminates before its item starts", async () => {
+  it("keeps post-context-engine retry state when the native turn fails before compaction item completion", async () => {
     const fake = createFakeCodexClient({ autoCompleteCompaction: false });
     setCodexAppServerClientFactoryForTest(async () => fake.client);
-    const sessionFile = await writeTestBinding();
+    const projection = {
+      schemaVersion: 1 as const,
+      mode: "thread_bootstrap" as const,
+      epoch: "epoch-1",
+      fingerprint: "fingerprint-1",
+    };
+    const sessionFile = await writeTestBinding({
+      contextEngine: {
+        schemaVersion: 1,
+        engineId: "lossless-claw",
+        policyFingerprint: "policy-1",
+        projection,
+      },
+    });
 
-    const pendingResult = startCompaction(sessionFile);
+    const pendingResult = maybeCompactCodexAppServerSession(
+      {
+        sessionId: "session-1",
+        sessionKey: "agent:main:session-1",
+        sessionFile,
+        workspaceDir: tempDir,
+        trigger: "budget",
+      },
+      {
+        allowNonManualNativeRequest: true,
+        nativeCompactionRequest: "after_context_engine",
+      },
+    );
     await vi.waitFor(() => {
       expect(fake.request).toHaveBeenCalledOnce();
     });
@@ -1400,6 +1461,11 @@ describe("maybeCompactCodexAppServerSession", () => {
       ok: false,
       compacted: false,
       reason: "codex app-server compaction turn ended with status failed",
+    });
+    await expect(readCodexAppServerBinding(sessionFile)).resolves.toMatchObject({
+      threadId: "thread-1",
+      contextEngine: { projection },
+      nativeCompactionRetryPending: true,
     });
   });
 
