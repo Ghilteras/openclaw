@@ -1,7 +1,6 @@
 // Verifies CLI runtime alias resolution and runtime model-ref equivalence.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { resolveAgentDir, resolveDefaultAgentId } from "./agent-scope-config.js";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   setRuntimeAuthProfileStoreSnapshot,
@@ -19,9 +18,6 @@ import {
   publishPreparedProviderAuthFacts,
   resetPreparedProviderAuthFactsForTest,
 } from "./prepared-provider-auth-facts.js";
-
-const factsAgentDir = (cfg: OpenClawConfig = {}) =>
-  resolveAgentDir(cfg, resolveDefaultAgentId(cfg));
 
 const anthropicAuthAliasMetadata = {
   plugins: [
@@ -154,7 +150,7 @@ describe("resolveCliRuntimeExecutionProvider", () => {
   );
 
   it("uses native CLI auth when no stored credential exists", () => {
-    publishPreparedProviderAuthFacts(factsAgentDir(), { "claude-cli": { mode: "api_key" } });
+    publishPreparedProviderAuthFacts("main", { "claude-cli": { mode: "api_key" } });
 
     expect(
       resolveCliRuntimeExecutionProvider({
@@ -167,7 +163,7 @@ describe("resolveCliRuntimeExecutionProvider", () => {
   });
 
   it("passes through a stored API-key profile instead of native CLI auth", () => {
-    publishPreparedProviderAuthFacts(factsAgentDir(), { "claude-cli": { mode: "api_key" } });
+    publishPreparedProviderAuthFacts("main", { "claude-cli": { mode: "api_key" } });
 
     expect(
       resolveCliRuntimeExecutionProvider({
@@ -258,7 +254,7 @@ describe("resolveCliRuntimeExecutionProvider", () => {
   });
 
   it("routes a provider to the runtime named by manifest native auth", () => {
-    publishPreparedProviderAuthFacts(factsAgentDir(), {
+    publishPreparedProviderAuthFacts("main", {
       openai: { mode: "oauth", runtime: "codex" },
     });
 

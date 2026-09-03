@@ -235,6 +235,7 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
     !usesSupervisionConnection && params.runtimePlan?.auth.deferredRouteSupport !== undefined;
   const appServerHomeScope = resolveCodexAppServerHomeScope({
     appServer: pluginConfig.appServer,
+    connectionScope: startupBinding?.connectionScope,
     nativeAuth: nativeAuthRoute,
   });
   const appServerPluginConfig =

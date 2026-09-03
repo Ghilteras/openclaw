@@ -464,23 +464,29 @@ function resolveRouteOwnerPluginIds(
   route: SystemAgentConfiguredRoute,
 ): string[] {
   const workspaceDir = resolveAgentWorkspaceDir(config, route.agentId, process.env);
-  return [
-    ...resolveOwningPluginIdsForModelRefs({
-      models: [route.modelLabel],
-      config,
-      workspaceDir,
-      env: process.env,
-    }),
-    ...(resolveOwningPluginIdsForProviderRef({
-      provider: route.provider,
-      config,
-      workspaceDir,
-      env: process.env,
-    }) ?? []),
-    ...resolveRouteHarnessOwnerPluginIds(config, route),
-  ]
-    .filter((id, index, ids) => ids.indexOf(id) === index)
-    .toSorted();
+  const normalizedConfig = normalizePluginsConfig(config.plugins);
+  return (
+    [
+      ...resolveOwningPluginIdsForModelRefs({
+        models: [route.modelLabel],
+        config,
+        workspaceDir,
+        env: process.env,
+      }),
+      ...(resolveOwningPluginIdsForProviderRef({
+        provider: route.provider,
+        config,
+        workspaceDir,
+        env: process.env,
+      }) ?? []),
+      ...resolveRouteHarnessOwnerPluginIds(config, route),
+    ]
+      .filter((id, index, ids) => ids.indexOf(id) === index)
+      // Ownership metadata lists disabled plugins too; a disabled owner no longer serves the
+      // route, so the frozen binding must fail its currency check.
+      .filter((id) => passesManifestOwnerBasePolicy({ plugin: { id }, normalizedConfig }))
+      .toSorted()
+  );
 }
 
 /** Capture once immediately before a live setup turn. */

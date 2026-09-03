@@ -509,7 +509,7 @@ describe("parseSystemAgentOperation", () => {
       NonNullable<SystemAgentCommandDeps["verifyInferenceConfig"]>
     >[0];
     const verifyInferenceConfig = vi.fn(async (params: VerifyInferenceParams) => {
-      const { config, onVerifiedExecution } = params;
+      const { config } = params;
       verificationCalls += 1;
       const stagedDefaults = requireRecord(
         requireRecord(config.agents, "agents").defaults,
@@ -560,10 +560,14 @@ describe("parseSystemAgentOperation", () => {
           },
           channels: { telegram: { enabled: true } },
         });
-      } else {
-        onVerifiedExecution?.({} as never, reboundBinding);
+        return { ok: true as const, modelRef: "openai/gpt-5.5", latencyMs: 17 };
       }
-      return { ok: true as const, modelRef: "openai/gpt-5.5", latencyMs: 17 };
+      return {
+        ok: true as const,
+        modelRef: "openai/gpt-5.5",
+        latencyMs: 17,
+        binding: reboundBinding,
+      };
     });
 
     const result = await executeSystemAgentOperation(
@@ -576,14 +580,11 @@ describe("parseSystemAgentOperation", () => {
     expect(verifyInferenceConfig).toHaveBeenCalledTimes(2);
     expect(verifyInferenceConfig).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ requireExecutionOwner: true }),
+      expect.not.objectContaining({ bindSession: true }),
     );
     expect(verifyInferenceConfig).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({
-        requireExecutionOwner: true,
-        onVerifiedExecution: expect.any(Function),
-      }),
+      expect.objectContaining({ bindSession: true }),
     );
     expect(onVerifiedInferenceChanged).toHaveBeenCalledOnce();
     expect(onVerifiedInferenceChanged).toHaveBeenCalledWith(reboundBinding);

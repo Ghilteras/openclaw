@@ -1514,13 +1514,7 @@ describe("buildQaRuntimeEnv", () => {
   });
 
   it("accepts a logged-in Codex CLI home for live OpenAI QA runs", () => {
-    const readCodexCredentials = vi.fn(() => ({
-      type: "oauth" as const,
-      provider: "openai",
-      access: "access-token",
-      refresh: "refresh-token",
-      expires: Date.now() + 60_000,
-    }));
+    const hasCodexCliAuth = vi.fn(() => true);
 
     expect(() =>
       assertQaLiveCodexAuthAvailable({
@@ -1529,14 +1523,10 @@ describe("buildQaRuntimeEnv", () => {
         env: {
           CODEX_HOME: "/host/.codex",
         },
-        readCodexCredentials,
+        hasCodexCliAuth,
       }),
     ).not.toThrow();
-    expect(readCodexCredentials).toHaveBeenCalledWith({
-      codexHome: "/host/.codex",
-      allowKeychainPrompt: false,
-      ttlMs: 5_000,
-    });
+    expect(hasCodexCliAuth).toHaveBeenCalledWith("/host/.codex");
   });
 
   it("stages placeholder mock auth profiles per agent dir so mock-openai runs can resolve credentials", async () => {

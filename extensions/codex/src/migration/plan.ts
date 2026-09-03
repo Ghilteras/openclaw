@@ -561,7 +561,13 @@ export async function buildCodexMigrationPlan(
       })),
     );
   }
-  if (!memoryOnly) {
+  // A missing Codex home has nothing to import; an existing home reports its auth state even
+  // when the credential lives only in the keychain.
+  const codexHomePresent = await fs.access(source.codexHome).then(
+    () => true,
+    () => false,
+  );
+  if (!memoryOnly && codexHomePresent) {
     items.push(...(await buildCodexAuthItems({ ctx, source, targets })));
   }
   if (!memoryOnly && !authOnly) {

@@ -77,10 +77,9 @@ describe("embedded run auth plan provider pin", () => {
     await state.cleanup();
   });
 
-  it.each([
-    { pin: true, authMode: "api-key", authRequirement: "api-key", kind: "direct" },
-    { pin: false, authMode: "oauth", authRequirement: "subscription", kind: "profile" },
-  ])(
+  // Ambient Codex OAuth no longer materializes a virtual profile: the native runtime owns that
+  // login, so without an OpenClaw credential the platform API-key route is the only plan.
+  it.each([{ pin: true, authMode: "api-key", authRequirement: "api-key", kind: "direct" }])(
     "selects $authMode with ambient Codex OAuth and api-key pin=$pin",
     async ({ pin, authMode, authRequirement, kind }) => {
       const config: OpenClawConfig = {

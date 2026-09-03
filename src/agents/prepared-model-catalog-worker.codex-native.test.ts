@@ -137,8 +137,8 @@ describe("prepared Codex native catalog worker", () => {
     });
     try {
       const catalog = await worker.loadCatalog();
-      expect(getPreparedModelFullCatalogAuth(catalog)?.providerAuth).toMatchObject({
-        openai: "api_key",
+      expect(getPreparedModelFullCatalogAuth(catalog)?.providerAuth).toEqual({
+        openai: { mode: "oauth", runtime: "codex" },
       });
       const model = catalog.entries.find(
         (entry) => entry.provider === "openai" && entry.id === "gpt-5.6-sol",

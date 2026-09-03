@@ -16,7 +16,15 @@ type StaticCatalogResolver = ReturnType<CreateStaticCatalogResolver>;
 
 const preparedModelRuntimeMocks = vi.hoisted(() => ({
   pluginMetadataSnapshot: {
-    plugins: [],
+    // Manifest-declared synthetic auth refs are the worker's ref source; the runtime resolver
+    // mock below reads the same list so both startup and worker paths see one inventory.
+    get plugins() {
+      return preparedModelRuntimeMocks.runtimeSyntheticAuthProviderRefs.map((ref) => ({
+        id: ref,
+        providers: [],
+        syntheticAuthRefs: [ref],
+      }));
+    },
     pluginIds: [],
     index: { plugins: [], diagnostics: [] },
     manifestRegistry: { plugins: [], diagnostics: [] },

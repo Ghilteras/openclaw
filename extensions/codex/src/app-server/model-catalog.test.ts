@@ -256,29 +256,4 @@ describe("Codex app-server model catalog", () => {
     expect(catalogB.map((model) => model.id)).toEqual(["catalog-b"]);
     expect(catalogB.some((model) => model.id === "removed-after-refresh")).toBe(false);
   });
-  it.each([
-    { account: { type: "apiKey" }, mode: "apiKey" },
-    {
-      account: { type: "chatgpt", email: "synthetic@example.test", planType: "plus" },
-      mode: "chatgpt",
-    },
-    { account: null, mode: undefined },
-  ])("validates account state $mode without importing credentials", async ({ account }) => {
-    listModelsMock.mockResolvedValue({
-      models: [
-        {
-          id: "synthetic-opaque",
-          model: "synthetic-opaque",
-          inputModalities: ["text"],
-          supportedReasoningEfforts: [],
-        },
-      ],
-    });
-    rpc.request.mockResolvedValue({ account, requiresOpenaiAuth: true });
-    await owner.load(catalogParams, undefined);
-    expect(rpc.request).toHaveBeenCalledWith({
-      method: "account/read",
-      requestParams: { refreshToken: false },
-    });
-  });
 });

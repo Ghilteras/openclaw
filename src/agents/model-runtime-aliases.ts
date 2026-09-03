@@ -291,7 +291,7 @@ function resolveCliRuntimeFromAuthProfile(
       profileProvider: configuredProfiles[profileId]?.provider,
     });
   }
-  return resolveNativeLoginCliRuntime({ provider, agentDir });
+  return resolveNativeLoginCliRuntime({ provider, agentId: params.agentId });
 }
 
 /**
@@ -299,14 +299,14 @@ function resolveCliRuntimeFromAuthProfile(
  * (for example Claude CLI or Codex app-server). The prepared generation records that fact as
  * secret-free provider auth; request paths read it instead of re-probing provider plugins.
  */
-function resolveNativeLoginCliRuntime(params: {
+export function resolveNativeLoginCliRuntime(params: {
   provider: string;
-  agentDir?: string;
+  agentId?: string;
 }): string | undefined {
   // Only an owned decision has a prepared generation to read. Unowned callers (fleet-wide
   // policy scans, bare provider lookups) keep the implicit runtime policy without touching
   // the roster or any plugin.
-  const facts = params.agentDir ? readPreparedProviderAuthFacts(params.agentDir) : undefined;
+  const facts = params.agentId ? readPreparedProviderAuthFacts(params.agentId) : undefined;
   if (!facts) {
     return undefined;
   }

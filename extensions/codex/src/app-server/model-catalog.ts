@@ -78,10 +78,6 @@ export function createCodexAppServerModelCatalog(runtime: string) {
                 (ref) => ref.provider === "openai" && ref.model === model.id,
               ),
           );
-          await request({
-            method: "account/read",
-            requestParams: { refreshToken: false },
-          });
           return { models } as const;
         },
       );

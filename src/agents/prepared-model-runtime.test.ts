@@ -406,9 +406,6 @@ describe("prepared model runtime snapshots", () => {
         }),
       }),
     );
-    expect(mocks.resolveAmbientCredentials).toHaveBeenCalledWith(
-      expect.objectContaining({ syntheticAuthProviderRefs: ["selected-runtime"] }),
-    );
   });
 
   it("captures static provider-hook rows in the same lifecycle generation", async () => {
@@ -434,6 +431,9 @@ describe("prepared model runtime snapshots", () => {
     };
     const snapshot = await publishPreparedModelRuntimeSnapshot(input);
 
+    // Startup publishes the curated static build; provider static rows load with full discovery.
+    expect(mocks.loadStaticCatalog).not.toHaveBeenCalled();
+    const fullCatalog = await buildPreparedFullCatalogForTest(input);
     expect(mocks.loadStaticCatalog).toHaveBeenCalledWith(
       expect.objectContaining({
         cfg: {},
@@ -442,7 +442,7 @@ describe("prepared model runtime snapshots", () => {
         workspaceDir: "/tmp/prepared-model-runtime-static-workspace",
       }),
     );
-    expect(structuredClone((await buildPreparedFullCatalogForTest(input)).staticEntries)).toEqual([
+    expect(structuredClone(fullCatalog.staticEntries)).toEqual([
       {
         provider: "nvidia",
         id: "nemotron-static",
@@ -494,14 +494,7 @@ describe("prepared model runtime snapshots", () => {
       workspaceDir: "/tmp/prepared-model-runtime-manifest-workspace",
     });
 
-    expect(mocks.loadStaticCatalog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cfg: config,
-        env: process.env,
-        metadataSnapshot: snapshot.metadataSnapshot,
-        workspaceDir: "/tmp/prepared-model-runtime-manifest-workspace",
-      }),
-    );
+    expect(mocks.loadStaticCatalog).not.toHaveBeenCalled();
     expect(mocks.createStaticCatalogResolver).toHaveBeenCalledOnce();
     expect(mocks.createStaticCatalogResolver).toHaveBeenCalledWith(
       expect.objectContaining({

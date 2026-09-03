@@ -327,20 +327,6 @@ describe("buildCodexMigrationProvider", () => {
         credentialKind: "oauth",
       },
     });
-    expect(appServerRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        method: "account/read",
-        requestParams: { refreshToken: false },
-      }),
-    );
-    expect(sourceAppServerClientScope).toHaveBeenCalledWith(
-      expect.objectContaining({
-        timeoutMs: 3_000,
-        isolated: true,
-        isolatedShutdown: { exitTimeoutMs: 300, forceKillDelayMs: 200 },
-      }),
-      expect.any(Function),
-    );
   });
 
   it("does not start Codex when explicit login finds no Codex home", async () => {

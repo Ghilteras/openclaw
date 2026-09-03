@@ -8,6 +8,7 @@ import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import codexPlugin from "../../extensions/codex/index.js";
+import type { PreparedProviderAuth } from "../../src/agents/agent-auth-credential-modes.js";
 import type { AgentHarness } from "../../src/agents/harness/types.js";
 import type { OpenClawConfig } from "../../src/config/types.openclaw.js";
 import {
@@ -76,7 +77,6 @@ describe("models.list native account catalog", () => {
               await rm(socketDir, { recursive: true, force: true });
             });
             const requests: string[] = [];
-            let account: Record<string, unknown> | null = { type: "apiKey" };
             server.on("connection", (socket) => {
               socket.on("message", (data) => {
                 const encoded = Array.isArray(data)
@@ -87,35 +87,34 @@ describe("models.list native account catalog", () => {
                   method: string;
                 };
                 requests.push(request.method);
-                if (request.id !== undefined) {
-                  const result =
-                    request.method === "initialize"
-                      ? { userAgent: "openclaw/0.149.1 (test)" }
-                      : request.method === "account/read"
-                        ? { account, requiresOpenaiAuth: true }
-                        : request.method === "model/list"
-                          ? {
-                              data: [
-                                {
-                                  id: "synthetic-opaque",
-                                  model: "synthetic-opaque",
-                                  displayName: "Synthetic name",
-                                  description: "Synthetic model",
-                                  supportsPersonality: false,
-                                  inputModalities: ["text"],
-                                  supportedReasoningEfforts: [
-                                    { reasoningEffort: "low", description: "Low" },
-                                  ],
-                                  defaultReasoningEffort: "low",
-                                  hidden: false,
-                                  isDefault: true,
-                                },
-                              ],
-                              nextCursor: null,
-                            }
-                          : {};
-                  socket.send(JSON.stringify({ id: request.id, result }));
+                if (request.id === undefined) {
+                  return;
                 }
+                const result =
+                  request.method === "initialize"
+                    ? { userAgent: "openclaw/0.149.1 (test)" }
+                    : request.method === "model/list"
+                      ? {
+                          data: [
+                            {
+                              id: "synthetic-opaque",
+                              model: "synthetic-opaque",
+                              displayName: "Synthetic name",
+                              description: "Synthetic model",
+                              supportsPersonality: false,
+                              inputModalities: ["text"],
+                              supportedReasoningEfforts: [
+                                { reasoningEffort: "low", description: "Low" },
+                              ],
+                              defaultReasoningEffort: "low",
+                              hidden: false,
+                              isDefault: true,
+                            },
+                          ],
+                          nextCursor: null,
+                        }
+                      : {};
+                socket.send(JSON.stringify({ id: request.id, result }));
               });
             });
             httpServer.listen(socketPath);
@@ -162,36 +161,43 @@ describe("models.list native account catalog", () => {
               throw new Error("Codex plugin did not register its harness");
             }
             const scope = {
-              config,
               agentId: "main",
               agentDir: state.agentDir(),
               workspaceDir: state.workspaceDir,
-            };
-            let discoveryError: unknown;
-            const loadCatalog = harness.loadModelCatalog!.bind(harness);
-            harness.loadModelCatalog = async (params) => {
-              try {
-                return await loadCatalog(params);
-              } catch (error) {
-                discoveryError = error;
-                throw error;
-              }
             };
             const registry = createEmptyPluginRegistry();
             registry.agentHarnesses.push({ pluginId: "codex", source: "test", harness });
             const previous = captureActivePluginRegistrySnapshot();
             setActivePluginRegistry(registry);
             try {
-              const result = await listModels({
-                ...scope,
-                pluginRegistry: registry,
-                cfg: config,
-                catalog: [],
-                view: "all",
-                refresh: true,
+              // Discovery reads the operator's native Codex home; account state is not
+              // part of the catalog and stays with the owner's provider-auth facts.
+              const rows = [...(await harness.loadModelCatalog!({ ...scope, config }))];
+              expect(requests).toContain("model/list");
+              expect(requests).not.toContain("account/read");
+              expect(requests).not.toContain("account/login/start");
+              expect(rows[0]).toMatchObject({
+                id: "synthetic-opaque",
+                nativeRuntime: "codex",
+                name: "Synthetic name",
+                reasoning: true,
               });
-              expect(discoveryError).toBeUndefined();
-              expect(result.models).toEqual([
+              expect(rows[0]).not.toHaveProperty("api");
+              expect(rows[0]).not.toHaveProperty("baseUrl");
+
+              const configured = (preparedProviderAuth: PreparedProviderAuth) =>
+                listModels({
+                  ...scope,
+                  cfg: config,
+                  catalog: structuredClone(rows),
+                  view: "all",
+                  preparedOnly: true,
+                  catalogComplete: true,
+                  preparedProviderAuth,
+                });
+              const nativeApiKey = { openai: { mode: "api_key", runtime: "codex" } } as const;
+              const selectable = await configured(nativeApiKey);
+              expect(selectable.models).toEqual([
                 expect.objectContaining({
                   id: "synthetic-opaque",
                   name: "Synthetic name",
@@ -199,26 +205,8 @@ describe("models.list native account catalog", () => {
                   reasoning: true,
                 }),
               ]);
-              expect(requests).toContain("account/read");
-              expect(requests).not.toContain("account/login/start");
-              const rows = [...(await loadCatalog(scope))];
-              expect(rows[0]).toMatchObject({ nativeRuntime: "codex", name: "Synthetic name" });
-              expect(rows[0]).not.toHaveProperty("api");
-              expect(rows[0]).not.toHaveProperty("baseUrl");
-              expect(result.models[0]).not.toHaveProperty("nativeRuntime");
-              const configured = (cfg = config) =>
-                listModels({
-                  ...scope,
-                  pluginRegistry: registry,
-                  cfg,
-                  catalog: structuredClone(rows),
-                  view: "configured",
-                  preparedOnly: true,
-                });
-              const calls = requests.length;
-              expect((await configured()).models[0]?.available).toBe(true);
-              expect(requests).toHaveLength(calls);
-              expect((await configured({ ...config })).models[0]?.available).toBe(false);
+              expect(selectable.models[0]).not.toHaveProperty("nativeRuntime");
+              expect((await configured({})).models[0]?.available).toBe(false);
 
               // A rejected explicit session lock cannot borrow native account readiness.
               const snapshot = { entries: rows, routeVariants: rows };
@@ -228,106 +216,25 @@ describe("models.list native account catalog", () => {
                 snapshot,
                 metadataSnapshot: loadManifestMetadataSnapshot({ config, env: process.env }),
                 preparedAuthStore: { version: 1, profiles: {} },
+                preparedProviderAuth: nativeApiKey,
                 lockedProfileId: "openai:missing",
               });
               const locked = await buildModelsListResult({
-                context: {
-                  getRuntimeConfig: () => config,
-                  loadGatewayModelCatalogSnapshot: vi.fn(),
-                  logGateway: { debug: vi.fn() },
-                } as unknown as GatewayRequestContext,
+                source: {
+                  kind: "published",
+                  context: {
+                    getRuntimeConfig: () => config,
+                    loadGatewayModelCatalogSnapshot: vi.fn(),
+                    logGateway: { debug: vi.fn() },
+                  } as unknown as GatewayRequestContext,
+                  config,
+                  snapshot,
+                  projector,
+                },
                 agentId: "main",
                 params: { view: "configured" },
-                preloadedOnly: true,
-                preloadedCatalog: { agentId: "main", config, snapshot },
-                catalogProjector: projector,
               });
               expect(locked.models[0]?.available).toBe(false);
-
-              for (const socket of server.clients) {
-                socket.send(
-                  JSON.stringify({ method: "account/updated", params: { authMode: null } }),
-                );
-              }
-              await expect.poll(async () => (await configured()).models[0]?.available).toBe(false);
-              for (const observed of [
-                {
-                  value: { type: "chatgpt", email: "synthetic@example.test", planType: "plus" },
-                  available: true,
-                },
-                { value: null, available: false },
-                { value: { type: "apiKey" }, available: true },
-              ]) {
-                account = observed.value;
-                const refreshed = await listModels({
-                  ...scope,
-                  pluginRegistry: registry,
-                  cfg: config,
-                  catalog: rows,
-                  view: "all",
-                  refresh: true,
-                });
-                expect(refreshed.models[0]?.available).toBe(observed.available);
-              }
-              const hostRoutes: OpenClawConfig["models"][] = [
-                {
-                  providers: {
-                    openai: {
-                      api: "openai-responses",
-                      baseUrl: "https://host.example.test/v1",
-                      models: [],
-                    },
-                  },
-                },
-                {
-                  providers: {
-                    openai: {
-                      baseUrl: "",
-                      models: [
-                        {
-                          id: " openai/synthetic-opaque ",
-                          name: "Synthetic name",
-                          api: "openai-responses",
-                          baseUrl: "https://host.example.test/v1",
-                          reasoning: true,
-                          input: ["text"],
-                          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                          maxTokens: 100,
-                        },
-                      ],
-                    },
-                  },
-                },
-                {
-                  providers: {
-                    openai: {
-                      baseUrl: "",
-                      apiKey: { source: "env", provider: "default", id: "SYNTHETIC_ABSENT_KEY" },
-                      models: [],
-                    },
-                  },
-                },
-              ];
-              for (const [routeIndex, models] of hostRoutes.entries()) {
-                const hostConfig = { ...config, models };
-                const host = await listModels({
-                  ...scope,
-                  pluginRegistry: registry,
-                  cfg: hostConfig,
-                  catalog: rows,
-                  view: "configured",
-                  refresh: true,
-                });
-                expect(host.models[0]?.available, `host route ${routeIndex}`).toBe(false);
-              }
-              expect(requests).not.toContain("account/login/start");
-              for (const socket of server.clients) {
-                socket.close();
-              }
-              await expect.poll(async () => (await configured()).models[0]?.available).toBe(false);
-              const replacement = createEmptyPluginRegistry();
-              setActivePluginRegistry(replacement);
-              expect((await configured()).models[0]?.available).toBe(false);
             } finally {
               await harness.dispose?.();
               restoreActivePluginRegistrySnapshot(previous);

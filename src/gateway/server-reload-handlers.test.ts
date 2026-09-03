@@ -303,7 +303,9 @@ const hoisted = vi.hoisted(() => ({
   rejectPendingPreparedModelRuntimeReplacement: vi.fn(
     (_gateId: symbol | undefined, _error: unknown) => {},
   ),
-  refreshPreparedModelRuntimeSnapshots: vi.fn(async (_cfg: OpenClawConfig) => {}),
+  refreshPreparedModelRuntimeSnapshots: vi.fn(
+    async (_cfg: OpenClawConfig, _options?: object) => {},
+  ),
   refreshContextWindowCache: vi.fn(async (_cfg: OpenClawConfig) => {}),
   clearCurrentProviderAuthState: vi.fn(() => {}),
   warmCurrentProviderAuthStateOffMainThread: vi.fn(async (_cfg: OpenClawConfig) => {}),
@@ -413,9 +415,9 @@ vi.mock("../agents/prepared-model-runtime.js", () => ({
   },
   rejectPendingPreparedModelRuntimeReplacement: (gateId: symbol | undefined, error: unknown) =>
     hoisted.rejectPendingPreparedModelRuntimeReplacement(gateId, error),
-  refreshPreparedModelRuntimeSnapshots: (cfg: OpenClawConfig) => {
+  refreshPreparedModelRuntimeSnapshots: (cfg: OpenClawConfig, options?: object) => {
     hoisted.reloadEvents.push("refresh-prepared-model-runtime");
-    return hoisted.refreshPreparedModelRuntimeSnapshots(cfg);
+    return hoisted.refreshPreparedModelRuntimeSnapshots(cfg, options);
   },
 }));
 

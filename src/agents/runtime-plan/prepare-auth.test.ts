@@ -1852,7 +1852,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
 
     expect(plan).toMatchObject({
-      providerForAuth: "codex",
+      providerForAuth: "openai",
       harnessAuthProvider: "openai",
       forwardedAuthProfileId: "openai:account",
       forwardedAuthProfileSource: "user",
@@ -1875,7 +1875,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
 
     expect(plan).toMatchObject({
-      providerForAuth: "codex",
+      providerForAuth: "openai",
       harnessAuthProvider: "openai",
       forwardedAuthProfileId: "openai:p1",
       forwardedAuthProfileSource: "auto",

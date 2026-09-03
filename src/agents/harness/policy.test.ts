@@ -1,16 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { migratePersistedImplicitMainRoster } from "../../config/legacy.roster.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { resolveAgentDir, resolveDefaultAgentId } from "../agent-scope-config.js";
 import { testing as cliBackendsTesting } from "../cli-backends.test-support.js";
 import {
   publishPreparedProviderAuthFacts,
   resetPreparedProviderAuthFactsForTest,
 } from "../prepared-provider-auth-facts.js";
 import { resolveAgentHarnessPolicy as resolveAgentHarnessPolicyBase } from "./policy.js";
-
-const factsAgentDir = (cfg: OpenClawConfig = {}) =>
-  resolveAgentDir(cfg, resolveDefaultAgentId(cfg));
 
 function resolveAgentHarnessPolicy(
   params: Parameters<typeof resolveAgentHarnessPolicyBase>[0],
@@ -102,36 +98,8 @@ describe("resolveAgentHarnessPolicy", () => {
     ).toEqual({ runtime: "codex", runtimeSource: "provider" });
   });
 
-  it("marks an implicit CLI runtime selected by auth as auth", () => {
-    cliBackendsTesting.setDepsForTest({
-      resolveRuntimeCliBackends: () => [
-        {
-          id: "claude-cli",
-          modelProvider: "anthropic",
-          pluginId: "anthropic",
-          config: { command: "claude" },
-        },
-      ],
-    });
-
-    expect(
-      resolveAgentHarnessPolicy({
-        provider: "anthropic",
-        modelId: "claude-sonnet-4-6",
-        config: {
-          auth: {
-            profiles: {
-              "anthropic:cli": { provider: "claude-cli", mode: "oauth" },
-            },
-          },
-        } as OpenClawConfig,
-        env: {},
-      }),
-    ).toEqual({ runtime: "claude-cli", runtimeSource: "auth" });
-  });
-
   it("marks an implicit OpenAI native runtime selected by auth as auth", () => {
-    publishPreparedProviderAuthFacts(factsAgentDir(), {
+    publishPreparedProviderAuthFacts("main", {
       openai: { mode: "oauth", runtime: "codex" },
     });
 
@@ -140,6 +108,7 @@ describe("resolveAgentHarnessPolicy", () => {
         provider: "openai",
         modelId: "gpt-5.6-sol",
         config: {},
+        agentId: "main",
         env: {},
       }),
     ).toEqual({ runtime: "codex", runtimeSource: "auth" });

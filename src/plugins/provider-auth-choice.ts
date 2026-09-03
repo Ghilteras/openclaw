@@ -364,6 +364,9 @@ async function prepareProviderPluginAuthMethod(
     opts: params.opts,
   });
 
+  if (result.notes?.length) {
+    await params.prompter.note(result.notes.join("\n"), "Provider notes");
+  }
   const nextConfig = applyProviderPluginAuthMethodResultConfig({
     config: params.config,
     result,

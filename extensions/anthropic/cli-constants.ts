@@ -72,9 +72,22 @@ export const CLAUDE_CLI_CLEAR_ENV = [
 
 /** Default model ref for Claude CLI setup and live tests; the runtime is resolved, not spelled. */
 export const CLAUDE_CLI_DEFAULT_MODEL_REF = "anthropic/claude-opus-5";
-/** Default Anthropic models allowed when Claude CLI setup seeds the model allowlist. */
-export const CLAUDE_CLI_DEFAULT_ALLOWLIST_REFS =
-  manifest.modelCatalog.providers.anthropic.models.map(({ id }) => `anthropic/${id}`);
+// Claude Code exposes a curated model set, not the whole Anthropic API catalog: no Mythos or
+// Haiku through the CLI, while older Opus/Sonnet generations stay routable for existing configs.
+const CLAUDE_CLI_MODEL_IDS = [
+  "claude-opus-5",
+  "claude-sonnet-5",
+  "claude-fable-5-1",
+  "claude-fable-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-sonnet-4-6",
+  "claude-opus-4-6",
+] as const;
+/** Anthropic models allowed when Claude CLI setup seeds the model allowlist. */
+export const CLAUDE_CLI_DEFAULT_ALLOWLIST_REFS = CLAUDE_CLI_MODEL_IDS.map(
+  (id) => `anthropic/${id}`,
+);
 
 /**
  * Claude CLI model ids probed when detecting an existing CLI route, canonical

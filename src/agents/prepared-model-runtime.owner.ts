@@ -47,8 +47,8 @@ const log = createSubsystemLogger("agents/prepared-model-runtime");
 export function retirePreparedModelRuntimeOwner(owner: PreparedModelRuntimeOwner): void {
   const retire = owner.retire;
   owner.retire = undefined;
-  if (owner.snapshot) {
-    retirePreparedProviderAuthFacts(owner.input.agentDir, owner.snapshot.providerAuth);
+  if (owner.snapshot && owner.input.agentId) {
+    retirePreparedProviderAuthFacts(owner.input.agentId, owner.snapshot.providerAuth);
   }
   void retire?.();
 }
@@ -59,7 +59,10 @@ function publishPreparedModelRuntimeOwnerSnapshot(
 ): PreparedModelRuntimeSnapshot {
   const published = stampPreparedModelRuntimeSnapshotConfig(snapshot, owner.input.config);
   owner.snapshot = published;
-  publishPreparedProviderAuthFacts(owner.input.agentDir, published.providerAuth);
+  // Unbound owners (directory-derived setup probes) have no agent identity to record for.
+  if (owner.input.agentId) {
+    publishPreparedProviderAuthFacts(owner.input.agentId, published.providerAuth);
+  }
   return published;
 }
 

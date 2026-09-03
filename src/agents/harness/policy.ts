@@ -8,7 +8,7 @@ import {
   type EmbeddedAgentRuntime,
   normalizeOptionalAgentRuntimeId,
 } from "../agent-runtime-id.js";
-import { resolveCliRuntimeExecutionProvider } from "../model-runtime-aliases.js";
+import { resolveNativeLoginCliRuntime } from "../model-runtime-aliases.js";
 import { resolveModelRuntimePolicy } from "../model-runtime-policy.js";
 import { resolveOpenAIImplicitAgentRuntime } from "../openai-routing.js";
 
@@ -39,13 +39,11 @@ export function resolveAgentHarnessPolicy(params: AgentHarnessPolicyParams): Age
   if (configured.runtime !== AUTO_AGENT_RUNTIME_ID) {
     return configured;
   }
-  // Credentials chose this runtime, not the provider's default route. Check native
-  // login first so model surfaces can distinguish a logged-in CLI from an unavailable one.
-  const cliRuntime = resolveCliRuntimeExecutionProvider({
+  // A native login chose this runtime, not the provider's default route. The prepared
+  // generation already recorded that fact; reading it here costs no store or directory lookup.
+  const cliRuntime = resolveNativeLoginCliRuntime({
     provider: params.provider ?? "",
-    cfg: params.config,
     agentId: params.agentId,
-    modelId: params.modelId,
   });
   if (cliRuntime) {
     return { runtime: cliRuntime, runtimeSource: "auth" };

@@ -53,13 +53,13 @@ function mockCallArg(mock: { mock: { calls: unknown[][] } }, index = 0, argIndex
 }
 
 describe("codex plugin", () => {
-  it("is opt-in and does not advertise a text provider", () => {
+  it("is enabled by default and owns the OpenAI provider surface", () => {
     const manifest = JSON.parse(
       fs.readFileSync(new URL("./openclaw.plugin.json", import.meta.url), "utf8"),
     ) as { enabledByDefault?: unknown; providers?: unknown };
 
-    expect(manifest.enabledByDefault).toBeUndefined();
-    expect(manifest.providers).toBeUndefined();
+    expect(manifest.enabledByDefault).toBe(true);
+    expect(manifest.providers).toEqual(["openai"]);
   });
 
   it("keeps only Codex sub-plugin policy changes on the live thread-rotation path", () => {

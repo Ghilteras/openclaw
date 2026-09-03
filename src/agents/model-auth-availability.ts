@@ -1007,6 +1007,15 @@ export function createModelAuthAvailabilityResolver(
       return { availability: false, routeResolution };
     }
     if (routeResolution.kind === "indeterminate") {
+      // A logged-in native runtime serves rows that carry no host route facts. Hand the row to
+      // the runtime step unmanaged instead of rejecting it for lacking a host endpoint. An
+      // explicit profile lock still has to resolve against a host route.
+      if (
+        !ref.lockedProfileId?.trim() &&
+        params.preparedProviderAuth?.[provider]?.runtime === routeResolution.defaultRuntimeId
+      ) {
+        return { availability: undefined, routeResolution: null };
+      }
       const rejection = automaticSourceRejection(provider, ref, prepareAuthTarget(provider, ref));
       return { ...(rejection ?? { availability: undefined }), routeResolution };
     }

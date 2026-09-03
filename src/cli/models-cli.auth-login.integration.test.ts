@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../gateway/call.js", () => ({ callGateway: mocks.callGateway }));
 vi.mock("../plugins/setup-registry.js", () => ({
+  resolvePluginSetupCliBackend: () => undefined,
   resolvePluginSetupProviderCore: () => undefined,
   resolvePluginSetupRegistry: () => ({ providers: [] }),
 }));
