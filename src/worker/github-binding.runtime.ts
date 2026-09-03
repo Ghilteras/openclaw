@@ -14,19 +14,23 @@ import type { WorkerGitHubLaunchBinding } from "./launch-descriptor.js";
 
 const log = createSubsystemLogger("worker/github");
 
-async function bindWorkerGitHubCheckout(cwd: string, binding: WorkerGitHubLaunchBinding) {
-  const git = (args: string[]) =>
+async function bindWorkerGitHubCheckout(
+  cwd: string,
+  binding: WorkerGitHubLaunchBinding,
+  baseEnv: NodeJS.ProcessEnv,
+) {
+  const git = (args: string[], timeoutMs = 5_000) =>
     runCommandWithTimeout(["git", "-C", cwd, ...args], {
-      baseEnv: process.env,
-      timeoutMs: 5_000,
-      maxOutputBytes: 2_048,
+      baseEnv,
+      timeoutMs,
+      maxOutputBytes: { stdout: 1_048_576, stderr: 2_048 },
     });
   const requireGit = async (args: string[]) => {
     const result = await git(args);
-    if (result.code !== 0) {
-      throw new Error(result.stderr.trim() || `git ${args[0]} failed`);
+    if (result.code !== 0 || result.stdoutTruncatedBytes) {
+      throw new Error(`git ${args[0]} failed or output was truncated (exit ${result.code})`);
     }
-    return result.stdout.trim();
+    return result.stdout;
   };
   try {
     if ((await git(["rev-parse", "--git-dir"])).code !== 0) {
@@ -46,6 +50,33 @@ async function bindWorkerGitHubCheckout(cwd: string, binding: WorkerGitHubLaunch
       await requireGit(["update-ref", branch, "HEAD"]);
       await requireGit(["symbolic-ref", "HEAD", branch]);
     }
+    // Reconciliation returns files, not commits; origin holds this session's own pushed history.
+    // A fast-forward only adds session commits while preserving reconciled working-tree bytes.
+    // Leave divergence for the agent to resolve.
+    const fetched = await git(["fetch", "--quiet", "origin", binding.branch], 60_000);
+    if (fetched.code !== 0) {
+      if (fetched.stderr.includes("couldn't find remote ref")) {
+        return;
+      }
+      throw new Error(`git fetch failed (exit ${fetched.code})`);
+    }
+    const local = (await requireGit(["rev-parse", "HEAD"])).trim();
+    const remote = (await requireGit(["rev-parse", "FETCH_HEAD"])).trim();
+    if (local === remote) {
+      return;
+    }
+    if ((await git(["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"])).code !== 0) {
+      log.warn(
+        `GitHub checkout fast-forward skipped: ${binding.branch} HEAD=${local.slice(0, 7)} origin=${remote.slice(0, 7)}`,
+      );
+      return;
+    }
+    await requireGit(["reset", "--mixed", "FETCH_HEAD"]);
+    const deleted = (await requireGit(["ls-files", "--deleted", "-z"])).split("\0").filter(Boolean);
+    if (deleted.length > 0) {
+      await requireGit(["--literal-pathspecs", "checkout", "--", ...deleted]);
+    }
+    await requireGit(["update-ref", `refs/remotes/origin/${binding.branch}`, "FETCH_HEAD"]);
   } catch (error) {
     // Checkout metadata helps direct publication; a failure must not discard the coding turn.
     log.warn(`GitHub checkout binding failed: ${String(error).slice(0, 2_048)}`);
@@ -74,7 +105,21 @@ export async function prepareWorkerGitHubEnvironment(params: {
       cause: error,
     });
   }
-  await bindWorkerGitHubCheckout(cwd, binding);
+  const localIdentityEnv = managedGitHubIdentityEnvironment({
+    profileDir,
+    gitAuthor: binding.gitAuthor,
+    // Reset inherited helpers so paired-device credentials cannot override the turn identity.
+    gitConfig: [
+      ["credential.helper", ""],
+      ["credential.helper", "!gh auth git-credential"],
+    ],
+  });
+  await bindWorkerGitHubCheckout(cwd, binding, {
+    ...process.env,
+    ...localIdentityEnv,
+    GH_TOKEN: binding.token,
+    GITHUB_TOKEN: "",
+  });
   if (process.platform === "win32") {
     const permissions = await inspectPathPermissions(profileDir);
     if (
@@ -94,14 +139,6 @@ export async function prepareWorkerGitHubEnvironment(params: {
     managedLocalIdentity: true,
     excludedStoreNames: [],
     credentialScrubEnv: { GH_TOKEN: "", GITHUB_TOKEN: "" },
-    localIdentityEnv: managedGitHubIdentityEnvironment({
-      profileDir,
-      gitAuthor: binding.gitAuthor,
-      // Reset inherited helpers so paired-device credentials cannot override the turn identity.
-      gitConfig: [
-        ["credential.helper", ""],
-        ["credential.helper", "!gh auth git-credential"],
-      ],
-    }),
+    localIdentityEnv,
   };
 }
