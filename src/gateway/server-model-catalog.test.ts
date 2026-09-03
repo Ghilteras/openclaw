@@ -295,7 +295,7 @@ describe("gateway prepared model catalog", () => {
           },
         },
       },
-      providerAuth: { openai: { mode: "api_key" } },
+      providerAuth: { openai: { mode: "api_key" as const } },
     }));
     setPreparedModelRuntimeAuthLoader(candidate, loadAuth);
     stubPublishedOwner(async () => candidate);
