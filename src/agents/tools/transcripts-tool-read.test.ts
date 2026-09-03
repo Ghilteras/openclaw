@@ -88,20 +88,18 @@ describe("transcripts read actions", () => {
         text: expect.stringContaining("Authorized notes"),
       });
 
-      const readSummary = TranscriptsStore.prototype.readSummary;
-      vi.spyOn(TranscriptsStore.prototype, "readSummary").mockImplementationOnce(
-        async function (this: TranscriptsStore, row) {
-          await store.writeSession({
-            ...session,
-            source: { providerId: "voice", guildId: "other" },
-          });
-          await store.writeSummary(
-            summarizeTranscripts({ session, utterances: [{ text: "Other guild notes" }] }),
-            session,
-          );
-          return readSummary.call(this, row);
-        },
-      );
+      const readSummary = store.readSummary.bind(store);
+      vi.spyOn(TranscriptsStore.prototype, "readSummary").mockImplementationOnce(async (row) => {
+        await store.writeSession({
+          ...session,
+          source: { providerId: "voice", guildId: "other" },
+        });
+        await store.writeSummary(
+          summarizeTranscripts({ session, utterances: [{ text: "Other guild notes" }] }),
+          session,
+        );
+        return readSummary(row);
+      });
       const shown = await run(params, true);
       expect(shown.details).toMatchObject({ sessionId: "meeting", skipped: true });
       expect(JSON.stringify(shown)).not.toContain("Other guild notes");

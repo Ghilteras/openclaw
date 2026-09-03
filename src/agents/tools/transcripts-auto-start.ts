@@ -295,13 +295,12 @@ export function createTranscriptsAutoStartService(ctx: TranscriptsRuntimeContext
           ) {
             candidate.session = recent;
           } else {
-            candidate = {
-              session: {
-                sessionId: createTranscriptSessionId(),
-                source: sanitizeTranscriptSourceLocator(source),
-                startedAt: new Date(now).toISOString(),
-                stoppedAt: new Date(now).toISOString(),
-              },
+            candidate = {};
+            candidate.session = {
+              sessionId: createTranscriptSessionId(),
+              source: sanitizeTranscriptSourceLocator(source),
+              startedAt: new Date(now).toISOString(),
+              stoppedAt: new Date(now).toISOString(),
             };
           }
           const owned = {

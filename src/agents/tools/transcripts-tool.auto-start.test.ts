@@ -97,7 +97,7 @@ describe("transcripts auto-start stop reporting", () => {
           release.resolve();
           await stopping;
           await vi.waitFor(() => {
-            expect(stop.mock.calls.map(([request]) => request.sessionId)).toEqual([
+            expect(stop.mock.calls.map(([stopRequest]) => stopRequest.sessionId)).toEqual([
               sessionId,
               sessionId,
             ]);
