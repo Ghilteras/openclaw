@@ -518,10 +518,7 @@ async function compactCodexNativeThread(
       recovery: "missing_thread_binding",
     });
   }
-  if (
-    options.expectedBinding &&
-    !isDeepStrictEqual(initialBinding, options.expectedBinding)
-  ) {
+  if (options.expectedBinding && !isDeepStrictEqual(initialBinding, options.expectedBinding)) {
     return skippedCodexNativeCompactionResult(params, {
       reason: "codex app-server binding changed before native compaction",
       code: "binding_changed_before_native_compaction",
@@ -1131,7 +1128,9 @@ async function mutateExactNativeCompactionBinding(
     if (!readExactNativeCompactionBinding(bindingStore, identity, expectedBinding)) {
       return undefined;
     }
-    return (await bindingStore.mutate(identity, mutation)) ? bindingStore.read(identity) : undefined;
+    return (await bindingStore.mutate(identity, mutation))
+      ? bindingStore.read(identity)
+      : undefined;
   });
 }
 
@@ -1149,9 +1148,7 @@ function isCodexThreadNotFoundError(error: unknown): boolean {
   // Both app-server messages use generic INVALID_REQUEST (-32600), so their
   // text is the authoritative self-heal signal rather than the error code.
   const message = coerceErrorMessage(error).toLowerCase();
-  return (
-    message.includes("thread not found") || message.includes("no rollout found for thread id")
-  );
+  return message.includes("thread not found") || message.includes("no rollout found for thread id");
 }
 
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
