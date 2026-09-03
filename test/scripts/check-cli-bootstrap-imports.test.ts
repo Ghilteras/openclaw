@@ -197,7 +197,7 @@ describe("check-cli-bootstrap-imports", () => {
           workerDeployEntrypoints: contract === "default" ? undefined : workerDeployEntrypoints,
         }),
       ).toEqual(
-        contract === "two"
+        contract !== "three"
           ? []
           : [
               "Worker deploy artifact dist/worker/github-exec-launcher.mjs is missing. Run pnpm build first.",
