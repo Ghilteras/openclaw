@@ -174,12 +174,14 @@ async function projectChild(params: {
   expect(response).toMatchObject({ status: 200, body: { ok: true } });
 }
 
-async function readAcpTraceMethods(tracePath: string): Promise<string[]> {
+type AcpFixtureTraceEntry = { method: string; turnId?: string };
+
+async function readAcpTrace(tracePath: string): Promise<AcpFixtureTraceEntry[]> {
   return (await fs.readFile(tracePath, "utf8"))
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((line) => (JSON.parse(line) as { method: string }).method);
+    .map((line) => JSON.parse(line) as AcpFixtureTraceEntry);
 }
 
 describe("webhooks TaskFlow child cancellation authority", () => {
@@ -549,7 +551,9 @@ describe("webhooks TaskFlow child cancellation authority", () => {
             });
             expect(getTaskFlowById(acpReplacementFlowId)).toMatchObject({ status: "queued" });
             expect(getTaskFlowById(acpReplacementFlowId)?.cancelRequestedAt).toBeUndefined();
-            acpxMethodsBeforeRelease = await readAcpTraceMethods(acpxTracePath);
+            acpxMethodsBeforeRelease = (await readAcpTrace(acpxTracePath)).map(
+              (entry) => entry.method,
+            );
             expect(acpxMethodsBeforeRelease).toContain("turn/start");
             expect(acpxMethodsBeforeRelease).not.toContain("turn/interrupt");
           } finally {
@@ -619,8 +623,8 @@ describe("webhooks TaskFlow child cancellation authority", () => {
             childSessionKey: queuedAcpChild,
             runId: queuedAcpRunId,
           });
-          const interruptsBeforeQueuedCancel = (await readAcpTraceMethods(acpxTracePath)).filter(
-            (method) => method === "turn/interrupt",
+          const interruptsBeforeQueuedCancel = (await readAcpTrace(acpxTracePath)).filter(
+            (entry) => entry.method === "turn/interrupt",
           ).length;
           const queuedSuccessorEntered = createDeferred();
           const releaseQueuedSuccessor = createDeferred();
@@ -649,8 +653,8 @@ describe("webhooks TaskFlow child cancellation authority", () => {
           });
           await vi.waitFor(
             async () => {
-              const interruptCount = (await readAcpTraceMethods(acpxTracePath)).filter(
-                (method) => method === "turn/interrupt",
+              const interruptCount = (await readAcpTrace(acpxTracePath)).filter(
+                (entry) => entry.method === "turn/interrupt",
               ).length;
               expect(interruptCount - interruptsBeforeQueuedCancel).toBeGreaterThan(0);
             },
@@ -658,10 +662,13 @@ describe("webhooks TaskFlow child cancellation authority", () => {
           );
           const queuedCancel = await queuedCancelPromise;
           expect(queuedCancel).toMatchObject({ status: 200, body: { ok: true } });
-          const interruptsAfterTargetCancel = (await readAcpTraceMethods(acpxTracePath)).filter(
-            (method) => method === "turn/interrupt",
-          ).length;
-          expect(interruptsAfterTargetCancel - interruptsBeforeQueuedCancel).toBe(1);
+          const interruptsAfterTargetCancel = (await readAcpTrace(acpxTracePath)).filter(
+            (entry) => entry.method === "turn/interrupt",
+          );
+          const targetInterrupts = interruptsAfterTargetCancel.slice(interruptsBeforeQueuedCancel);
+          const targetTurnId = targetInterrupts.at(0)?.turnId;
+          expect(targetTurnId).toEqual(expect.any(String));
+          expect(targetInterrupts.every((entry) => entry.turnId === targetTurnId)).toBe(true);
           await queuedTargetTurn;
           expect(queuedTargetEvents.at(-1)).toEqual({
             type: "done",
@@ -670,10 +677,10 @@ describe("webhooks TaskFlow child cancellation authority", () => {
           });
           await queuedSuccessorEntered.promise;
           expect(queuedTurnOrder).toEqual(["target-cancelled", "successor-entered"]);
-          const interruptsWhileSuccessorActive = (await readAcpTraceMethods(acpxTracePath)).filter(
-            (method) => method === "turn/interrupt",
-          ).length;
-          expect(interruptsWhileSuccessorActive - interruptsAfterTargetCancel).toBe(0);
+          const successorTurnId = (await readAcpTrace(acpxTracePath)).findLast(
+            (entry) => entry.method === "turn/start",
+          )?.turnId;
+          expect(successorTurnId).toEqual(expect.any(String));
           releaseQueuedSuccessor.resolve();
           await queuedSuccessorTurn;
           expect(queuedSuccessorEvents.at(-1)).toEqual({
@@ -690,6 +697,13 @@ describe("webhooks TaskFlow child cancellation authority", () => {
                   event.stopReason === "cancelled"),
             ),
           ).toHaveLength(0);
+          const interruptsAfterSuccessor = (await readAcpTrace(acpxTracePath)).filter(
+            (entry) => entry.method === "turn/interrupt",
+          );
+          const successorInterrupts = interruptsAfterSuccessor.filter(
+            (entry) => entry.turnId === successorTurnId,
+          );
+          expect(successorInterrupts).toHaveLength(0);
 
           console.info(
             "webhooks-taskflow-authority-proof",
@@ -728,9 +742,9 @@ describe("webhooks TaskFlow child cancellation authority", () => {
               acpQueuedSuccessor: {
                 transport: "process",
                 httpStatus: queuedCancel.status,
-                targetInterruptRequests: interruptsAfterTargetCancel - interruptsBeforeQueuedCancel,
-                successorInterruptRequests:
-                  interruptsWhileSuccessorActive - interruptsAfterTargetCancel,
+                targetInterruptRequests:
+                  interruptsAfterSuccessor.length - interruptsBeforeQueuedCancel,
+                successorInterruptRequests: successorInterrupts.length,
                 successorStatus: "completed",
               },
             }),

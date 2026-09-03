@@ -7,10 +7,11 @@ let nextTurnId = 1;
 const pending = new Map();
 const tracePath = process.env.OPENCLAW_ACPX_PROCESS_FIXTURE_TRACE;
 let activeTurn = null;
+const afterResponseCallback = Symbol("afterResponseCallback");
 
-function trace(method) {
+function trace(method, params) {
   if (tracePath) {
-    fs.appendFileSync(tracePath, `${JSON.stringify({ method })}\n`, "utf8");
+    fs.appendFileSync(tracePath, `${JSON.stringify({ method, turnId: params.turnId })}\n`, "utf8");
   }
 }
 
@@ -37,6 +38,18 @@ function invalidRequest(message) {
   return error;
 }
 
+function deferUntilAfterResponse(result, callback) {
+  let pendingCallback = callback;
+  return {
+    result,
+    [afterResponseCallback]() {
+      const consume = pendingCallback;
+      pendingCallback = null;
+      consume?.();
+    },
+  };
+}
+
 const model = {
   id: "gpt-5.6-luna",
   model: "gpt-5.6-luna",
@@ -50,7 +63,9 @@ const model = {
 };
 
 async function handle(method, params) {
-  trace(method);
+  if (method !== "turn/start") {
+    trace(method, params);
+  }
   if (method === "initialize") {
     return { userAgent: "openclaw-acpx-process-fixture", codexHome: process.cwd() };
   }
@@ -80,6 +95,7 @@ async function handle(method, params) {
       throw invalidRequest("a turn is already active");
     }
     const turnId = `turn-process-${nextTurnId++}`;
+    trace(method, { turnId });
     const turn = { id: turnId, items: [], status: "inProgress", error: null };
     const state = {
       threadId: params.threadId,
@@ -156,11 +172,12 @@ async function handle(method, params) {
       pending.delete(pendingElicitationRequestId);
       waiter?.resolve(undefined);
     }
-    notify("turn/completed", {
-      threadId: state.threadId,
-      turn: interruptedTurn,
+    return deferUntilAfterResponse({}, () => {
+      notify("turn/completed", {
+        threadId: state.threadId,
+        turn: interruptedTurn,
+      });
     });
-    return {};
   }
   if (["thread/unsubscribe", "thread/archive"].includes(method)) {
     return {};
@@ -189,7 +206,11 @@ readline.createInterface({ input: process.stdin }).on("line", async (line) => {
     return;
   }
   try {
-    write({ id: message.id, result: await handle(message.method, message.params ?? {}) });
+    const handled = await handle(message.method, message.params ?? {});
+    const afterResponse = handled?.[afterResponseCallback];
+    const result = afterResponse ? handled.result : handled;
+    write({ id: message.id, result });
+    afterResponse?.();
   } catch (error) {
     const code =
       error && typeof error === "object" && "code" in error && Number.isInteger(error.code)
