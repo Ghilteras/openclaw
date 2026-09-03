@@ -43,7 +43,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-unloadable-create-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     try {
       const result = await runSkillCollectionReviewForAgent({
         config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
@@ -67,7 +67,7 @@ describe("skill collection review boundary", () => {
           "Skill collection review completed with errors: security scan rejected malformed/SKILL.md",
       });
       await expect(fs.access(path.join(skillsRoot, "malformed"))).rejects.toThrow();
-      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })[0]).toMatchObject({
         kept: [],
         written: [],
         dropped: [],
@@ -82,7 +82,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-duplicate-name-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     try {
       await writeDeclaredSkill(skillsRoot, "first", "shared", "Shared procedure", "# First\n");
       await writeDeclaredSkill(skillsRoot, "second", "shared", "Shared procedure", "# Second\n");
@@ -121,7 +121,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-unsafe-support-create-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     try {
       await writeSkill(skillsRoot, "procedure", "Procedure", "# Before\n");
       const result = await runSkillCollectionReviewForAgent({
@@ -148,7 +148,7 @@ describe("skill collection review boundary", () => {
         fs.readFile(path.join(skillsRoot, "procedure", "SKILL.md"), "utf8"),
       ).resolves.toContain("# Before");
       await expect(fs.access(path.join(skillsRoot, "procedure", "scripts"))).rejects.toThrow();
-      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })[0]).toMatchObject({
         kept: ["procedure"],
         written: [],
       });
@@ -162,7 +162,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-unsafe-support-change-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const supportFile = path.join(skillsRoot, "procedure", "references", "notes.md");
     try {
       await writeSkill(skillsRoot, "procedure", "Procedure", "# Before\n");
@@ -188,7 +188,7 @@ describe("skill collection review boundary", () => {
           "Skill collection review completed with errors: security scan rejected procedure/references/notes.md",
       });
       await expect(fs.readFile(supportFile, "utf8")).resolves.toBe("Safe notes.\n");
-      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })[0]).toMatchObject({
         kept: ["procedure"],
         written: [],
       });
@@ -202,7 +202,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-safe-support-change-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const supportFile = path.join(skillsRoot, "procedure", "references", "notes.md");
     try {
       await writeSkill(skillsRoot, "procedure", "Procedure", "# Procedure\n");
@@ -221,7 +221,7 @@ describe("skill collection review boundary", () => {
 
       expect(result.status).toBe("ok");
       await expect(fs.readFile(supportFile, "utf8")).resolves.toBe("After notes.\n");
-      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })[0]).toMatchObject({
         kept: [],
         written: ["procedure"],
       });
@@ -235,7 +235,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-unsafe-root-file-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const rootFile = path.join(skillsRoot, "unsafe.md");
     try {
       await writeSkill(skillsRoot, "procedure", "Procedure", "# Before\n");
@@ -269,7 +269,7 @@ describe("skill collection review boundary", () => {
       prefix: "openclaw-skill-collection-review-root-skill-",
     });
     const workspaceDir = await tempDirs.make("openclaw-skill-collection-review-root-skill-");
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const rootSkill = path.join(skillsRoot, "SKILL.md");
     const realSkill = path.join(skillsRoot, "real", "SKILL.md");
     try {
@@ -293,23 +293,32 @@ describe("skill collection review boundary", () => {
       });
 
       expect(result.status).toBe("ok");
-      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })[0]).toMatchObject({
         written: ["real"],
         dropped: [],
       });
       const backupId = await latestCommittedBackupId(
-        resolveSkillCollectionBackupRoot(testState.env),
+        resolveSkillCollectionBackupRoot({}, "main", testState.env),
       );
       expect(backupId).toBeDefined();
       if (backupId) {
         const manifest = await fs.readFile(
-          path.join(resolveSkillCollectionBackupRoot(testState.env), backupId, "manifest.json"),
+          path.join(
+            resolveSkillCollectionBackupRoot({}, "main", testState.env),
+            backupId,
+            "manifest.json",
+          ),
           "utf8",
         );
         expect(manifest).not.toContain('"."');
       }
       await expect(
-        restoreLatestSkillCollectionBackup({ workspaceDir, env: testState.env }),
+        restoreLatestSkillCollectionBackup({
+          workspaceDir,
+          config: {},
+          agentId: "main",
+          env: testState.env,
+        }),
       ).resolves.toMatchObject({ restored: ["real"] });
       await expect(fs.readFile(realSkill, "utf8")).resolves.toContain("# Before");
     } finally {
@@ -323,7 +332,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-unloadable-existing-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     try {
       await writeSkill(skillsRoot, "procedure", "Procedure", "# Before\n");
       const result = await runSkillCollectionReviewForAgent({
@@ -347,7 +356,7 @@ describe("skill collection review boundary", () => {
       await expect(
         fs.readFile(path.join(skillsRoot, "procedure", "SKILL.md"), "utf8"),
       ).resolves.toContain("# Before");
-      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })[0]).toMatchObject({
         kept: ["procedure"],
         written: [],
         dropped: [],
@@ -362,7 +371,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-removed-unloadable-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const unloadableDir = path.join(skillsRoot, "unloadable");
     const unloadableFile = path.join(unloadableDir, "SKILL.md");
     try {
@@ -395,7 +404,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-oversized-file-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const oversizedFile = path.join(skillsRoot, "new-file.txt");
     try {
       await writeSkill(skillsRoot, "procedure", "Procedure", "# Before\n");
@@ -415,7 +424,7 @@ describe("skill collection review boundary", () => {
       await expect(
         fs.readFile(path.join(skillsRoot, "procedure", "SKILL.md"), "utf8"),
       ).resolves.toContain("# Before");
-      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.workshop).toEqual(
+      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.main).toEqual(
         expect.objectContaining({ error: expect.any(String) }),
       );
     } finally {
@@ -429,7 +438,7 @@ describe("skill collection review boundary", () => {
       prefix: "openclaw-skill-collection-review-boundary-",
     });
     const workspaceDir = await tempDirs.make("openclaw-skill-collection-review-workspace-");
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const config: OpenClawConfig = {
       skills: { workshop: { autonomous: { mode: "auto" } } },
     };
@@ -512,7 +521,7 @@ describe("skill collection review boundary", () => {
         "Skill collection review completed with errors: security scan rejected unsafe/SKILL.md",
       );
       expect(getSkillsSnapshotVersion()).toBeGreaterThan(beforeVersion);
-      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })[0]).toMatchObject({
         kept: ["keep", "unsafe"],
         written: ["added", "rewrite"],
         dropped: [
@@ -526,6 +535,8 @@ describe("skill collection review boundary", () => {
 
       const restored = await restoreLatestSkillCollectionBackup({
         workspaceDir,
+        config: {},
+        agentId: "main",
         env: testState.env,
       });
       expect(restored.restored).toContain("drop");
@@ -547,7 +558,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-error-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const skillFile = path.join(skillsRoot, "partial", "SKILL.md");
     const job = {
       id: "skill-review-error",
@@ -586,15 +597,15 @@ describe("skill collection review boundary", () => {
         status: "error",
         error: "Skill collection review failed: turn failed",
       });
-      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })[0]).toMatchObject({
         written: ["added", "partial"],
         dropped: [{ name: "removed" }],
       });
-      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.workshop).toEqual(
+      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.main).toEqual(
         expect.objectContaining({ error: "Skill collection review failed: turn failed" }),
       );
       expect(
-        readSkillReviewOutcomes({ env: testState.env }).collectionReviews.workshop,
+        readSkillReviewOutcomes({ env: testState.env }).collectionReviews.main,
       ).not.toHaveProperty("succeededAtMs");
       expect(dispatchCommittedSkillChangeBestEffort).toHaveBeenCalledWith(
         expect.objectContaining({ action: "updated" }),
@@ -613,7 +624,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-sandbox-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const beforeVersion = getSkillsSnapshotVersion();
     const job = {
       id: "skill-review-sandbox",
@@ -642,13 +653,13 @@ describe("skill collection review boundary", () => {
       });
 
       expect(result.status).toBe("error");
-      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.workshop).toEqual(
+      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.main).toEqual(
         expect.objectContaining({
           error: "sandbox workspace is not read-write; collection review skipped",
         }),
       );
       expect(getSkillsSnapshotVersion()).toBe(beforeVersion);
-      expect(listSkillCollectionReviewOutcomes({ env: testState.env })).toEqual([]);
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })).toEqual([]);
     } finally {
       await testState.cleanup();
       await tempDirs.cleanup();
@@ -660,7 +671,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-runtime-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const error =
       "collection review requires the embedded agent runtime; the configured CLI runtime cannot be rooted at the Workshop directory";
     try {
@@ -673,10 +684,10 @@ describe("skill collection review boundary", () => {
         runTurn: async () => ({ status: "ok", summary: "reviewed", outputText: "" }),
       });
       expect(firstReview.status).toBe("ok");
-      const backupRoot = resolveSkillCollectionBackupRoot(testState.env);
+      const backupRoot = resolveSkillCollectionBackupRoot({}, "main", testState.env);
       const backupEntriesBefore = await fs.readdir(backupRoot);
       const backupIdBefore = await latestCommittedBackupId(backupRoot);
-      const historyBefore = listSkillCollectionReviewOutcomes({ env: testState.env });
+      const historyBefore = listSkillCollectionReviewOutcomes("main", { env: testState.env });
       const versionBefore = getSkillsSnapshotVersion();
       const result = await runSkillCollectionReviewForAgent({
         config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
@@ -692,11 +703,11 @@ describe("skill collection review boundary", () => {
       });
 
       expect(result).toMatchObject({ status: "error", error, summary: error });
-      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.workshop).toEqual(
+      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.main).toEqual(
         expect.objectContaining({ error }),
       );
       expect(getSkillsSnapshotVersion()).toBe(versionBefore);
-      expect(listSkillCollectionReviewOutcomes({ env: testState.env })).toHaveLength(
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })).toHaveLength(
         historyBefore.length,
       );
       expect(await latestCommittedBackupId(backupRoot)).toBe(backupIdBefore);
@@ -717,7 +728,7 @@ describe("skill collection review boundary", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-runtime-edits-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const criticalFile = path.join(skillsRoot, "critical", "SKILL.md");
     const benignFile = path.join(skillsRoot, "benign", "SKILL.md");
     const error = "collection review runtime rejected after starting";
@@ -757,15 +768,15 @@ describe("skill collection review boundary", () => {
       });
       await expect(fs.readFile(criticalFile, "utf8")).resolves.toContain("# Before critical");
       await expect(fs.readFile(benignFile, "utf8")).resolves.toContain("# After benign");
-      expect(listSkillCollectionReviewOutcomes({ env: testState.env })[0]).toMatchObject({
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })[0]).toMatchObject({
         kept: ["critical"],
         written: ["benign"],
         dropped: [],
       });
-      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.workshop).toEqual(
+      expect(readSkillReviewOutcomes({ env: testState.env }).collectionReviews.main).toEqual(
         expect.objectContaining({ error: expectedError }),
       );
-      const backupRoot = resolveSkillCollectionBackupRoot(testState.env);
+      const backupRoot = resolveSkillCollectionBackupRoot({}, "main", testState.env);
       const backupId = await latestCommittedBackupId(backupRoot);
       expect(backupId).toBeDefined();
       if (backupId) {

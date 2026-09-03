@@ -30,7 +30,7 @@ describe("skill collection restore", () => {
       prefix: "openclaw-skill-collection-restore-state-",
     });
     const workspaceDir = await tempDirs.make("openclaw-skill-collection-restore-");
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const skillFile = path.join(skillsRoot, "procedure", "SKILL.md");
     const job = {
       id: "skill-review",
@@ -68,7 +68,12 @@ describe("skill collection restore", () => {
       await fs.appendFile(skillFile, "\nOperator edit.\n");
 
       await expect(
-        restoreLatestSkillCollectionBackup({ workspaceDir, env: testState.env }),
+        restoreLatestSkillCollectionBackup({
+          workspaceDir,
+          config: {},
+          agentId: "main",
+          env: testState.env,
+        }),
       ).rejects.toThrow("changed after cleanup");
       await expect(fs.readFile(skillFile, "utf8")).resolves.toContain("Operator edit.");
     } finally {
@@ -83,7 +88,7 @@ describe("skill collection restore", () => {
       prefix: "openclaw-skill-collection-restore-hooks-",
     });
     const workspaceDir = await tempDirs.make("openclaw-skill-collection-restore-hooks-");
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const skillFile = path.join(skillsRoot, "procedure", "SKILL.md");
     const job = {
       id: "skill-review-hooks",
@@ -125,7 +130,12 @@ describe("skill collection restore", () => {
         "---\nname: late\ndescription: Late procedure\n---\n\n# Late\n",
       );
 
-      await restoreLatestSkillCollectionBackup({ workspaceDir, env: testState.env });
+      await restoreLatestSkillCollectionBackup({
+        workspaceDir,
+        config: {},
+        agentId: "main",
+        env: testState.env,
+      });
 
       await expect(fs.access(path.join(skillsRoot, "late", "SKILL.md"))).resolves.toBeUndefined();
       expect(dispatchCommittedSkillChangeBestEffort).toHaveBeenCalledWith(

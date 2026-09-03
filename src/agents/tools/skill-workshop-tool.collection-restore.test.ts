@@ -51,7 +51,12 @@ describe("skill_workshop collection restore", () => {
         },
       });
 
-      const tool = createSkillWorkshopTool({ config, workspaceDir, env: testState.env });
+      const tool = createSkillWorkshopTool({
+        workspaceDir,
+        config,
+        agentId: "main",
+        env: testState.env,
+      });
       await tool.execute("restore", { action: "restore_collection" });
       await expect(fs.readFile(skillFile, "utf8")).resolves.toContain("# Original");
     } finally {

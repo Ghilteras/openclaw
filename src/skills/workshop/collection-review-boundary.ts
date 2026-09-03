@@ -68,8 +68,8 @@ export async function runSkillCollectionReviewForAgent(params: {
   if (params.config.skills?.workshop?.autonomous?.mode !== "auto") {
     return { status: "skipped", summary: "skill collection review disabled" };
   }
-  const skillsRoot = resolveWorkshopSkillsDir(params.env);
-  const stateOptions = params.env ? { env: params.env } : {};
+  const skillsRoot = resolveWorkshopSkillsDir(params.config, params.agentId, params.env);
+  const stateOptions = { agentId: params.agentId, ...(params.env ? { env: params.env } : {}) };
   const assertCurrent = (lease: { assertOwned: () => void }) => {
     lease.assertOwned();
     params.abortSignal?.throwIfAborted();
@@ -78,18 +78,20 @@ export async function runSkillCollectionReviewForAgent(params: {
     const commit: ReviewCommit = await withSkillCollectionLock(async (lease) => {
       const attemptedAtMs = Date.now();
       assertCurrent(lease);
-      recordSkillCollectionReviewStatus({ attemptedAtMs }, stateOptions);
+      recordSkillCollectionReviewStatus(params.agentId, { attemptedAtMs }, stateOptions);
       assertCurrent(lease);
       await fs.mkdir(skillsRoot, { recursive: true });
-      const before = await resolveReviewSkills(params.config, params.env);
+      const before = await resolveReviewSkills(params.config, params.agentId, params.env);
       const beforeFiles = await snapshotWorkshopSkillFiles(skillsRoot).catch((error: unknown) => {
         assertCurrent(lease);
-        recordSkillCollectionReviewStatus({ attemptedAtMs, error }, stateOptions);
+        recordSkillCollectionReviewStatus(params.agentId, { attemptedAtMs, error }, stateOptions);
         throw error;
       });
       const backup = await createCollectionBackup({
         skillsRoot,
         skillDirs: before.map((skill) => path.relative(skillsRoot, skill.baseDir)),
+        config: params.config,
+        agentId: params.agentId,
         env: params.env,
       });
       const shouldDispatch = hasCommittedSkillChangeHooks();
@@ -109,7 +111,12 @@ export async function runSkillCollectionReviewForAgent(params: {
       }
       try {
         assertCurrent(lease);
-        const message = buildCollectionReviewPrompt(before, params.env);
+        const message = buildCollectionReviewPrompt(
+          before,
+          params.config,
+          params.agentId,
+          params.env,
+        );
         const turnResult = await params.runTurn({
           job: {
             ...params.job,
@@ -142,7 +149,7 @@ export async function runSkillCollectionReviewForAgent(params: {
           beforeLoadedDirs,
           resolveAfterLoadedDirs: async () =>
             new Set(
-              (await resolveReviewSkills(params.config, params.env)).map((skill) =>
+              (await resolveReviewSkills(params.config, params.agentId, params.env)).map((skill) =>
                 path.relative(skillsRoot, skill.baseDir),
               ),
             ),
@@ -159,7 +166,11 @@ export async function runSkillCollectionReviewForAgent(params: {
                 afterFiles.get(relativePath)?.contentHash === file.contentHash,
             );
           if (unchanged) {
-            recordSkillCollectionReviewStatus({ attemptedAtMs, error }, stateOptions);
+            recordSkillCollectionReviewStatus(
+              params.agentId,
+              { attemptedAtMs, error },
+              stateOptions,
+            );
             await discardPendingCollectionBackup(backup);
             return {
               result: { ...turnResult, status: "error", error, summary: error },
@@ -170,7 +181,7 @@ export async function runSkillCollectionReviewForAgent(params: {
         const dropReasons = parseDropReasons(turnResult.outputText);
         const beforeByName = new Map(before.map((skill) => [skill.name, skill]));
         assertCurrent(lease);
-        const finalSkills = await resolveReviewSkills(params.config, params.env);
+        const finalSkills = await resolveReviewSkills(params.config, params.agentId, params.env);
         const finalByName = new Map(finalSkills.map((skill) => [skill.name, skill]));
         const result: SkillCollectionReviewResult = {
           backupId: backup.manifest.id,
@@ -199,7 +210,7 @@ export async function runSkillCollectionReviewForAgent(params: {
         assertCurrent(lease);
         bumpSkillsSnapshotVersion({ reason: "workshop" });
         assertCurrent(lease);
-        recordSkillCollectionReviewHistory(Date.now(), result, stateOptions);
+        recordSkillCollectionReviewHistory(params.agentId, Date.now(), result, stateOptions);
         assertCurrent(lease);
         await pruneOlderSkillCollectionBackups(backup.backupRoot, backup.manifest.id);
         assertCurrent(lease);
@@ -223,7 +234,7 @@ export async function runSkillCollectionReviewForAgent(params: {
           const error = turnError
             ? `Skill collection review failed: ${turnError}${scanError ? `; ${scanError}` : ""}`
             : scanError;
-          recordSkillCollectionReviewStatus({ attemptedAtMs, error }, stateOptions);
+          recordSkillCollectionReviewStatus(params.agentId, { attemptedAtMs, error }, stateOptions);
           return {
             result: { ...turnResult, status: "error", error, summary: error },
             changes: shouldDispatch
@@ -237,6 +248,7 @@ export async function runSkillCollectionReviewForAgent(params: {
           };
         }
         recordSkillCollectionReviewStatus(
+          params.agentId,
           { attemptedAtMs, succeededAtMs: Date.now() },
           stateOptions,
         );
@@ -253,7 +265,7 @@ export async function runSkillCollectionReviewForAgent(params: {
         };
       } catch (error) {
         assertCurrent(lease);
-        recordSkillCollectionReviewStatus({ attemptedAtMs, error }, stateOptions);
+        recordSkillCollectionReviewStatus(params.agentId, { attemptedAtMs, error }, stateOptions);
         await discardPendingCollectionBackup(backup);
         throw error;
       }
@@ -306,9 +318,14 @@ async function collectReviewChanges(params: {
 
 async function resolveReviewSkills(
   config: OpenClawConfig,
+  agentId: string,
   env?: NodeJS.ProcessEnv,
 ): Promise<Array<ReviewSkill & { treeHash: string }>> {
-  const skills = listWritableWorkshopSkillSummaries({ config: resolveReviewConfig(config), env });
+  const skills = listWritableWorkshopSkillSummaries({
+    config: resolveReviewConfig(config),
+    agentId,
+    env,
+  });
   const hashes = await Promise.all(
     skills.map(async (skill) => await readSkillProposalTargetTreeSha256(skill.baseDir)),
   );

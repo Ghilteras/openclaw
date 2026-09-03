@@ -11,7 +11,7 @@ describe("buildCollectionReviewPrompt", () => {
       layout: "state-only",
       prefix: "openclaw-skill-collection-review-prompt-",
     });
-    const skillsRoot = resolveWorkshopSkillsDir(testState.env);
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
     const skills = Array.from({ length: 201 }, (_, index) => ({
       name: index === 200 ? "x".repeat(200) : `skill-${index}`,
       filePath: path.join(skillsRoot, `skill-${index}`, "SKILL.md"),
@@ -38,7 +38,7 @@ describe("buildCollectionReviewPrompt", () => {
     }
 
     try {
-      const prompt = buildCollectionReviewPrompt(skills, testState.env);
+      const prompt = buildCollectionReviewPrompt(skills, {}, "main", testState.env);
       const usageLines = prompt.split("\n").filter((line) => /^.+ \d+ \d+$/u.test(line));
 
       expect(prompt).toContain(`Workshop directory: ${skillsRoot}`);

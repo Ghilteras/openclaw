@@ -53,7 +53,7 @@ export function listWritableWorkshopSkillSummaries(
     config: options.config,
     ignoreRootSkill: true,
   });
-  const skillsRoot = path.resolve(resolveWorkshopSkillsDir(options.env));
+  const skillsRoot = path.resolve(workshopSkillsDir(options));
   return records
     .filter(({ skill }) => path.resolve(skill.baseDir) !== skillsRoot)
     .map(({ skill }) => ({

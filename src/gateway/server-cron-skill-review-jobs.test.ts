@@ -69,7 +69,7 @@ describe("reconcileSkillCollectionReviewJobs", () => {
       payload: {
         kind: "agentTurn",
         message:
-          "Review the global Skill Workshop collection. Work only inside the Workshop directory provided for this turn.",
+          "Review the Skill Workshop collection for this agent. Work only inside this agent's Workshop directory.",
       },
     });
     expect(add.mock.calls[0]?.[1]).toMatchObject({

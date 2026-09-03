@@ -1,5 +1,6 @@
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { canonicalizePath } from "../../agents/utils/paths.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { readSkillUsageByFile } from "./curator.js";
 import { resolveWorkshopSkillsDir } from "./skills-root.js";
 
@@ -8,6 +9,8 @@ const MAX_USAGE_NAME_LENGTH = 80;
 
 export function buildCollectionReviewPrompt(
   skills: readonly { name: string; description?: string; filePath: string }[],
+  config: OpenClawConfig,
+  agentId: string,
   env?: NodeJS.ProcessEnv,
 ): string {
   const usageBySkillFile = readSkillUsageByFile(
@@ -26,7 +29,7 @@ export function buildCollectionReviewPrompt(
     );
   const visibleUsageRows = usageRows.slice(0, MAX_USAGE_ROWS);
   return [
-    `Workshop directory: ${resolveWorkshopSkillsDir(env)}`,
+    `Workshop directory: ${resolveWorkshopSkillsDir(config, agentId, env)}`,
     `Total skills: ${skills.length}`,
     "List the Workshop directory for the full inventory before reviewing.",
     "Review the Skill Workshop collection in this scheduled isolated turn.",

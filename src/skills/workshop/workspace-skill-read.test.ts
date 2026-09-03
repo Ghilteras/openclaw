@@ -39,13 +39,15 @@ async function writeSkill(dir: string, name: string, body = ""): Promise<void> {
 
 describe("listWritableWorkshopSkillSummaries", () => {
   it("ignores a SKILL.md placed directly in the Workshop root", async () => {
-    const workshopDir = resolveWorkshopSkillsDir(testState.env);
+    const workshopDir = resolveWorkshopSkillsDir({}, "main", testState.env);
     await fs.mkdir(workshopDir, { recursive: true });
     await fs.writeFile(path.join(workshopDir, "SKILL.md"), "# Root skill\n");
     await writeSkill(path.join(workshopDir, "real"), "real");
 
     expect(
-      listWritableWorkshopSkillSummaries({ env: testState.env }).map((skill) => skill.name),
+      listWritableWorkshopSkillSummaries({ config: {}, agentId: "main", env: testState.env }).map(
+        (skill) => skill.name,
+      ),
     ).toEqual(["real"]);
   });
 

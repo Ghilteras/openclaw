@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { removePathWithinRoot } from "../../infra/fs-safe-remove.js";
 import { pathExists } from "../../infra/fs-safe.js";
 import { isPathStrictlyInside } from "../../infra/path-guards.js";
@@ -22,6 +23,8 @@ export type CollectionBackupManifest = {
 export async function createCollectionBackup(params: {
   skillsRoot: string;
   skillDirs: readonly string[];
+  config: OpenClawConfig;
+  agentId: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<{
   backupDir: string;
@@ -29,7 +32,7 @@ export async function createCollectionBackup(params: {
   backupRoot: string;
   manifest: CollectionBackupManifest;
 }> {
-  const backupRoot = resolveSkillCollectionBackupRoot(params.env);
+  const backupRoot = resolveSkillCollectionBackupRoot(params.config, params.agentId, params.env);
   const id = `${new Date().toISOString().replaceAll(":", "-")}-${randomUUID().slice(0, 8)}`;
   const backupDir = path.join(backupRoot, `.pending-${id}`);
   const committedBackupDir = path.join(backupRoot, id);

@@ -22,17 +22,17 @@ import { listWritableWorkshopSkillSummaries } from "./workspace-skill-read.js";
 export async function restoreLatestSkillCollectionBackup(params: {
   workspaceDir: string;
   config: OpenClawConfig;
-  agentId?: string;
+  agentId: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<SkillCollectionRestoreResult> {
-  if (!params.agentId) {
-    throw new Error("Skill Workshop collection restore requires the active agent id.");
-  }
-  const agentId = params.agentId;
   const commit = await withSkillCollectionLock(
     async (lease) => {
-      const skillsRoot = resolveWorkshopSkillsDir(params.config, agentId, params.env);
-      const backupRoot = resolveSkillCollectionBackupRoot(params.config, agentId, params.env);
+      const skillsRoot = resolveWorkshopSkillsDir(params.config, params.agentId, params.env);
+      const backupRoot = resolveSkillCollectionBackupRoot(
+        params.config,
+        params.agentId,
+        params.env,
+      );
       const backupId = await latestCommittedBackupId(backupRoot);
       if (!backupId) {
         throw new Error("No skill collection backup is available.");
@@ -59,7 +59,7 @@ export async function restoreLatestSkillCollectionBackup(params: {
       lease.assertOwned();
       const currentSkills = listWritableWorkshopSkillSummaries({
         config: params.config,
-        agentId,
+        agentId: params.agentId,
         env: params.env,
       });
       lease.assertOwned();
@@ -115,7 +115,7 @@ export async function restoreLatestSkillCollectionBackup(params: {
       lease.assertOwned();
       const restoredSkills = listWritableWorkshopSkillSummaries({
         config: params.config,
-        agentId,
+        agentId: params.agentId,
         env: params.env,
       });
       const changes: Array<{
@@ -162,7 +162,7 @@ export async function restoreLatestSkillCollectionBackup(params: {
         changes,
       };
     },
-    params.env ? { env: params.env } : {},
+    { config: params.config, agentId: params.agentId, ...(params.env ? { env: params.env } : {}) },
   );
   for (const change of commit.changes) {
     await dispatchCommittedSkillChangeBestEffort({
