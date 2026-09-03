@@ -244,20 +244,20 @@ async function openWorkboard(page: Parameters<typeof waitForControlUiRoute>[0], 
   await search.waitFor();
   const inventoryGeometry = await page.evaluate(() => {
     const surface = document.querySelector<HTMLElement>(".settings-page.oc-app-surface");
-    const header = surface?.querySelector<HTMLElement>(".content-header--settings");
+    const title = surface?.querySelector<HTMLElement>(".plugins-settings-title");
     const tabs = surface?.querySelector<HTMLElement>(".plugins-settings-tabs.oc-segmented");
     const searchField = surface?.querySelector<HTMLElement>(".plugins-settings-search");
     const section = surface?.querySelector<HTMLElement>(".settings-section");
-    if (!surface || !header || !tabs || !searchField || !section) {
+    if (!surface || !title || !tabs || !searchField || !section) {
       return null;
     }
     const surfaceRect = surface.getBoundingClientRect();
-    const headerRect = header.getBoundingClientRect();
+    const titleRect = title.getBoundingClientRect();
     const tabsRect = tabs.getBoundingClientRect();
     const searchRect = searchField.getBoundingClientRect();
     const sectionRect = section.getBoundingClientRect();
     return {
-      headerLeft: headerRect.left,
+      titleLeft: titleRect.left,
       searchLeft: searchRect.left,
       sectionLeft: sectionRect.left,
       surfaceWidth: surfaceRect.width,
@@ -271,7 +271,7 @@ async function openWorkboard(page: Parameters<typeof waitForControlUiRoute>[0], 
     (inventoryGeometry?.surfaceWidth ?? 0) / 2,
   );
   expect(
-    Math.abs((inventoryGeometry?.headerLeft ?? 0) - (inventoryGeometry?.searchLeft ?? 0)),
+    Math.abs((inventoryGeometry?.titleLeft ?? 0) - (inventoryGeometry?.searchLeft ?? 0)),
   ).toBeLessThanOrEqual(1);
   expect(
     Math.abs((inventoryGeometry?.searchLeft ?? 0) - (inventoryGeometry?.sectionLeft ?? 0)),
@@ -284,6 +284,11 @@ async function openWorkboard(page: Parameters<typeof waitForControlUiRoute>[0], 
         (inventoryGeometry?.searchToSection ?? -Infinity),
     ),
   ).toBeLessThanOrEqual(1);
+  expect(
+    await page
+      .locator("#plugin-settings-panel article[data-plugin-id]")
+      .evaluateAll((rows) => rows.map((row) => row.getAttribute("data-plugin-id"))),
+  ).toEqual(["calendar", "workboard"]);
   await search.fill("calendar");
   await page.locator('[data-plugin-id="calendar"]').waitFor();
   await expect.poll(() => page.locator('[data-plugin-id="workboard"]').count()).toBe(0);
@@ -375,6 +380,7 @@ suite.define(() => {
           accentProbe.remove();
           return {
             breadcrumbAboveHero: breadcrumbRect.bottom <= heroRect.top,
+            breadcrumbToHero: heroRect.top - breadcrumbRect.bottom,
             colorsMatch: getComputedStyle(parent).color === getComputedStyle(current).color,
             currentColor: getComputedStyle(current).color,
             accentColor,
@@ -390,6 +396,7 @@ suite.define(() => {
         });
         expect(detailGeometry).not.toBeNull();
         expect(detailGeometry?.breadcrumbAboveHero).toBe(true);
+        expect(detailGeometry?.breadcrumbToHero ?? 0).toBeGreaterThanOrEqual(16);
         expect(detailGeometry?.colorsMatch).toBe(true);
         expect(detailGeometry?.currentColor).not.toBe(detailGeometry?.accentColor);
         expect(detailGeometry?.breadcrumbFontSize ?? Infinity).toBeLessThan(
@@ -491,6 +498,13 @@ suite.define(() => {
             hasText: "Dependency check failed. Reinstall the plugin and restart OpenClaw.",
           })
           .waitFor();
+        expect(
+          await page.getByRole("heading", { name: "Configuration", exact: true }).count(),
+        ).toBe(0);
+        expect(await page.getByRole("button", { name: "Reload", exact: true }).count()).toBe(0);
+        expect(await page.getByText("This plugin has no configurable settings.").count()).toBe(0);
+        await page.getByRole("heading", { name: "Access & capabilities", exact: true }).waitFor();
+        await page.getByRole("heading", { name: "Lifecycle", exact: true }).waitFor();
       },
     );
   });

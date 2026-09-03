@@ -343,9 +343,7 @@ function renderConfiguration(props: DetailProps, plugin: PluginCatalogItem): Tem
     if (props.configError) {
       return renderRetryError(props.configError, props.onConfigReload);
     }
-    return props.configSchemaLoading || !props.configValue
-      ? renderSettingsLoadingSkeleton({ rows: 3, carapace: true })
-      : renderSettingsEmpty(t("pluginsPage.noConfigurableSettings"), { carapace: true });
+    return renderSettingsLoadingSkeleton({ rows: 3, carapace: true });
   }
   const pluginEntry = pluginEntryValue(props.configValue, plugin.id);
   return html`
@@ -606,19 +604,21 @@ export function renderPluginSettingsDetail(props: DetailProps): TemplateResult {
           </div>`
         : nothing}
       ${renderMessage(props.messages[key])}
-      ${renderSettingsSection(
-        {
-          title: t("pluginsPage.configuration"),
-          description: t("pluginsPage.configurationDescription"),
-          actions: renderConfigActions(props),
-          carapace: true,
-        },
-        html`${plugin.state === "needs-setup"
-          ? html`<div class="callout warning oc-banner oc-banner-warning" role="status">
-              ${t("pluginsPage.setupRequiredDescription")}
-            </div>`
-          : nothing}${renderConfiguration(props, plugin)}`,
-      )}
+      ${props.configSchema || props.configSchemaLoading || props.configError
+        ? renderSettingsSection(
+            {
+              title: t("pluginsPage.configuration"),
+              description: t("pluginsPage.configurationDescription"),
+              actions: renderConfigActions(props),
+              carapace: true,
+            },
+            html`${plugin.state === "needs-setup"
+              ? html`<div class="callout warning oc-banner oc-banner-warning" role="status">
+                  ${t("pluginsPage.setupRequiredDescription")}
+                </div>`
+              : nothing}${renderConfiguration(props, plugin)}`,
+          )
+        : nothing}
       ${renderSettingsSection(
         {
           title: t("pluginsPage.accessCapabilities"),

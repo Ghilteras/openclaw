@@ -1248,7 +1248,7 @@ h3.plugins-subheader {
 
 /* The inventory header is already inside the padded settings page. Remove the
    shared outer-header inset so its title aligns with this page's rows. */
-.settings-page:has(> .plugins-settings-content) > .content-header--settings {
+.settings-page.oc-app-surface:has(> .plugins-settings-content) > .content-header--settings {
   width: 100%;
   max-width: none;
   margin-inline: 0;
@@ -1344,7 +1344,7 @@ h3.plugins-subheader {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .plugins-settings-detail-hero {

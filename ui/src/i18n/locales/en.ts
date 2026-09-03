@@ -3018,7 +3018,6 @@ export const en: TranslationMap & {
     connectToManage: "Connect to the gateway to inspect plugins.",
     toggleNamed: "Enable or disable {name}",
     schemaUnavailable: "Plugin settings schema is unavailable.",
-    noConfigurableSettings: "This plugin has no configurable settings.",
     pluginNotFound: "This installed plugin could not be found.",
     configuration: "Configuration",
     configurationDescription: "Settings declared by this plugin.",
