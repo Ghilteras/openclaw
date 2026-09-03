@@ -1,10 +1,9 @@
-import type { ApplicationContext } from "../../app/context.ts";
 import type { PluginListResult } from "../../lib/plugins/index.ts";
-import { fetchPluginIconBlobUrl } from "./icon-loader.ts";
+import { fetchPluginIconBlobUrl, type PluginIconFetchContext } from "./icon-loader.ts";
 import { pluginArtPath } from "./presentation.ts";
 
 type PluginIconControllerHost = {
-  getContext: () => ApplicationContext;
+  getFetchContext: () => PluginIconFetchContext;
   isConnected: () => boolean;
   onUrlsChange: (urls: Record<string, string>) => void;
 };
@@ -114,16 +113,9 @@ export class PluginIconController {
     );
     const request = { controller, timeout };
     this.requests.set(pluginId, request);
-    const context = this.host.getContext();
     void fetchPluginIconBlobUrl({
       pluginId,
-      resourceBasePath: context.resourceBasePath,
-      gatewayUrl: context.gateway.connection.gatewayUrl,
-      auth: {
-        hello: context.gateway.snapshot.hello,
-        settings: { token: context.gateway.connection.token },
-        password: context.gateway.connection.password,
-      },
+      ...this.host.getFetchContext(),
       signal: controller.signal,
     })
       .then((url) => {

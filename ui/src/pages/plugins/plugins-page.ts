@@ -105,7 +105,15 @@ class PluginsPage extends OpenClawLightDomElement {
   private preserveMessageKeyOnReconnect: string | null = null;
   private iconAuthCandidates: string[] = [];
   private readonly pluginIcons = new PluginIconController({
-    getContext: () => this.context,
+    getFetchContext: () => ({
+      resourceBasePath: this.context.resourceBasePath,
+      gatewayUrl: this.context.gateway.connection.gatewayUrl,
+      auth: {
+        hello: this.context.gateway.snapshot.hello,
+        settings: { token: this.context.gateway.connection.token },
+        password: this.context.gateway.connection.password,
+      },
+    }),
     isConnected: () => this.isConnected,
     onUrlsChange: (urls) => {
       this.iconUrls = urls;
@@ -471,7 +479,7 @@ class PluginsPage extends OpenClawLightDomElement {
           this.pageNotice = {
             kind: "success",
             text: [
-              t("pluginsPage.removedRestart", { name: result.pluginId }),
+              t("pluginsPage.removedRestart", { name }),
               ...(result.warnings ?? []).map((warning) => formatUiExternalText(warning)),
               refreshError ? t("pluginsPage.configRefreshFailed", { error: refreshError }) : null,
             ]
@@ -633,6 +641,7 @@ class PluginsPage extends OpenClawLightDomElement {
                 onQueryChange: (query) => {
                   this.query = query;
                 },
+                pluginHref: (pluginId) => pathForPluginSettings(pluginId, this.context.basePath),
                 onOpenPlugin: (pluginId) => {
                   this.context.navigate("plugin-settings", {
                     pathname: pathForPluginSettings(pluginId, this.context.basePath),

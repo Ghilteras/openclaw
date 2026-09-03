@@ -1304,6 +1304,7 @@ h3.plugins-subheader {
   background: transparent;
   color: inherit;
   text-align: left;
+  text-decoration: none;
 }
 
 .plugins-settings-breadcrumb {

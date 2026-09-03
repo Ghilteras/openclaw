@@ -18,6 +18,7 @@ import {
 import { t } from "../../i18n/index.ts";
 import type { JsonSchema } from "../../lib/config-form-utils.ts";
 import { formatUiExternalText } from "../../lib/format-error.ts";
+import { shouldHandleNavigationClick } from "../../lib/navigation-click.ts";
 import type {
   PluginCatalogItem,
   PluginListResult,
@@ -67,6 +68,7 @@ type InventoryProps = SharedProps & {
   advancedSchema: JsonSchema | null;
   onTabChange: (tab: PluginSettingsTab) => void;
   onQueryChange: (query: string) => void;
+  pluginHref: (pluginId: string) => string;
   onOpenPlugin: (pluginId: string) => void;
 };
 
@@ -81,30 +83,22 @@ type DetailProps = SharedProps & {
   onRetryInspection: () => void;
 };
 
-function stateLabel(plugin: PluginCatalogItem): string {
+function pluginStatePresentation(plugin: PluginCatalogItem): {
+  kind: "ok" | "warn" | "danger" | "muted";
+  label: string;
+} {
   switch (plugin.state) {
     case "enabled":
-      return t("pluginsPage.enabled");
+      return { kind: "ok", label: t("pluginsPage.enabled") };
     case "disabled":
-      return t("pluginsPage.disabled");
+      return { kind: "muted", label: t("pluginsPage.disabled") };
     case "needs-setup":
-      return t("pluginsPage.setupRequired");
+      return { kind: "warn", label: t("pluginsPage.setupRequired") };
     case "error":
-      return t("pluginsPage.needsAttention");
+      return { kind: "danger", label: t("pluginsPage.needsAttention") };
     case "not-installed":
-      return t("pluginsPage.available");
+      return { kind: "muted", label: t("pluginsPage.available") };
   }
-  return plugin.state;
-}
-
-function stateKind(plugin: PluginCatalogItem): "ok" | "warn" | "danger" | "muted" {
-  if (plugin.state === "enabled") {
-    return "ok";
-  }
-  if (plugin.state === "needs-setup") {
-    return "warn";
-  }
-  return plugin.state === "error" ? "danger" : "muted";
 }
 
 function matchesQuery(plugin: PluginCatalogItem, query: string): boolean {
@@ -227,16 +221,22 @@ function renderInstalledInventory(props: InventoryProps): TemplateResult {
           ${renderArtTile(plugin.id, plugin.name, props.iconUrls[plugin.id], () =>
             props.onIconError(plugin.id),
           )}
-          <button
-            type="button"
+          <a
             class="settings-row__text plugins-settings-row__link oc-settings-row-content"
-            @click=${() => props.onOpenPlugin(plugin.id)}
+            href=${props.pluginHref(plugin.id)}
+            @click=${(event: MouseEvent) => {
+              if (!shouldHandleNavigationClick(event)) {
+                return;
+              }
+              event.preventDefault();
+              props.onOpenPlugin(plugin.id);
+            }}
           >
             <span class="settings-row__title oc-settings-row-title">${plugin.name}</span>
             <span class="settings-row__desc oc-settings-row-description"
               >${plugin.description || t("pluginsPage.optionalCapability")}</span
             >
-          </button>
+          </a>
           <div class="settings-row__control oc-settings-row-control">
             ${renderReasonedDisabledControl(props.mutationBlockedReason, toggle)}
             <span class="settings-row__chevron" aria-hidden="true">${icons.chevronRight}</span>
@@ -539,11 +539,11 @@ export function renderPluginSettingsDetail(props: DetailProps): TemplateResult {
     );
   }
   const key = pluginRowKey(plugin.id);
+  const statePresentation = pluginStatePresentation(plugin);
   const stateStatus =
     plugin.state === "needs-setup" || plugin.state === "error"
       ? renderSettingsStatus({
-          kind: stateKind(plugin),
-          label: stateLabel(plugin),
+          ...statePresentation,
           carapace: true,
         })
       : nothing;

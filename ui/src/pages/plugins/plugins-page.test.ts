@@ -496,7 +496,7 @@ describe("PluginsPage", () => {
 
     await waitForFast(() =>
       expect(page.querySelector('[role="status"]')?.textContent).toContain(
-        "Removed community-thing",
+        "Removed Community Thing",
       ),
     );
     expect(calls).toContainEqual(["plugins.uninstall", { pluginId: "community-thing" }]);
@@ -550,7 +550,7 @@ describe("PluginsPage", () => {
     await uninstall;
     await page.updateComplete;
 
-    expect(page.textContent).not.toContain("Removed community-thing");
+    expect(page.textContent).not.toContain("Removed Community Thing");
     expect(page.messages["plugin:workboard"]?.text).toContain("Enabled Workboard");
   });
 });

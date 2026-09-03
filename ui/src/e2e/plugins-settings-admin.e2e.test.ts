@@ -296,6 +296,8 @@ async function openWorkboard(page: Parameters<typeof waitForControlUiRoute>[0], 
 
   const workboardRow = page.locator('[data-plugin-id="workboard"]');
   await workboardRow.waitFor();
+  const workboardLink = workboardRow.getByRole("link", { name: /Workboard/iu });
+  expect(await workboardLink.getAttribute("href")).toBe("/settings/plugins/workboard");
   expect(await workboardRow.locator(".settings-status").count()).toBe(0);
   const enabledSwitch = workboardRow.getByRole("switch");
   expect(await enabledSwitch.count()).toBe(1);
@@ -312,7 +314,7 @@ async function openWorkboard(page: Parameters<typeof waitForControlUiRoute>[0], 
       path: path.join(proofDir, "01-installed-inventory.png"),
     });
   }
-  await workboardRow.click();
+  await workboardLink.click();
   await waitForControlUiRoute(page, {
     pathname: "/settings/plugins/workboard",
     routeId: "plugin-settings",
