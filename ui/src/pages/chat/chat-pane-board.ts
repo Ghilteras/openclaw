@@ -130,7 +130,7 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
         annotations.map((annotation) => annotation.draft.modelContext),
       )
     ) {
-      showToast({ message: t("chat.board.commentLimitReached") });
+      showToast({ message: t("browser.annotationLimitReached") });
       return;
     }
     const remaining = [];
@@ -147,21 +147,13 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
       this.canvasAnnotationsByTarget = { ...this.canvasAnnotationsByTarget, [target]: remaining };
       showToast({
         message: t(
-          failure === "rejected"
-            ? "chat.board.commentLimitReached"
-            : "chat.board.commentChatUnavailable",
+          failure === "rejected" ? "browser.annotationLimitReached" : "browser.noChatTarget",
         ),
       });
       return;
     }
     this.discardCanvasAnnotations(target);
     this.exitCanvasAnnotationMode(target);
-    showToast({
-      message:
-        annotations.length === 1
-          ? t("chat.board.annotationStaged")
-          : t("chat.board.annotationsStaged", { count: String(annotations.length) }),
-    });
   }
 
   protected commitSidebarLayout(layout: SidebarLayout): void {

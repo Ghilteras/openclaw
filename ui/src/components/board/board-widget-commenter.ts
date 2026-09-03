@@ -379,10 +379,9 @@ class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
       });
       this.dispatchEvent(event);
       if (!event.defaultPrevented) {
-        showToast({ message: t("chat.board.commentLimitReached") });
+        showToast({ message: t("browser.annotationLimitReached") });
         return;
       }
-      showToast({ message: t("chat.board.commentAdded") });
       this.selectedNode = null;
       this.comment = "";
       this.capturing = false;
@@ -429,7 +428,7 @@ class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
     return html`<div
       class="board-widget__comment-overlay"
       data-canvas-comment-overlay
-      aria-label=${t("chat.board.commentHint")}
+      aria-label=${t("browser.inspect")}
       @pointermove=${this.handlePointerMove}
       @pointerleave=${() => {
         if (!this.selectedNode) {
@@ -443,7 +442,7 @@ class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
         (annotation, index) => html`${this.renderNodeHighlight(annotation.node)}<span
             class="board-widget__comment-marker"
             style=${`left:${annotation.node.viewportRect.x}px;top:${annotation.node.viewportRect.y}px`}
-            aria-label=${t("chat.board.annotationNumber", { count: String(index + 1) })}
+            aria-label=${`${t("chat.composer.browserAnnotation")} ${index + 1}`}
             >${index + 1}</span
           >`,
       )}
@@ -467,7 +466,7 @@ class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
               .value=${this.comment}
               maxlength="2000"
               aria-label=${t("chat.board.commentInput")}
-              placeholder=${t("chat.board.commentPlaceholder")}
+              placeholder=${t("chat.board.commentInput")}
               ?disabled=${this.capturing}
               @input=${(event: InputEvent) => {
                 if (event.currentTarget instanceof HTMLInputElement) {
@@ -478,7 +477,7 @@ class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
             <button
               type="submit"
               class="board-widget__comment-submit"
-              aria-label=${t("chat.board.addComment")}
+              aria-label=${t("chat.board.commentInput")}
               ?disabled=${!this.comment.trim() || this.capturing}
             >
               ${this.capturing
@@ -487,7 +486,7 @@ class OpenClawBoardWidgetCommenter extends OpenClawLightDomElement {
             </button>
           </form>`
         : html`<span class="board-widget__comment-label"
-            >${highlighted?.selector || highlighted?.tag || t("chat.board.commentHint")}</span
+            >${highlighted?.selector || highlighted?.tag || t("browser.inspect")}</span
           >`}
     </div>`;
   }

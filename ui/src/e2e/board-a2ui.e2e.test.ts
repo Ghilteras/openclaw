@@ -191,10 +191,10 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
       await page.screenshot({ path: path.join(commenterProofDir, "inactive.png") });
     }
 
-    const toggle = page.getByRole("button", { name: "Comment on Canvas" });
+    const toggle = page.getByRole("button", { name: "Annotate page" });
     await toggle.click();
     await page.locator("[data-canvas-comment-overlay]").waitFor();
-    await page.getByRole("button", { name: "Stop commenting on Canvas" }).waitFor();
+    await page.getByRole("button", { name: "Exit annotate mode" }).waitFor();
     if (recordProof) {
       await page.screenshot({ path: path.join(commenterProofDir, "annotating.png") });
       await page.waitForTimeout(600);
@@ -223,15 +223,15 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
       await page.screenshot({ path: path.join(commenterProofDir, "comment-editor.png") });
       await page.waitForTimeout(700);
     }
-    await page.getByRole("button", { name: "Add element comment" }).click();
+    await page.getByRole("button", { name: "Comment on selected Canvas element" }).click();
     const stageAnnotations = page.getByRole("button", {
-      name: "Add 1 annotation to the chat composer",
+      name: "Send to chat",
     });
-    await stageAnnotations.waitFor();
+    await expect.poll(() => stageAnnotations.isEnabled()).toBe(true);
     expect(await page.locator(".chat-browser-annotation-group").count()).toBe(0);
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "Resume annotating (1)" }).click();
-    await page.getByRole("button", { name: "Discard annotations" }).click();
+    await page.getByRole("button", { name: "Annotate page" }).click();
+    await page.getByRole("button", { name: "Clear" }).click();
     await expect.poll(() => page.locator(".board-widget__comment-marker").count()).toBe(0);
 
     await page.mouse.click(
@@ -239,8 +239,8 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
       targetBounds!.y + targetBounds!.height / 2,
     );
     await commentInput.fill("Make this action less prominent.");
-    await page.getByRole("button", { name: "Add element comment" }).click();
-    await stageAnnotations.waitFor();
+    await page.getByRole("button", { name: "Comment on selected Canvas element" }).click();
+    await expect.poll(() => stageAnnotations.isEnabled()).toBe(true);
     if (recordProof) {
       await page.screenshot({ path: path.join(commenterProofDir, "annotation-toolbar.png") });
       await page.waitForTimeout(900);
@@ -252,7 +252,7 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
     const annotationPopover = annotationGroup.locator(".chat-browser-annotation-group__popover");
     await expect
       .poll(() => annotationPopover.getAttribute("aria-label"))
-      .toBe("Annotation details");
+      .toBe("Browser annotation");
     await annotationPopover.getByText("#save-profile", { exact: true }).waitFor();
     await annotationPopover
       .getByText("Make this action less prominent.", { exact: true })
@@ -295,7 +295,8 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
     contexts.add(context);
     const page = await context.newPage();
     await openCommenterBoard(page);
-    await page.getByRole("button", { name: "Comment on Canvas" }).click();
+    await page.getByRole("button", { name: "Annotate page" }).click();
+    await page.locator("[data-canvas-comment-overlay]").waitFor();
 
     const outerFrame = await page
       .locator(".board-widget__frame")
@@ -304,6 +305,13 @@ describeControlUiE2e("Control UI dashboard A2UI", () => {
     await expect.poll(() => outerFrame?.childFrames().length ?? 0).toBe(1);
     const targetBounds = await outerFrame!.childFrames()[0]!.locator("#save-profile").boundingBox();
     expect(targetBounds).not.toBeNull();
+    await page.mouse.move(
+      targetBounds!.x + targetBounds!.width / 2,
+      targetBounds!.y + targetBounds!.height / 2,
+    );
+    await expect
+      .poll(() => page.locator(".board-widget__comment-label").textContent())
+      .toContain("#save-profile");
     await page.mouse.click(
       targetBounds!.x + targetBounds!.width / 2,
       targetBounds!.y + targetBounds!.height / 2,

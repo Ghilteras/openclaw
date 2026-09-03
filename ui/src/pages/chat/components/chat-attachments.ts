@@ -635,7 +635,7 @@ function renderBrowserAnnotationGroup(
       <button
         type="button"
         class="chat-browser-annotation-group__remove"
-        aria-label=${t("chat.composer.removeBrowserAnnotations")}
+        aria-label=${t("chat.composer.removeBrowserAnnotation", { name: label })}
         ?disabled=${props.disabled}
         @click=${() => removeBrowserAnnotationGroup(attachments, props)}
       >
@@ -644,7 +644,7 @@ function renderBrowserAnnotationGroup(
     </div>
     <div
       class="chat-browser-annotation-group__popover"
-      aria-label=${t("chat.composer.browserAnnotationDetails")}
+      aria-label=${t("chat.composer.browserAnnotation")}
     >
       ${attachments.map((attachment, index) => {
         const annotation = attachment.browserAnnotation!;

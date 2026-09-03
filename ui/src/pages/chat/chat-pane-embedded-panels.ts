@@ -103,10 +103,7 @@ function renderCanvasCommentAction(params: {
   onSend: () => void;
 }): TemplateResult {
   if (!params.active) {
-    const label = t(
-      params.count > 0 ? "chat.board.resumeCommenting" : "chat.board.commentOnCanvas",
-      { count: String(params.count) },
-    );
+    const label = t("browser.annotate");
     return html`<openclaw-tooltip .content=${label}>
       <button
         class="rail-header__action canvas-annotation-launcher"
@@ -127,25 +124,25 @@ function renderCanvasCommentAction(params: {
   return html`<div
     class="canvas-annotation-toolbar"
     role="toolbar"
-    aria-label=${t("chat.board.annotationToolbar")}
+    aria-label=${t("chat.board.annotating")}
   >
-    <openclaw-tooltip .content=${t("chat.board.exitAnnotationMode")}>
+    <openclaw-tooltip .content=${t("browser.annotateDone")}>
       <button
         class="rail-header__action"
         type="button"
         data-canvas-comment-exit
-        aria-label=${t("chat.board.exitAnnotationMode")}
+        aria-label=${t("browser.annotateDone")}
         @click=${params.onExit}
       >
         ${icons.x}
       </button>
     </openclaw-tooltip>
-    <openclaw-tooltip .content=${t("chat.board.discardAnnotations")}>
+    <openclaw-tooltip .content=${t("browser.annotateClear")}>
       <button
         class="rail-header__action"
         type="button"
         data-canvas-comment-discard
-        aria-label=${t("chat.board.discardAnnotations")}
+        aria-label=${t("browser.annotateClear")}
         ?disabled=${params.count === 0}
         @click=${params.onDiscard}
       >
@@ -156,7 +153,7 @@ function renderCanvasCommentAction(params: {
       class="canvas-annotation-toolbar__state"
       type="button"
       data-canvas-comment-toggle
-      aria-label=${t("chat.board.stopCommenting")}
+      aria-label=${t("browser.annotate")}
       aria-pressed="true"
       @click=${params.onToggle}
     >
@@ -166,10 +163,7 @@ function renderCanvasCommentAction(params: {
       class="canvas-annotation-toolbar__send"
       type="button"
       data-canvas-comment-send
-      aria-label=${t(
-        params.count === 1 ? "chat.board.stageAnnotation" : "chat.board.stageAnnotations",
-        { count: String(params.count) },
-      )}
+      aria-label=${t("browser.annotateSend")}
       ?disabled=${params.count === 0}
       @click=${params.onSend}
     >

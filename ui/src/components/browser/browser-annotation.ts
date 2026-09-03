@@ -141,10 +141,7 @@ function describeInspectedNode(node: BrowserInspectedNode): string {
   const tag = sanitizeSelectorToken(node.tag) || "element";
   const id = sanitizeSelectorToken(node.id);
   const fallbackSelector = `${tag}${id ? `#${id}` : ""}${classes}`;
-  const reportedSelector = node.selector
-    ? sanitizePageText(node.selector, 500).replace(/[^\w\s#.[\]=:"'()>+~*^$|\\-]/g, "")
-    : "";
-  const selector = reportedSelector || fallbackSelector;
+  const selector = sanitizePageText(node.selector ?? "", 500) || fallbackSelector;
   const sanitizedName = sanitizePageText(node.name, ANNOTATION_TITLE_MAX_LENGTH);
   const name = sanitizedName ? ` "${sanitizedName}"` : "";
   const role = node.role ? ` (role=${sanitizePageText(node.role, 40)})` : "";

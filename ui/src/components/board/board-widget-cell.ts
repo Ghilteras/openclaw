@@ -37,12 +37,12 @@ import {
   renderBoardWidgetRejected,
 } from "./board-widget-cell-render.ts";
 import type { CanvasElementAnnotation } from "./board-widget-commenter.ts";
-import "./board-widget-commenter.ts";
 import { BoardWidgetFrameLifecycle } from "./board-widget-frame.ts";
 import "../tooltip.ts";
 import "../web-awesome.ts";
 
 const loadMcpAppView = () => import("../mcp-app-view-registration.ts");
+const loadBoardWidgetCommenter = () => import("./board-widget-commenter.ts");
 
 export type BoardWidgetCellCallbacks = {
   appViewGeneration: () => number;
@@ -136,6 +136,19 @@ class OpenClawBoardWidgetCell extends OpenClawLightDomElement {
           this.widget?.contentKind === "mcp-app",
         );
       }
+    }
+    if (changed.has("commentMode") && this.commentMode) {
+      // Element inspection and image composition are only needed in annotation mode;
+      // keep them out of the default Board/chat startup graph.
+      void ensureCustomElementDefined(
+        "openclaw-board-widget-commenter",
+        loadBoardWidgetCommenter,
+      ).catch((error: unknown) => {
+        if (this.commentMode) {
+          this.actionError = formatUiError(error);
+          this.requestUpdate();
+        }
+      });
     }
     this.syncPluginRenderer();
   }

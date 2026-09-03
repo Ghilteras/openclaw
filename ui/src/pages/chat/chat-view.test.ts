@@ -6471,15 +6471,15 @@ describe("chat attachment picker", () => {
     expect(group.querySelector(".chat-browser-annotation-group__summary")?.textContent).toContain(
       "2 annotations",
     );
-    expect(group.querySelector('[aria-label="Annotation details"]')).not.toBeNull();
+    expect(group.querySelector('[aria-label="Browser annotation"]')).not.toBeNull();
     expect(items[0]?.querySelector("img")?.getAttribute("alt")).toBe("Browser annotation preview");
     expect(items[0]?.querySelector("code")?.textContent).toBe("button");
     expect(items[0]?.textContent).toContain("#checkout");
     expect(items[0]?.textContent).toContain("Keep the checkout action visible.");
     expect(items[1]?.textContent).toContain("docs.example.test/narrow-layout");
-    expect(group.querySelector('[aria-label="Remove annotations"]')).toBeInstanceOf(
-      HTMLButtonElement,
-    );
+    expect(
+      group.querySelector('[aria-label="Remove browser annotation: 2 annotations"]'),
+    ).toBeInstanceOf(HTMLButtonElement);
   });
 
   it("delegates grouped annotation removal without releasing its payload", () => {
@@ -6509,7 +6509,7 @@ describe("chat attachment picker", () => {
 
     requireElement(
       container,
-      '[aria-label="Remove annotations"]',
+      '[aria-label="Remove browser annotation: 1 annotation"]',
       "browser annotation remove button",
     ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
