@@ -2462,29 +2462,41 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
       queueMessage,
     });
 
-    await send({
+    const pendingSend = send({
       idempotencyKey: "idem-steer-reject",
       requestParams: { queueMode: "steer" },
       waitFor: "none",
     });
-    expect(respond).toHaveBeenCalledWith(
-      true,
-      expect.objectContaining({ status: "started" }),
-      undefined,
-      expect.any(Object),
-    );
-    delivery.reject(new Error("native turn ended"));
-    operation.complete();
+    const rejection = new Error("native turn ended");
+    try {
+      await waitForAssertion(() => expect(queueMessage).toHaveBeenCalledOnce());
+      // A negative callback is provisional; only the terminal rejection permits fallback.
+      expect(respond).not.toHaveBeenCalled();
+      expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(dispatchCallsBefore);
+      delivery.reject(rejection);
+      await pendingSend;
+      expect(respond).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({ status: "started" }),
+        undefined,
+        expect.any(Object),
+      );
+      operation.complete();
 
-    await waitForAssertion(() => {
-      expect(context.dedupe.get("chat:idem-steer-reject")?.payload).toEqual({
-        runId: "idem-steer-reject",
-        status: "ok",
+      await waitForAssertion(() => {
+        expect(context.dedupe.get("chat:idem-steer-reject")?.payload).toEqual({
+          runId: "idem-steer-reject",
+          status: "ok",
+        });
       });
-    });
-    expect(queueMessage).toHaveBeenCalledOnce();
-    expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(dispatchCallsBefore + 1);
-    expect(mockState.lastDispatchCtx?.BodyForAgent).toBe("hello");
+      expect(queueMessage).toHaveBeenCalledOnce();
+      expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(dispatchCallsBefore + 1);
+      expect(mockState.lastDispatchCtx?.BodyForAgent).toBe("hello");
+    } finally {
+      delivery.reject(rejection);
+      operation.complete();
+      await Promise.allSettled([pendingSend, delivery.promise]);
+    }
   });
 
   it("never aborts or replays onto a successor after unconfirmed acceptance", async () => {
