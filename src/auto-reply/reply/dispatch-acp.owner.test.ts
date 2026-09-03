@@ -111,7 +111,8 @@ it.each(
         expect(result).not.toBeNull();
         expect(turns).toBe(unconfirmedQuestion ? 0 : 1);
         if (unconfirmedQuestion) {
-          expect(delivered).toEqual([]);
+          expect(delivered).toEqual([expect.stringContaining("confirmation was lost")]);
+          expect(result?.queuedFinal).toBe(true);
           expect(recordProcessed).toHaveBeenCalledWith("error", {
             reason: "acp_question_answer_unconfirmed",
             error: expect.stringContaining("not sent again"),
