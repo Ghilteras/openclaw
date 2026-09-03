@@ -201,7 +201,7 @@ export class DraftRepositoryController {
     void client
       .request<WorktreesBranchesResult>("worktrees.branches", {
         repoRoot,
-        includeRepositoryStatus: true,
+        includeAllocationStatus: true,
         ...(baseRef ? { baseRef } : {}),
       })
       .then((result) => {
@@ -289,7 +289,7 @@ export class DraftRepositoryController {
         if (requestId !== this.requestToken || (this.baseRefOverride ?? "") !== baseRef) {
           return;
         }
-        this.adoptResolvedRepository(
+        const resolved: ResolvedRepository =
           result?.repositoryStatus === "git"
             ? {
                 kind: "git",
@@ -297,10 +297,13 @@ export class DraftRepositoryController {
                 branches: result.branches,
                 ...(result.defaultBranch ? { defaultBranch: result.defaultBranch } : {}),
                 ...(result.headBranch ? { headBranch: result.headBranch } : {}),
-                allocationStatus: result.allocationStatus ?? "unavailable",
+                allocationStatus: "unavailable",
               }
-            : { kind: result?.repositoryStatus === "not_git" ? "direct" : "unavailable", repoRoot },
-        );
+            : { kind: result?.repositoryStatus === "not_git" ? "direct" : "unavailable", repoRoot };
+        this.adoptResolvedRepository(resolved);
+        if (resolved.kind === "git") {
+          this.refreshAllocationStatus();
+        }
       })
       .catch(() => {
         if (requestId !== this.requestToken || (this.baseRefOverride ?? "") !== baseRef) {

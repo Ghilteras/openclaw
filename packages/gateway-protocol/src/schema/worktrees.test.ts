@@ -57,12 +57,15 @@ describe("managed worktree protocol schemas", () => {
     expect(
       validateWorktreesBranchesParams({
         repoRoot: "/repo",
-        includeRepositoryStatus: true,
+        includeAllocationStatus: true,
         baseRef: "origin/main",
       }),
     ).toBe(true);
     expect(
       validateWorktreesBranchesParams({ repoRoot: "/repo", includeRepositoryStatus: false }),
+    ).toBe(true);
+    expect(
+      validateWorktreesBranchesParams({ repoRoot: "/repo", includeAllocationStatus: false }),
     ).toBe(true);
     expect(validateWorktreesBranchesParams({ repoRoot: "/repo", baseRef: "" })).toBe(false);
     expect(validateWorktreesBranchesParams({})).toBe(false);

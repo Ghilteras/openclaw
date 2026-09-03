@@ -869,13 +869,11 @@ export class ManagedWorktreeService {
 
   private async allocationStatus(
     repository: ResolvedRepository,
-    baseRef?: string,
+    baseRef: string,
     runSetup = true,
   ): Promise<ManagedWorktreeAllocationStatus> {
     const target = path.join(this.worktreesRootPath(), repository.fingerprint);
     try {
-      // Default-base resolution may fetch remote objects, so protect that write
-      // with the same reserve check used by creation before estimating its size.
       this.requireAllocationSpace(target, repository);
       const base = await resolveWorktreeBase(repository.repoRoot, baseRef);
       const estimate = await this.estimateAllocation(
@@ -1098,20 +1096,18 @@ export class ManagedWorktreeService {
     };
   }
 
-  /**
-   * Lists selectable base refs from local Git metadata. Allocation status mirrors
-   * creation exactly, including fetching the default remote when no base is selected.
-   */
+  /** Lists selectable base refs from local Git metadata and optionally preflights allocation. */
   async listRepositoryBranches(
     repoRoot: string,
     options: {
       includeRepositoryStatus?: boolean;
+      includeAllocationStatus?: boolean;
       baseRef?: string;
       runSetupScript?: boolean;
     } = {},
   ): Promise<ManagedWorktreeBranchesResult> {
     let repository: ResolvedRepository;
-    if (options.includeRepositoryStatus) {
+    if (options.includeRepositoryStatus || options.includeAllocationStatus) {
       try {
         const requested = await fs.realpath(repoRoot);
         if (!(await fs.stat(requested)).isDirectory()) {
@@ -1191,8 +1187,10 @@ export class ManagedWorktreeService {
         ([aShort, a], [bShort, b]) => rank(aShort) - rank(bShort) || a.name.localeCompare(b.name),
       )
       .map(([, branch]) => branch);
-    const allocationStatus = options.includeRepositoryStatus
-      ? await this.allocationStatus(repository, options.baseRef, options.runSetupScript !== false)
+    const allocationStatus = options.includeAllocationStatus
+      ? options.baseRef
+        ? await this.allocationStatus(repository, options.baseRef, options.runSetupScript !== false)
+        : "unavailable"
       : undefined;
     return {
       branches: sorted,

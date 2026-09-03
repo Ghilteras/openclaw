@@ -154,11 +154,11 @@ describe("worktrees gateway methods", () => {
     await call(
       handlers,
       "worktrees.branches",
-      { repoRoot: "/anywhere", includeRepositoryStatus: true, baseRef: "release" },
+      { repoRoot: "/anywhere", includeAllocationStatus: true, baseRef: "release" },
       { client: adminClient, context: emptyConfigContext },
     );
     expect(service.listRepositoryBranches).toHaveBeenLastCalledWith("/anywhere", {
-      includeRepositoryStatus: true,
+      includeAllocationStatus: true,
       baseRef: "release",
       runSetupScript: true,
     });
@@ -205,7 +205,7 @@ describe("worktrees gateway methods", () => {
       await call(
         handlers,
         "worktrees.branches",
-        { repoRoot, includeRepositoryStatus: true },
+        { repoRoot, includeAllocationStatus: true, baseRef: "HEAD" },
         {
           client: writeClient,
           context: {
@@ -216,7 +216,8 @@ describe("worktrees gateway methods", () => {
         },
       );
       expect(service.listRepositoryBranches).toHaveBeenLastCalledWith(repoRoot, {
-        includeRepositoryStatus: true,
+        includeAllocationStatus: true,
+        baseRef: "HEAD",
         runSetupScript: false,
       });
     } finally {

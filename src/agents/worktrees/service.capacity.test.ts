@@ -123,13 +123,15 @@ describe("ManagedWorktreeService capacity", () => {
 
     await expect(
       service.listRepositoryBranches(repo, {
-        includeRepositoryStatus: true,
+        includeAllocationStatus: true,
+        baseRef: "HEAD",
         runSetupScript: false,
       }),
     ).resolves.toMatchObject({ allocationStatus: "available" });
     await expect(
       service.listRepositoryBranches(repo, {
-        includeRepositoryStatus: true,
+        includeAllocationStatus: true,
+        baseRef: "HEAD",
         runSetupScript: true,
       }),
     ).resolves.toMatchObject({ allocationStatus: "insufficient-space" });
@@ -157,13 +159,14 @@ describe("ManagedWorktreeService capacity", () => {
       await expect(
         service.listRepositoryBranches(repo, {
           includeRepositoryStatus: true,
+          includeAllocationStatus: true,
+          baseRef: "HEAD",
         }),
       ).resolves.toMatchObject({ repositoryStatus: "git", allocationStatus: status });
     },
   );
 
-  it("checks the reserve before fetching a default base", async () => {
-    availableBytes = GiB;
+  it("keeps repository status discovery local-only", async () => {
     const realRun = commandExec.runCommandWithTimeout;
     const run = vi
       .spyOn(commandExec, "runCommandWithTimeout")
@@ -171,7 +174,7 @@ describe("ManagedWorktreeService capacity", () => {
 
     await expect(
       service.listRepositoryBranches(repo, { includeRepositoryStatus: true }),
-    ).resolves.toMatchObject({ allocationStatus: "insufficient-space" });
+    ).resolves.toMatchObject({ repositoryStatus: "git" });
     expect(run.mock.calls.some(([argv]) => argv.includes("fetch"))).toBe(false);
   });
 
@@ -185,34 +188,22 @@ describe("ManagedWorktreeService capacity", () => {
 
     await expect(
       service.listRepositoryBranches(repo, {
-        includeRepositoryStatus: true,
+        includeAllocationStatus: true,
         baseRef: "main",
       }),
     ).resolves.toMatchObject({ allocationStatus: "available" });
     await expect(
       service.listRepositoryBranches(repo, {
-        includeRepositoryStatus: true,
+        includeAllocationStatus: true,
         baseRef: "large-base",
       }),
     ).resolves.toMatchObject({ allocationStatus: "insufficient-space" });
   });
 
-  it("estimates the fetched remote default used by creation", async () => {
-    const initialHead = await git(repo, "rev-parse", "HEAD");
-    await git(repo, "remote", "set-head", "origin", "main");
-    await fs.writeFile(path.join(repo, "large.bin"), Buffer.alloc(8 * 1024 ** 2));
-    await git(repo, "add", "large.bin");
-    await git(repo, "commit", "-m", "large remote default");
-    await git(repo, "push", "origin", "main");
-    await git(repo, "reset", "--hard", initialHead);
-    availableBytes = 16 * GiB + 12 * 1024 ** 2;
-
+  it("fails closed when allocation preflight omits its base ref", async () => {
     await expect(
-      service.listRepositoryBranches(repo, { includeRepositoryStatus: true }),
-    ).resolves.toMatchObject({
-      defaultBranch: "main",
-      allocationStatus: "insufficient-space",
-    });
+      service.listRepositoryBranches(repo, { includeAllocationStatus: true }),
+    ).resolves.toMatchObject({ allocationStatus: "unavailable" });
   });
 
   it("reports unavailable allocation status when disk capacity cannot be read", async () => {
@@ -223,6 +214,8 @@ describe("ManagedWorktreeService capacity", () => {
     await expect(
       service.listRepositoryBranches(repo, {
         includeRepositoryStatus: true,
+        includeAllocationStatus: true,
+        baseRef: "HEAD",
       }),
     ).resolves.toMatchObject({ repositoryStatus: "git", allocationStatus: "unavailable" });
   });

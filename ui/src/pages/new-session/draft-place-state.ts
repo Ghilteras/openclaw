@@ -103,7 +103,7 @@ export class DraftPlaceState {
     return buildDraftSessionCreateParams({
       ...params,
       agentId: this.agentId,
-      model: this.modelControl.selected,
+      model: this.modelControl.modelForSubmission(),
       contextWindow: this.modelControl.contextWindow,
       thinkingLevel: this.modelControl.thinkingLevel,
       fastMode: this.modelControl.fastMode,
@@ -531,7 +531,8 @@ export class DraftPlaceState {
     }
     if (
       (deviceId && this.findDevice(deviceId)?.selectable !== true) ||
-      (autoDevice && !this.devices().some((device) => device.selectable))
+      (autoDevice && !this.devices().some((device) => device.selectable)) ||
+      ((deviceId || autoDevice) && !this.repositoryState.allocationAvailable())
     ) {
       return;
     }
@@ -645,12 +646,29 @@ export class DraftPlaceState {
       this.gateway.cloudProfilesReady
     ) {
       const automatic = preferredWhere.kind === "auto-device";
-      this.autoDeviceValue = automatic;
-      this.deviceIdValue = preferredWhere.kind === "device" ? preferredWhere.id : "";
-      this.cloudProfileIdValue = "";
-      this.repositoryState.forceWorktree(this.remotePlacement);
-      this.preferredWhereRestore = null;
-      changed = true;
+      const deviceAvailable = automatic
+        ? this.devices().some((device) => device.selectable)
+        : this.findDevice(preferredWhere.id)?.selectable === true;
+      const repositoryReady =
+        this.repositoryState.matchesCurrentRepo() && this.repository.kind !== "checking";
+      const placementReady =
+        deviceAvailable &&
+        repositoryReady &&
+        this.worktreeAvailable() &&
+        this.repositoryState.allocationAvailable();
+      if (placementReady) {
+        this.autoDeviceValue = automatic;
+        this.deviceIdValue = preferredWhere.kind === "device" ? preferredWhere.id : "";
+        this.cloudProfileIdValue = "";
+        this.repositoryState.forceWorktree(true);
+        this.preferredWhereRestore = null;
+        changed = true;
+      } else if (!deviceAvailable || repositoryReady) {
+        this.deviceIdValue = "";
+        this.autoDeviceValue = false;
+        this.preferredWhereRestore = null;
+        changed = true;
+      }
     } else if (preferredWhere?.kind === "cloud" && this.gateway.cloudProfilesReady) {
       const preferredProfile = this.gateway.cloudProfiles.find(
         (profile) => profile.id === preferredWhere.id,

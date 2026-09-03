@@ -82,6 +82,8 @@ export function renderNewSessionPlaceControls({
         workspaceRoots: place.knownWorkspaceRoots(),
         isAdmin: place.isAdmin(),
       });
+  const allocationStatus = branches?.allocationStatus;
+  const allocationBlockedReason = worktreeAllocationBlockedReason(allocationStatus);
   const whereState = resolveWhereChip({
     environments: place.canWrite() ? gateway.environments : [],
     cloudProfiles,
@@ -91,7 +93,9 @@ export function renderNewSessionPlaceControls({
     autoDevice: place.autoDevice,
     devicePlacement: place.devicePlacementRuntime()?.devicePlacement,
     deviceDisabledReason:
-      place.modelControl.devicePlacementUnsupportedReason() ?? gateway.deviceCatalogDisabledReason,
+      place.modelControl.devicePlacementUnsupportedReason() ??
+      gateway.deviceCatalogDisabledReason ??
+      allocationBlockedReason,
   });
   const projectState = resolveProjectChip({
     folder: place.folder,
@@ -109,7 +113,6 @@ export function renderNewSessionPlaceControls({
     headBranch: branches?.headBranch,
     baseRef: place.baseRef,
   });
-  const allocationStatus = branches?.allocationStatus;
   const gatewayLabel = gateway.gatewayName
     ? t("newSession.gatewayNamed", { name: gateway.gatewayName })
     : t("newSession.gateway");
@@ -216,7 +219,7 @@ export function renderNewSessionPlaceControls({
         worktree: place.worktree,
         worktreeAvailable: place.worktreeAvailable(),
         allocationStatus,
-        allocationBlockedReason: worktreeAllocationBlockedReason(allocationStatus),
+        allocationBlockedReason,
         repositoryUnavailable: place.repository.kind === "unavailable",
         branches,
         branchesLoading: place.repository.kind === "checking",

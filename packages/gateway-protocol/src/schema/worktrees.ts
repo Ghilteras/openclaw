@@ -77,6 +77,7 @@ export const WorktreeAllocationStatusSchema = Type.String({
 export const WorktreesBranchesParamsSchema = closedObject({
   repoRoot: NonEmptyString,
   includeRepositoryStatus: Type.Optional(Type.Boolean()),
+  includeAllocationStatus: Type.Optional(Type.Boolean()),
   baseRef: Type.Optional(NonEmptyString),
 });
 export const WorktreeBranchSchema = closedObject({
