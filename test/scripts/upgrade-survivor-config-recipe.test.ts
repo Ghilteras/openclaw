@@ -133,6 +133,9 @@ esac
         expect(args).toContain(
           "OPENCLAW_UPGRADE_SURVIVOR_CANDIDATE_SPEC=/tmp/openclaw-current.tgz",
         );
+        expect(
+          args.some((arg) => arg.startsWith("OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_REQUEST_DIALECT=")),
+        ).toBe(false);
         expect(args).toContain("OPENCLAW_UPGRADE_SURVIVOR_SESSION_REPAIR_MODE=jsonl");
         expect(args.slice(-5)).toEqual([
           "timeout",

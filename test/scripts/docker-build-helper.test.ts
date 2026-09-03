@@ -159,7 +159,7 @@ function extractUpgradeSurvivorPayload(script: string) {
   return quoted.slice(1, end + 1).replaceAll(`'"'"'`, "'");
 }
 
-function runTypedOnboardingDriver(dialect: string) {
+function runTypedOnboardingDriver(mode: "interactive" | "required", dialect: string) {
   const source = readFileSync(RELEASE_TYPED_ONBOARDING_SCENARIO_PATH, "utf8");
   const start = source.indexOf("send() {");
   const end = source.indexOf("\nopenclaw_e2e_install_package", start);
@@ -208,6 +208,7 @@ drive_typed_onboarding
       encoding: "utf8",
       env: {
         ...process.env,
+        OPENCLAW_FROZEN_TARGET_ONBOARD_SESSION_MEMORY_HOOK_MODE: mode,
         OPENCLAW_TEST_ONBOARD_LOG: transcriptPath,
       },
     },
@@ -2989,15 +2990,19 @@ docker_e2e_docker_run_cmd run demo
   });
 
   it("keeps real-TTY onboarding drivers aligned with the guided prompt sequence", () => {
-    const current = runTypedOnboardingDriver("current");
+    const current = runTypedOnboardingDriver("required", "current");
     expect(current.status, current.stderr).toBe(0);
     expect(current.stdout.trim().split("\n")).toEqual(["continue", "enter", "enter", "search"]);
 
-    const legacy = runTypedOnboardingDriver("legacy");
+    const requiredLegacy = runTypedOnboardingDriver("required", "legacy");
+    expect(requiredLegacy.status).not.toBe(0);
+    expect(requiredLegacy.stderr).toContain("unexpected typed onboarding transition");
+
+    const legacy = runTypedOnboardingDriver("interactive", "legacy");
     expect(legacy.status, legacy.stderr).toBe(0);
     expect(legacy.stdout.trim().split("\n")).toEqual(["continue", "search", "hooks", "enter"]);
 
-    const unknown = runTypedOnboardingDriver("unknown");
+    const unknown = runTypedOnboardingDriver("required", "unknown");
     expect(unknown.status).not.toBe(0);
     expect(unknown.stderr).toContain("unexpected typed onboarding transition");
     expect(unknown.stderr).toContain("fixture onboarding transcript");

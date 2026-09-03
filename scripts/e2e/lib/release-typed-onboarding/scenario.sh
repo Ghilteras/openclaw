@@ -93,6 +93,7 @@ onboarding_log_contains() {
 }
 
 drive_typed_onboarding() {
+  local hook_mode="${OPENCLAW_FROZEN_TARGET_ONBOARD_SESSION_MEMORY_HOOK_MODE:-}"
   local next_prompt="" prompt
   wait_for_log "Continue?" 60
   send $'y\r' 0.4
@@ -106,15 +107,15 @@ drive_typed_onboarding() {
     done
     sleep 0.2
   done
-  case "$next_prompt" in
-    "Help make OpenClaw better?")
+  case "$hook_mode:$next_prompt" in
+    "required:Help make OpenClaw better?")
       send $'\r' 0.4
       wait_for_log "What should we call your first agent?" 60
       send $'\r' 0.4
       wait_for_log "to search" 60
       send $'ollama\r' 0.4
       ;;
-    "to search")
+    "interactive:to search")
       send $'ollama\r' 0.4
       wait_for_log "Enable hooks?" 60
       send $' \r' 0.4
