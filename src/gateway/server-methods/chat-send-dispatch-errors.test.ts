@@ -26,6 +26,7 @@ describe("handleChatSendSetupError", () => {
         restartSafeAdmission: undefined,
       },
       context: {
+        agentRunSeq: new Map(),
         broadcast,
         chatRunState: { clearRun },
         dedupe,
