@@ -341,6 +341,305 @@ describe("package rollback tree integrity", () => {
     },
   );
 
+  it.runIf(process.platform !== "win32")(
+    "does not verify rollback when candidate Doctor replaces an identical descendant inode",
+    async () => {
+      await withTestDir({ prefix: "openclaw-package-recovery-replaced-inode-" }, async (base) => {
+        const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+        const packageRoot = path.join(globalRoot, "openclaw");
+        const packageDirectory = path.join(packageRoot, "dist");
+        const packageEntry = path.join(packageDirectory, "index.js");
+        await writePackageRoot(packageRoot, "1.0.0");
+        const originalDirectoryStat = await fs.lstat(packageDirectory, { bigint: true });
+        const originalEntryStat = await fs.lstat(packageEntry, { bigint: true });
+        let doctorRejected = false;
+        let replacementInode: bigint | null = null;
+        const lstat = fs.lstat.bind(fs);
+        const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+          const stat = await lstat(...args);
+          if (!doctorRejected || !("ctimeNs" in stat)) {
+            return stat;
+          }
+          const entryPath = String(args[0]);
+          if (entryPath.endsWith(`${path.sep}dist${path.sep}index.js`)) {
+            Object.assign(stat, {
+              mtimeNs: originalEntryStat.mtimeNs,
+              ctimeNs: originalEntryStat.ctimeNs,
+            });
+          } else if (entryPath.endsWith(`${path.sep}dist`)) {
+            Object.assign(stat, {
+              mtimeNs: originalDirectoryStat.mtimeNs,
+              ctimeNs: originalDirectoryStat.ctimeNs,
+            });
+          }
+          return stat;
+        });
+        const open = fs.open.bind(fs);
+        const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+          const handle = await open(...args);
+          if (doctorRejected && String(args[0]).endsWith(`${path.sep}dist${path.sep}index.js`)) {
+            const stat = handle.stat.bind(handle);
+            vi.spyOn(handle, "stat").mockImplementation(async () => {
+              const openedStat = await stat({ bigint: true });
+              Object.assign(openedStat, {
+                mtimeNs: originalEntryStat.mtimeNs,
+                ctimeNs: originalEntryStat.ctimeNs,
+              });
+              return openedStat;
+            });
+          }
+          return handle;
+        });
+
+        try {
+          const result = await runGlobalPackageUpdateSteps({
+            installTarget: createNpmTarget(globalRoot),
+            installSpec: "openclaw@2.0.0",
+            packageName: "openclaw",
+            packageRoot,
+            runCommand: createRootRunner(globalRoot),
+            runStep: stageCandidatePackage,
+            postVerifyStep: async (candidateRoot) => {
+              expect(candidateRoot).toBe(packageRoot);
+              const backupName = (await fs.readdir(globalRoot)).find((entry) =>
+                entry.startsWith(".openclaw.package-backup-"),
+              );
+              if (!backupName) {
+                throw new Error("missing old-package backup during candidate Doctor");
+              }
+              const backupEntry = path.join(globalRoot, backupName, "dist", "index.js");
+              const replacementEntry = path.join(globalRoot, backupName, "dist", "replacement.js");
+              doctorRejected = true;
+              await fs.copyFile(backupEntry, replacementEntry);
+              await fs.chmod(replacementEntry, Number(originalEntryStat.mode & 0o7777n));
+              await fs.utimes(replacementEntry, originalEntryStat.atime, originalEntryStat.mtime);
+              await fs.unlink(backupEntry);
+              await fs.rename(replacementEntry, backupEntry);
+              replacementInode = (await lstat(backupEntry, { bigint: true })).ino;
+              return {
+                name: "openclaw doctor",
+                command: "openclaw doctor --non-interactive --fix",
+                cwd: candidateRoot,
+                durationMs: 0,
+                exitCode: 1,
+                stderrTail: "doctor rejected candidate",
+              };
+            },
+            timeoutMs: 1000,
+          });
+
+          expect(replacementInode).not.toBe(originalEntryStat.ino);
+          expect(result.afterVersion).toBe("1.0.0");
+          expect(result.recovery).toMatchObject({
+            serviceRestartSafe: false,
+            packageRollbackVerified: false,
+          });
+          expect(result.failedStep?.stderrTail).toContain(
+            "rollback verification failed: restored package tree does not match backup",
+          );
+          await expect(fs.readFile(packageEntry, "utf8")).resolves.toBe("export {};\n");
+        } finally {
+          openSpy.mockRestore();
+          lstatSpy.mockRestore();
+        }
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "does not verify rollback when candidate Doctor changes a descendant mtime",
+    async () => {
+      await withTestDir({ prefix: "openclaw-package-recovery-altered-mtime-" }, async (base) => {
+        const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+        const packageRoot = path.join(globalRoot, "openclaw");
+        const packageEntry = path.join(packageRoot, "dist", "index.js");
+        await writePackageRoot(packageRoot, "1.0.0");
+        const originalEntryStat = await fs.lstat(packageEntry, { bigint: true });
+        let doctorRejected = false;
+        const lstat = fs.lstat.bind(fs);
+        const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+          const stat = await lstat(...args);
+          if (
+            doctorRejected &&
+            "ctimeNs" in stat &&
+            String(args[0]).endsWith(`${path.sep}dist${path.sep}index.js`)
+          ) {
+            Object.assign(stat, { ctimeNs: originalEntryStat.ctimeNs });
+          }
+          return stat;
+        });
+        const open = fs.open.bind(fs);
+        const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+          const handle = await open(...args);
+          if (doctorRejected && String(args[0]).endsWith(`${path.sep}dist${path.sep}index.js`)) {
+            const stat = handle.stat.bind(handle);
+            vi.spyOn(handle, "stat").mockImplementation(async () => {
+              const openedStat = await stat({ bigint: true });
+              Object.assign(openedStat, { ctimeNs: originalEntryStat.ctimeNs });
+              return openedStat;
+            });
+          }
+          return handle;
+        });
+
+        try {
+          const result = await runGlobalPackageUpdateSteps({
+            installTarget: createNpmTarget(globalRoot),
+            installSpec: "openclaw@2.0.0",
+            packageName: "openclaw",
+            packageRoot,
+            runCommand: createRootRunner(globalRoot),
+            runStep: stageCandidatePackage,
+            postVerifyStep: async (candidateRoot) => {
+              expect(candidateRoot).toBe(packageRoot);
+              const backupName = (await fs.readdir(globalRoot)).find((entry) =>
+                entry.startsWith(".openclaw.package-backup-"),
+              );
+              if (!backupName) {
+                throw new Error("missing old-package backup during candidate Doctor");
+              }
+              const backupEntry = path.join(globalRoot, backupName, "dist", "index.js");
+              doctorRejected = true;
+              await fs.utimes(backupEntry, originalEntryStat.atime, new Date(1));
+              return {
+                name: "openclaw doctor",
+                command: "openclaw doctor --non-interactive --fix",
+                cwd: candidateRoot,
+                durationMs: 0,
+                exitCode: 1,
+                stderrTail: "doctor rejected candidate",
+              };
+            },
+            timeoutMs: 1000,
+          });
+
+          expect((await lstat(packageEntry, { bigint: true })).mtimeNs).not.toBe(
+            originalEntryStat.mtimeNs,
+          );
+          expect(result.afterVersion).toBe("1.0.0");
+          expect(result.recovery).toMatchObject({
+            serviceRestartSafe: false,
+            packageRollbackVerified: false,
+          });
+          expect(result.failedStep?.stderrTail).toContain(
+            "rollback verification failed: restored package tree does not match backup",
+          );
+        } finally {
+          openSpy.mockRestore();
+          lstatSpy.mockRestore();
+        }
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "does not verify rollback when a parked symlink link count changes without ctime",
+    async () => {
+      await withTestDir({ prefix: "openclaw-package-recovery-symlink-nlink-" }, async (base) => {
+        const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+        const packageRoot = path.join(globalRoot, "openclaw");
+        const packageLink = path.join(packageRoot, "dist", "entry-link.js");
+        await writePackageRoot(packageRoot, "1.0.0");
+        await fs.symlink("index.js", packageLink);
+        const originalLinkStat = await fs.lstat(packageLink, { bigint: true });
+        let doctorRejected = false;
+        let changedLinkCountObserved = false;
+        const lstat = fs.lstat.bind(fs);
+        const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+          const stat = await lstat(...args);
+          if (
+            doctorRejected &&
+            "ctimeNs" in stat &&
+            String(args[0]).endsWith(`${path.sep}dist${path.sep}entry-link.js`)
+          ) {
+            changedLinkCountObserved = true;
+            Object.assign(stat, {
+              nlink: originalLinkStat.nlink + 1n,
+              ctimeNs: originalLinkStat.ctimeNs,
+            });
+          }
+          return stat;
+        });
+
+        try {
+          const result = await runGlobalPackageUpdateSteps({
+            installTarget: createNpmTarget(globalRoot),
+            installSpec: "openclaw@2.0.0",
+            packageName: "openclaw",
+            packageRoot,
+            runCommand: createRootRunner(globalRoot),
+            runStep: stageCandidatePackage,
+            postVerifyStep: async (candidateRoot) => {
+              expect(candidateRoot).toBe(packageRoot);
+              doctorRejected = true;
+              return {
+                name: "openclaw doctor",
+                command: "openclaw doctor --non-interactive --fix",
+                cwd: candidateRoot,
+                durationMs: 0,
+                exitCode: 1,
+                stderrTail: "doctor rejected candidate",
+              };
+            },
+            timeoutMs: 1000,
+          });
+
+          expect(changedLinkCountObserved).toBe(true);
+          expect(result.afterVersion).toBe("1.0.0");
+          expect(result.recovery).toMatchObject({
+            serviceRestartSafe: false,
+            packageRollbackVerified: false,
+          });
+          expect(result.failedStep?.stderrTail).toContain(
+            "rollback verification failed: restored package tree does not match backup",
+          );
+        } finally {
+          lstatSpy.mockRestore();
+        }
+      });
+    },
+  );
+
+  it("does not fail a successful candidate when the rollback metadata probe is unavailable", async () => {
+    await withTestDir({ prefix: "openclaw-package-recovery-probe-unavailable-" }, async (base) => {
+      const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+      const packageRoot = path.join(globalRoot, "openclaw");
+      await writePackageRoot(packageRoot, "1.0.0");
+      const mkdtemp = fs.mkdtemp.bind(fs);
+      const mkdtempSpy = vi.spyOn(fs, "mkdtemp").mockImplementation(async (...args) => {
+        if (args[0].endsWith(".openclaw-update-stage-ctime-")) {
+          throw Object.assign(new Error("metadata probe unavailable"), { code: "EACCES" });
+        }
+        return await mkdtemp(...args);
+      });
+
+      try {
+        const result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: stageCandidatePackage,
+          postVerifyStep: async (candidateRoot) => ({
+            name: "openclaw doctor",
+            command: "openclaw doctor --non-interactive --fix",
+            cwd: candidateRoot,
+            durationMs: 0,
+            exitCode: 0,
+          }),
+          timeoutMs: 1000,
+        });
+
+        expect(result.failedStep).toBeNull();
+        expect(result.afterVersion).toBe("2.0.0");
+        expect(result.recovery).toEqual({ serviceRestartSafe: true, version: "2.0.0" });
+      } finally {
+        mkdtempSpy.mockRestore();
+      }
+    });
+  });
+
   it("keeps rollback unverified when filesystem inode identity is unavailable", async () => {
     await withTestDir({ prefix: "openclaw-package-recovery-no-inode-" }, async (base) => {
       const globalRoot = path.join(base, "prefix", "lib", "node_modules");

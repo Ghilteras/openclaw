@@ -44,6 +44,12 @@ const PACKAGE_MANAGER_SWAP_SOURCE_HARDLINKS = "allow" as const;
 const LAUNCHER_FINGERPRINT_MAX_BYTES = 1024 * 1024;
 const PACKAGE_FINGERPRINT_MAX_BYTES = 1024 * 1024 * 1024;
 const PACKAGE_FINGERPRINT_MAX_ENTRIES = 50_000;
+const PACKAGE_FINGERPRINT_CTIME_BARRIER_TIMEOUT_MS = 2_500;
+
+type PackageTreeFingerprint = {
+  digest: string;
+  latestCtimeNs: bigint;
+};
 
 /**
  * Captures one package-manager or filesystem step from the global update flow.
@@ -813,11 +819,12 @@ async function fingerprintLauncherEntry(entryPath: string): Promise<string | nul
   }
 }
 
-async function fingerprintPackageTree(packageRoot: string): Promise<string | null> {
+async function fingerprintPackageTree(packageRoot: string): Promise<PackageTreeFingerprint | null> {
   const fingerprint = createHash("sha256");
   const hardlinkOwners = new Map<string, string>();
   const observedEntries: Array<{ entryPath: string; stat: BigIntStats }> = [];
   const canonicalPackageRoot = path.resolve(packageRoot);
+  let latestCtimeNs = 0n;
   let bytes = 0;
   let entries = 0;
   const isExternalTarget = (candidatePath: string): boolean => {
@@ -856,10 +863,13 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
       return false;
     }
     observedEntries.push({ entryPath, stat });
+    if (stat.ctimeNs > latestCtimeNs) {
+      latestCtimeNs = stat.ctimeNs;
+    }
     // ctime changes when ownership, ACLs, capabilities, or extended attributes
-    // change. Rename-based parking preserves descendant ctimes; copy fallback
-    // recovery is never marked verified. The root is checked separately before
-    // its rollback rename because that rename changes the root ctime.
+    // change. Rename-based parking preserves descendant identities and timestamps;
+    // copy fallback recovery is never marked verified. The root is checked
+    // separately before its rollback rename because that rename changes its ctime.
     const portableMetadata = [
       Number(stat.mode & 0o7777n),
       stat.uid.toString(),
@@ -867,6 +877,9 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
     ];
     const exactMetadata = [
       ...portableMetadata,
+      relativePath === "" ? null : stat.dev.toString(),
+      relativePath === "" ? null : stat.ino.toString(),
+      relativePath === "" ? null : stat.mtimeNs.toString(),
       relativePath === "" ? null : stat.ctimeNs.toString(),
     ];
     if (stat.isSymbolicLink()) {
@@ -881,7 +894,13 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
         return false;
       }
       fingerprint.update(
-        `${JSON.stringify([relativePath, "symlink", ...exactMetadata, linkTarget])}\n`,
+        `${JSON.stringify([
+          relativePath,
+          "symlink",
+          ...exactMetadata,
+          stat.nlink.toString(),
+          linkTarget,
+        ])}\n`,
       );
       return true;
     }
@@ -988,11 +1007,46 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
         return null;
       }
     }
-    return fingerprint.digest("hex");
+    return { digest: fingerprint.digest("hex"), latestCtimeNs };
   } catch {
     // Fingerprinting must not turn a previously usable package into an update
     // blocker. An incomplete baseline simply prevents a verified rollback claim.
     return null;
+  }
+}
+
+async function establishPackageFingerprintCtimeBarrier(params: {
+  probeParent: string;
+  expectedDevice: bigint;
+  baselineCtimeNs: bigint;
+}): Promise<boolean> {
+  const probeRoot = await fs.mkdtemp(
+    path.join(params.probeParent, ".openclaw-update-stage-ctime-"),
+  );
+  const probePath = path.join(probeRoot, "tick");
+  try {
+    await fs.writeFile(probePath, "");
+    const deadline = Date.now() + PACKAGE_FINGERPRINT_CTIME_BARRIER_TIMEOUT_MS;
+    let writable = true;
+    while (true) {
+      const stat = await fs.lstat(probePath, { bigint: true });
+      if (stat.dev !== params.expectedDevice) {
+        return false;
+      }
+      if (stat.ctimeNs > params.baselineCtimeNs) {
+        return true;
+      }
+      if (Date.now() >= deadline) {
+        return false;
+      }
+      writable = !writable;
+      await fs.chmod(probePath, writable ? 0o600 : 0o400);
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 5);
+      });
+    }
+  } finally {
+    await removePath(probeRoot);
   }
 }
 
@@ -1075,7 +1129,7 @@ async function swapStagedNpmInstall(params: {
   let shimBackupDir: string | undefined;
   let hadPackage = false;
   let previousVersion: string | null = null;
-  let sourcePackageFingerprint: string | null = null;
+  let sourcePackageFingerprint: PackageTreeFingerprint | null = null;
   let sourcePackageRootIdentity: PackageRootIdentity | null = null;
   let parkedPackageRootIdentityVerified = false;
   let parkedPackageRootStats: BigIntStats | null = null;
@@ -1129,7 +1183,7 @@ async function swapStagedNpmInstall(params: {
     if (
       !sourcePackageFingerprint ||
       !restoredFingerprint ||
-      restoredFingerprint !== sourcePackageFingerprint
+      restoredFingerprint.digest !== sourcePackageFingerprint.digest
     ) {
       packageRollbackVerified = false;
       messages.push("rollback verification failed: restored package tree does not match backup");
@@ -1273,6 +1327,33 @@ async function swapStagedNpmInstall(params: {
         sourcePackageFingerprint !== null &&
         parkedPackageRootIdentityVerified &&
         launcherBackupsVerified;
+      // Candidate Doctor can change ACLs, capabilities, or extended attributes
+      // without affecting package bytes. Advance the filesystem metadata clock
+      // past every baseline ctime before exposing the parked tree so any such
+      // later change must alter the restored fingerprint, even on coarse clocks.
+      const parkedFingerprint = sourcePackageFingerprint;
+      let ctimeBarrierVerified = false;
+      let ctimeBarrierError: string | null = null;
+      if (packageRollbackVerified && parkedFingerprint) {
+        try {
+          ctimeBarrierVerified = await establishPackageFingerprintCtimeBarrier({
+            probeParent: targetLayout.globalRoot,
+            expectedDevice: parkedPackageRootStats.dev,
+            baselineCtimeNs:
+              parkedPackageRootStats.ctimeNs > parkedFingerprint.latestCtimeNs
+                ? parkedPackageRootStats.ctimeNs
+                : parkedFingerprint.latestCtimeNs,
+          });
+        } catch (error) {
+          ctimeBarrierError = formatErrorMessage(error);
+        }
+      }
+      if (packageRollbackVerified && !ctimeBarrierVerified) {
+        packageRollbackVerified = false;
+        parkedPackageMetadataFailure = ctimeBarrierError
+          ? `rollback verification unavailable: filesystem metadata clock probe failed: ${ctimeBarrierError}`
+          : "rollback verification unavailable: filesystem metadata clock did not advance before candidate verification";
+      }
     }
     await activateStagedNpmPackageRoot(params.stage.packageRoot, targetPackageRoot);
     for (const shim of shims) {
