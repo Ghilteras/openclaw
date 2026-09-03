@@ -185,8 +185,8 @@ vi.mock("../agents/context.js", () => ({
 }));
 
 vi.mock("../agents/prepared-model-runtime.js", () => ({
-  refreshPreparedModelRuntimeSnapshots: (config: unknown, options?: unknown) =>
-    refreshPreparedModelRuntimeSnapshotsMock(config, options),
+  refreshPreparedModelRuntimeSnapshots: (config: unknown) =>
+    refreshPreparedModelRuntimeSnapshotsMock(config),
 }));
 
 vi.mock("../agents/defaults.js", () => ({
