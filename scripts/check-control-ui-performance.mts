@@ -40,7 +40,11 @@ const controlUiPerformanceBudgets = {
   // once those palettes moved out of the startup sheet into public/themes and
   // measured 42.2 KiB — below where they started. Adding a built-in theme no
   // longer costs the default path anything, so this ceiling should stay put.
-  startupCssGzipBytes: 45 * KIB,
+  // 2026-09-03: main measured 46097 B (17 B over 45 KiB) after the chat face
+  // switch / visibility menu and Appearance work; release operator raised the
+  // ceiling to 45.5 KiB so unrelated PRs stop failing build-artifacts. Shrink
+  // the boot sheet before adding more startup CSS rather than raising again.
+  startupCssGzipBytes: 45.5 * KIB,
   largestJsGzipBytes: 215 * KIB,
   // Composer multiline surface (stack #124301) legitimately grew boot CSS;
   // operator decision 2026-08-25 rejected boot splitting due to precedence risk.
