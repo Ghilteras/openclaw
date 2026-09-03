@@ -31,6 +31,13 @@ export function createBrowserClient(
   handleRequest: (envelope: BrowserRequestEnvelope) => Promise<unknown>,
 ) {
   const request = vi.fn(async (method: string, params?: unknown) => {
+    if (method === "assistant.media.get") {
+      return {
+        available: true,
+        mediaTicket: "ticket-browser-panel",
+        mediaTicketExpiresAt: "2026-09-03T12:00:00.000Z",
+      };
+    }
     if (method !== "browser.request") {
       throw new Error(`Unexpected Gateway method: ${method}`);
     }
@@ -82,6 +89,9 @@ export class TestBrowserPanelHost implements BrowserPanelControllerHost {
 
   addController(controller: ReactiveController): void {
     this.controllers.push(controller);
+    if (controller instanceof BrowserPanelController) {
+      controller.synchronizeClient();
+    }
   }
 
   removeController(controller: ReactiveController): void {

@@ -33,6 +33,59 @@ function requestOptions(
   };
 }
 
+describe("assistant.media.get", () => {
+  it("mints one exact-source capability through the registered Control UI handler", async () => {
+    const loadMedia = vi.fn().mockResolvedValue({
+      available: true,
+      mediaTicket: "ticket-local-media",
+      mediaTicketExpiresAt: "2026-09-03T12:00:00.000Z",
+      mimeType: "image/png",
+      sizeBytes: 42,
+    });
+    const handlers = createControlUiHandlers(vi.fn(), vi.fn(), loadMedia);
+    const respond = vi.fn<RespondFn>();
+    const context = { getRuntimeConfig: vi.fn() };
+
+    await expectDefined(
+      handlers["assistant.media.get"],
+      'handlers["assistant.media.get"] test invariant',
+    )(
+      requestOptions({ source: " /tmp/browser-shot.png " }, respond, {
+        context,
+      }),
+    );
+
+    expect(loadMedia).toHaveBeenCalledWith("/tmp/browser-shot.png", context);
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ mediaTicket: "ticket-local-media" }),
+      undefined,
+    );
+  });
+
+  it.each([
+    {},
+    { source: " " },
+    { source: "/tmp/shot.png", extra: true },
+    { source: "x".repeat(8_193) },
+  ])("rejects invalid or extensible capability params: %#", async (params) => {
+    const loadMedia = vi.fn();
+    const handlers = createControlUiHandlers(vi.fn(), vi.fn(), loadMedia);
+    const respond = vi.fn<RespondFn>();
+
+    await expectDefined(
+      handlers["assistant.media.get"],
+      'handlers["assistant.media.get"] test invariant',
+    )(requestOptions(params, respond));
+
+    expect(loadMedia).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(false, undefined, {
+      code: "INVALID_REQUEST",
+      message: "invalid assistant.media.get params",
+    });
+  });
+});
+
 describe("controlUi.githubPreview", () => {
   afterEach(() => {
     clearRuntimeConfigSnapshot();
