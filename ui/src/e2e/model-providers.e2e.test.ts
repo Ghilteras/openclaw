@@ -219,7 +219,13 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
       const setup = page.locator("openclaw-model-setup-page");
       await setup.waitFor();
       await gateway.waitForRequest("openclaw.setup.detect");
-      await expect.poll(() => setup.evaluate((element) => Boolean(element.embedded))).toBe(true);
+      await expect
+        .poll(() =>
+          setup.evaluate(
+            (element: HTMLElement & { embedded?: boolean }) => element.embedded === true,
+          ),
+        )
+        .toBe(true);
       expect(await gateway.getRequests("openclaw.setup.detect")).toHaveLength(1);
       expect(await gateway.getRequests("models.list")).toHaveLength(modelsListCount);
       expect(await gateway.getRequests("models.authStatus")).toHaveLength(authStatusCount);
