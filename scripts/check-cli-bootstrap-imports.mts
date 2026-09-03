@@ -13,7 +13,7 @@ import {
 import { isDirectRunUrl } from "./lib/direct-run.mjs";
 
 const DEFAULT_ENTRYPOINTS = ["dist/entry.js", "dist/cli/run-main.js"];
-export const DEFAULT_WORKER_DEPLOY_ENTRYPOINTS = [
+const DEFAULT_WORKER_DEPLOY_ENTRYPOINTS = [
   `dist/worker/${WORKER_BUNDLE_ENTRY_PATH}`,
   `dist/worker/${WORKER_BUNDLE_RSYNC_RECEIVER_PATH}`,
   `dist/worker/${WORKER_BUNDLE_GITHUB_EXEC_LAUNCHER_PATH}`,
@@ -356,11 +356,9 @@ export function collectWorkerDeployArtifactErrors(params: CliBootstrapCheckParam
   const rootDir = params.rootDir ?? process.cwd();
   const fsImpl = params.fs ?? fs;
   const selectedEntrypoints = params.workerEntrypoints ?? DEFAULT_WORKER_DEPLOY_ENTRYPOINTS;
-  if (selectedEntrypoints.length === 0) {
-    return [];
-  }
   const entrypoints = selectedEntrypoints.map((entrypoint) => path.resolve(rootDir, entrypoint));
-  const artifactDir = path.dirname(entrypoints[0]!);
+  // prettier-ignore
+  const artifactDir = path.dirname(entrypoints[0] ?? path.resolve(rootDir, "dist/worker/worker.mjs"));
   const artifactNames = new Set(
     entrypoints.flatMap((entrypoint) => {
       const name = path.basename(entrypoint);
@@ -405,6 +403,8 @@ export function collectWorkerDeployArtifactErrors(params: CliBootstrapCheckParam
       }
     }
   } catch {
+    // prettier-ignore
+    if (selectedEntrypoints.length === 0 && !fsImpl.existsSync(artifactDir)) { return []; }
     errors.push(
       `Worker deploy artifact directory ${path.relative(rootDir, artifactDir)} is unreadable.`,
     );

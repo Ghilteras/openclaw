@@ -20,6 +20,7 @@ import { basename, dirname, join, resolve, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { extract } from "tar";
+import ts from "typescript";
 import { expectDefined } from "../packages/normalization-core/src/expect.js";
 import { COMPLETION_SKIP_PLUGIN_COMMANDS_ENV } from "../src/cli/completion-runtime.ts";
 import { escapeRegExp } from "../src/shared/regexp.js";
@@ -91,8 +92,42 @@ const targetRequiredPathCapabilities = [
   ["dist/task-registry-control.runtime.js", "src/tasks/task-registry-control.runtime.ts"],
   ["dist/telegram-ingress-worker.runtime.js", "extensions/telegram/src/telegram-ingress-worker.runtime.ts"],
 ] as const;
-// prettier-ignore
-const targetWorkerEntrypointCapabilities = [["src/worker/worker-deploy-entry.ts", "dist/worker/worker.mjs"], ["src/worker/workspace-rsync-receiver.ts", "dist/worker/workspace-rsync-receiver.mjs"]] as const;
+export function resolveTargetWorkerEntrypoints(rootDir = resolve(".")): string[] {
+  const contractPath = join(rootDir, "src/shared/worker-bundle-hash.ts");
+  // prettier-ignore
+  if (!existsSync(contractPath)) { return []; }
+  // prettier-ignore
+  const sourceFile = ts.createSourceFile(contractPath, readFileSync(contractPath, "utf8"), ts.ScriptTarget.Latest, true);
+  // prettier-ignore
+  const paths = new Map<string, string>(), fail = (message: string): never => { throw new Error(`release-check: target worker bundle ${message}.`); };
+  for (const statement of sourceFile.statements) {
+    // prettier-ignore
+    if (!ts.isVariableStatement(statement)) { if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)) { const alias = statement.exportClause.elements.find((element) => /^WORKER_BUNDLE_.+_PATH$/u.test(element.name.text)); if (alias) { fail(`path constant ${alias.name.text} must use direct declarations`); } } continue; }
+    // prettier-ignore
+    const exported = ts.getModifiers(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
+    for (const declaration of statement.declarationList.declarations) {
+      // prettier-ignore
+      if (!ts.isIdentifier(declaration.name)) { if (/\bWORKER_BUNDLE_.+_PATH\b/u.test(declaration.name.getText(sourceFile))) { fail("path constants must use identifier declarations"); } continue; }
+      const name = declaration.name.text;
+      // prettier-ignore
+      if (!/^WORKER_BUNDLE_.+_PATH$/u.test(name)) { continue; }
+      const initializer = declaration.initializer;
+      // prettier-ignore
+      if (!/^WORKER_BUNDLE_(?:ENTRY|GITHUB_EXEC_LAUNCHER|RSYNC_RECEIVER)_PATH$/u.test(name)) { fail(`contract has unknown path constant ${name}`); }
+      // prettier-ignore
+      if (!initializer || !ts.isStringLiteral(initializer)) { throw new Error(`release-check: target worker bundle path constant ${name} must be an exported string const.`); }
+      // prettier-ignore
+      if (!exported || !(statement.declarationList.flags & ts.NodeFlags.Const)) { fail(`path constant ${name} must be an exported string const`); }
+      const value = initializer.text;
+      // prettier-ignore
+      if (!/^[a-z0-9][a-z0-9._-]*\.mjs$/u.test(value)) { fail(`path constant ${name} has an invalid path`); }
+      // prettier-ignore
+      if (paths.has(name) || [...paths.values()].includes(`dist/worker/${value}`)) { fail("contract has duplicate paths"); }
+      paths.set(name, `dist/worker/${value}`);
+    }
+  }
+  return [...paths.values()].toSorted((left, right) => left.localeCompare(right));
+}
 
 function resolveTargetPackageContentCapabilities(rootDir = resolve(".")) {
   const packageJson = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8")) as {
@@ -151,7 +186,7 @@ function resolveTargetPackageContentCapabilities(rootDir = resolve(".")) {
     ],
     forbiddenPluginSdkPaths,
     authorizedLegacyPaths,
-    workerEntrypoints: targetWorkerEntrypointCapabilities.filter(([source]) => exists(source)).map(([, output]) => output),
+    workerEntrypoints: resolveTargetWorkerEntrypoints(rootDir),
   };
 }
 

@@ -156,6 +156,23 @@ describe("check-cli-bootstrap-imports", () => {
     expect(collectWorkerDeployArtifactErrors({ rootDir: root, workerEntrypoints: [] })).toEqual([]);
   });
 
+  it("rejects unclaimed worker runtime assets when no workers are expected", () => {
+    const root = makeTempRoot();
+    writeFixture(root, "dist/worker/package.json", "{}\n");
+    mkdirSync(join(root, "dist/worker/node_modules"));
+    writeFixture(root, "dist/worker/rogue.mjs", "export {};\n");
+    writeFixture(root, "dist/worker/native.node", "");
+    writeFixture(root, "dist/worker/module.wasm", "");
+
+    expect(collectWorkerDeployArtifactErrors({ rootDir: root, workerEntrypoints: [] })).toEqual([
+      "Worker deploy artifact emits unstaged runtime asset dist/worker/module.wasm.",
+      "Worker deploy artifact emits unstaged runtime asset dist/worker/native.node.",
+      "Worker deploy artifact emits unstaged runtime asset dist/worker/rogue.mjs.",
+      "Worker deploy artifact must not contain a dependency manifest or lifecycle scripts.",
+      "Worker deploy artifact must not contain materialized dependencies.",
+    ]);
+  });
+
   it("validates only explicitly selected worker deploy artifacts", () => {
     const root = makeTempRoot();
     writeFixture(root, "dist/worker/worker.mjs", "export {};\n");

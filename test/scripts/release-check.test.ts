@@ -147,11 +147,13 @@ function getSparseReleaseToolingRoot() {
 
 function runSparseReleaseToolingFixture(params: {
   files: unknown;
+  inspectWorkerCapabilities?: boolean;
   packageExports?: unknown;
   packPaths?: readonly string[];
   pluginSdkEntries?: unknown;
   privatePluginSdkEntries?: unknown;
   sourcePaths?: readonly string[];
+  workerBundleSource?: string;
 }) {
   const root = targetTempDirs.make("openclaw-release-check-target-");
   try {
@@ -175,6 +177,11 @@ function runSparseReleaseToolingFixture(params: {
       mkdirSync(dirname(destination), { recursive: true });
       writeFileSync(destination, "export {};\n");
     }
+    if (params.workerBundleSource !== undefined) {
+      const workerBundlePath = join(root, "src/shared/worker-bundle-hash.ts");
+      mkdirSync(dirname(workerBundlePath), { recursive: true });
+      writeFileSync(workerBundlePath, params.workerBundleSource);
+    }
     mkdirSync(join(root, "scripts", "fixtures"));
     writeFileSync(
       join(root, "scripts/fixtures/packed-plugin-sdk-type-smoke.ts"),
@@ -195,11 +202,13 @@ function runSparseReleaseToolingFixture(params: {
         "--input-type=module",
         "--eval",
         `import { readFileSync } from "node:fs";\n` +
-          `const { collectForbiddenPackPaths, collectMissingPackPaths, createPackedPluginSdkTypescriptSmokeProject } = await import(${JSON.stringify(moduleUrl)});\n` +
+          `const releaseCheck = await import(${JSON.stringify(moduleUrl)});\n` +
+          `const { collectForbiddenPackPaths, collectMissingPackPaths, createPackedPluginSdkTypescriptSmokeProject } = releaseCheck;\n` +
           `createPackedPluginSdkTypescriptSmokeProject({ consumerDir: "consumer", packageSpec: "file:fixture.tgz" });\n` +
           `const conditional = ${JSON.stringify(conditionalPackPaths)};\n` +
           `const packPaths = ${JSON.stringify(packPaths)};\n` +
-          `console.log(JSON.stringify({ conditional: collectMissingPackPaths([]).filter(path => conditional.includes(path)), forbidden: collectForbiddenPackPaths(packPaths), required: collectMissingPackPaths([]).filter(path => packPaths.includes(path)), fixture: readFileSync("consumer/src/index.ts", "utf8") }));`,
+          `const workers = ${params.inspectWorkerCapabilities ? "releaseCheck.resolveTargetWorkerEntrypoints()" : "undefined"};\n` +
+          `console.log(JSON.stringify({ conditional: collectMissingPackPaths([]).filter(path => conditional.includes(path)), forbidden: collectForbiddenPackPaths(packPaths), required: collectMissingPackPaths([]).filter(path => packPaths.includes(path)), fixture: readFileSync("consumer/src/index.ts", "utf8"), workers }));`,
       ],
       {
         cwd: root,
@@ -213,6 +222,7 @@ function runSparseReleaseToolingFixture(params: {
         fixture: string;
         forbidden: string[];
         required: string[];
+        workers?: string[];
       },
       toolingFixture: readFileSync(
         join(toolingRoot, "scripts/fixtures/packed-plugin-sdk-type-smoke.ts"),
@@ -413,6 +423,87 @@ describe("release-check", () => {
         .filter((path) => path !== "scripts/lib/guard-inventory-utils.mjs")
         .toSorted(),
     );
+  });
+
+  it("derives frozen worker requirements from the target bundle manifest", () => {
+    const historical = runSparseReleaseToolingFixture({
+      files: ["dist"],
+      inspectWorkerCapabilities: true,
+      sourcePaths: ["src/worker/github-exec-launcher.ts"],
+      workerBundleSource: `
+        export const WORKER_BUNDLE_ENTRY_PATH = "worker.mjs";
+        export const WORKER_BUNDLE_RSYNC_RECEIVER_PATH = "workspace-rsync-receiver.mjs";
+      `,
+    }).output;
+    const modern = runSparseReleaseToolingFixture({
+      files: ["dist"],
+      inspectWorkerCapabilities: true,
+      workerBundleSource: `
+        export const WORKER_BUNDLE_ENTRY_PATH = "worker.mjs";
+        export const WORKER_BUNDLE_GITHUB_EXEC_LAUNCHER_PATH = "github-exec-launcher.mjs";
+        export const WORKER_BUNDLE_RSYNC_RECEIVER_PATH = "workspace-rsync-receiver.mjs";
+      `,
+    }).output;
+
+    expect(historical.workers).toEqual([
+      "dist/worker/worker.mjs",
+      "dist/worker/workspace-rsync-receiver.mjs",
+    ]);
+    expect(modern.workers).toEqual([
+      "dist/worker/github-exec-launcher.mjs",
+      "dist/worker/worker.mjs",
+      "dist/worker/workspace-rsync-receiver.mjs",
+    ]);
+  });
+
+  it("fails closed on malformed frozen worker bundle contracts", () => {
+    const cases = [
+      {
+        source: 'export const WORKER_BUNDLE_FUTURE_PATH = "future.mjs";',
+        message: "unknown path constant WORKER_BUNDLE_FUTURE_PATH",
+      },
+      {
+        source: 'export let WORKER_BUNDLE_ENTRY_PATH = "worker.mjs";',
+        message: "must be an exported string const",
+      },
+      {
+        source:
+          'export const { WORKER_BUNDLE_ENTRY_PATH } = { WORKER_BUNDLE_ENTRY_PATH: "worker.mjs" };',
+        message: "must use identifier declarations",
+      },
+      {
+        source:
+          'const workerPath = "worker.mjs";\n' +
+          "export { workerPath as WORKER_BUNDLE_ENTRY_PATH };",
+        message: "must use direct declarations",
+      },
+      {
+        source: 'export const WORKER_BUNDLE_ENTRY_PATH = "../worker.mjs";',
+        message: "has an invalid path",
+      },
+      {
+        source:
+          'export const WORKER_BUNDLE_ENTRY_PATH = "worker.mjs";\n' +
+          'export const WORKER_BUNDLE_RSYNC_RECEIVER_PATH = "worker.mjs";',
+        message: "has duplicate paths",
+      },
+    ];
+
+    for (const fixture of cases) {
+      expect(() =>
+        runSparseReleaseToolingFixture({
+          files: ["dist"],
+          inspectWorkerCapabilities: true,
+          workerBundleSource: fixture.source,
+        }),
+      ).toThrow(fixture.message);
+    }
+    expect(
+      runSparseReleaseToolingFixture({
+        files: ["dist"],
+        inspectWorkerCapabilities: true,
+      }).output.workers,
+    ).toEqual([]);
   });
 
   it("rejects malformed target package file declarations", () => {
