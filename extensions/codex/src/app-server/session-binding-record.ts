@@ -286,14 +286,15 @@ const storedSessionIdSchema = z
   .pipe(z.string().min(1))
   .optional()
   .catch(undefined);
+const storedActiveBindingSchema = z.object({
+  version: z.literal(1),
+  state: z.literal("active"),
+  binding: threadBindingSchema,
+  sessionId: storedSessionIdSchema,
+  lease: bindingLeaseSchema.optional().catch(undefined),
+});
 const storedBindingSchema = z.discriminatedUnion("state", [
-  z.object({
-    version: z.literal(1),
-    state: z.literal("active"),
-    binding: threadBindingSchema,
-    sessionId: storedSessionIdSchema,
-    lease: bindingLeaseSchema.optional().catch(undefined),
-  }),
+  storedActiveBindingSchema,
   z.object({
     version: z.literal(1),
     state: z.literal("cleared"),
@@ -302,10 +303,65 @@ const storedBindingSchema = z.discriminatedUnion("state", [
     retired: z.literal(true).optional().catch(undefined),
   }),
 ]);
+const compactionTransitionSchema = z
+  .object({
+    version: z.literal(2),
+    state: z.literal("compaction-transition"),
+    transitionId: z.string().trim().min(1),
+    fromSessionId: z.string().trim().min(1),
+    toSessionId: z.string().trim().min(1),
+    nativeCompactionSyncPending: z.literal(true),
+    previous: z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("active"),
+        value: storedActiveBindingSchema,
+      }),
+      z.object({
+        kind: z.literal("absent"),
+      }),
+    ]),
+    lease: bindingLeaseSchema.optional().catch(undefined),
+  })
+  .strict()
+  .superRefine((transition, context) => {
+    if (transition.fromSessionId === transition.toSessionId) {
+      context.addIssue({
+        code: "custom",
+        message: "compaction transition generations must differ",
+      });
+    }
+    if (transition.previous.kind !== "active") {
+      return;
+    }
+    const previous = transition.previous.value;
+    const previousLease = previous.lease;
+    if (
+      previous.sessionId !== transition.fromSessionId ||
+      Boolean(previousLease) !== Boolean(transition.lease) ||
+      (previousLease &&
+        transition.lease &&
+        (previousLease.token !== transition.lease.token ||
+          previousLease.expiresAt !== transition.lease.expiresAt))
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "compaction transition predecessor snapshot is inconsistent",
+      });
+    }
+  });
 
 // Session-key rows survive transcript/session-id rotation. The stored physical
 // id fences delayed lifecycle cleanup so an old generation cannot clear its successor.
-export type StoredCodexAppServerBinding = z.infer<typeof storedBindingSchema>;
+export type StoredCodexAppServerBindingV1 = z.infer<typeof storedBindingSchema>;
+export type StoredCodexAppServerCompactionTransition = z.infer<
+  typeof compactionTransitionSchema
+>;
+export type StoredCodexAppServerBinding =
+  | StoredCodexAppServerBindingV1
+  | StoredCodexAppServerCompactionTransition;
+export type CodexSessionRuntimeOwnershipInspection =
+  | { kind: "current"; binding: CodexAppServerThreadBinding }
+  | { kind: "compaction-transition"; binding?: CodexAppServerThreadBinding };
 
 /** Stable plugin-state key for one current binding owner. */
 export function bindingStoreKey(identity: CodexAppServerBindingIdentity): string {
@@ -335,18 +391,38 @@ export function bindingStoreKey(identity: CodexAppServerBindingIdentity): string
 
 export function readStoredCodexAppServerBinding(
   value: unknown,
-): StoredCodexAppServerBinding | undefined {
+): StoredCodexAppServerBindingV1 | undefined {
   const result = storedBindingSchema.safeParse(value);
   if (!result.success) {
     return undefined;
   }
   // SAFETY: Parsing validated required fields; normalization only removes optional undefined fields.
-  return stripUndefinedValue(result.data) as StoredCodexAppServerBinding;
+  return stripUndefinedValue(result.data) as StoredCodexAppServerBindingV1;
+}
+
+export function readStoredCodexAppServerCompactionTransition(
+  value: unknown,
+): StoredCodexAppServerCompactionTransition | undefined {
+  const result = compactionTransitionSchema.safeParse(value);
+  if (!result.success) {
+    return undefined;
+  }
+  // SAFETY: Zod validated the transition row; normalization only removes optional undefined fields.
+  return stripUndefinedValue(result.data) as StoredCodexAppServerCompactionTransition;
+}
+
+export function readStoredCodexAppServerBindingValue(
+  value: unknown,
+): StoredCodexAppServerBinding | undefined {
+  return (
+    readStoredCodexAppServerBinding(value) ??
+    readStoredCodexAppServerCompactionTransition(value)
+  );
 }
 
 export function ownsStoredSessionGeneration(
   identity: CodexAppServerBindingIdentity,
-  current: StoredCodexAppServerBinding | undefined,
+  current: StoredCodexAppServerBindingV1 | undefined,
 ): boolean {
   return (
     identity.kind !== "session" || !current?.sessionId || current.sessionId === identity.sessionId
@@ -408,9 +484,38 @@ export function readCurrentCodexAppServerBinding(
   const raw = state.lookup(key);
   const stored = readStoredCodexAppServerBinding(raw);
   if (raw !== undefined && !stored) {
+    if (readStoredCodexAppServerCompactionTransition(raw)) {
+      throw new Error(`Codex binding compaction transition is unresolved: ${key}`);
+    }
     throw new Error(`Invalid Codex app-server binding row: ${key}`);
   }
   return stored?.state === "active" && ownsStoredSessionGeneration(identity, stored)
     ? stored.binding
+    : undefined;
+}
+
+/** Reports retained transitions but exposes ownership only to their exact P/S generations. */
+export function inspectCodexSessionRuntimeOwnership(
+  state: Pick<PluginStateSyncKeyedStore<StoredCodexAppServerBinding>, "lookup">,
+  identity: Extract<CodexAppServerBindingIdentity, { kind: "session" }>,
+): CodexSessionRuntimeOwnershipInspection | undefined {
+  const key = bindingStoreKey(identity);
+  const raw = state.lookup(key);
+  const stored = readStoredCodexAppServerBindingValue(raw);
+  if (raw !== undefined && !stored) {
+    throw new Error(`Invalid Codex app-server binding row: ${key}`);
+  }
+  if (!stored) {
+    return undefined;
+  }
+  if (stored.state === "compaction-transition") {
+    const ownsTransitionGeneration =
+      identity.sessionId === stored.fromSessionId || identity.sessionId === stored.toSessionId;
+    return ownsTransitionGeneration && stored.previous.kind === "active"
+      ? { kind: "compaction-transition", binding: stored.previous.value.binding }
+      : { kind: "compaction-transition" };
+  }
+  return stored.state === "active" && ownsStoredSessionGeneration(identity, stored)
+    ? { kind: "current", binding: stored.binding }
     : undefined;
 }

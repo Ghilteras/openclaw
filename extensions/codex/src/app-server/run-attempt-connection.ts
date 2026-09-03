@@ -207,9 +207,40 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
       bindingIdentity = physicalIdentity;
     }
   }
-  let startupBinding = bindingStore.read(bindingIdentity);
+  // Authenticate a retained transition from its exact embedded snapshot before
+  // recovery mutates it, then return to the ordinary fail-closed binding read.
+  const ownershipInspection =
+    bindingIdentity.kind === "session"
+      ? bindingStore.inspectSessionRuntimeOwnership(bindingIdentity)
+      : undefined;
+  const inspectedBinding =
+    bindingIdentity.kind === "session"
+      ? ownershipInspection?.binding
+      : bindingStore.read(bindingIdentity);
+  assertCodexSessionRuntimeOwnership(inspectedBinding, params.expectedSessionRuntimeOwnership);
+  if (
+    bindingIdentity.kind === "session" &&
+    ownershipInspection?.kind === "compaction-transition"
+  ) {
+    const reclaimed = await reclaimCurrentCodexSessionGeneration({
+      bindingStore,
+      identity: bindingIdentity,
+      config: params.config,
+      storePath: params.sessionTarget?.storePath,
+    });
+    if (!reclaimed) {
+      throw createCodexSessionGenerationSupersededError(bindingIdentity.sessionId);
+    }
+  }
+  let startupBinding =
+    bindingIdentity.kind === "session" ? bindingStore.read(bindingIdentity) : inspectedBinding;
   assertCodexSessionRuntimeOwnership(startupBinding, params.expectedSessionRuntimeOwnership);
-  if (!startupBinding && bindingIdentity.kind === "session" && bindingIdentity.sessionKey) {
+  if (
+    !startupBinding &&
+    bindingIdentity.kind === "session" &&
+    bindingIdentity.sessionKey &&
+    ownershipInspection?.kind !== "compaction-transition"
+  ) {
     const reclaimed = await reclaimCurrentCodexSessionGeneration({
       bindingStore,
       identity: bindingIdentity,
@@ -220,6 +251,7 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
       throw createCodexSessionGenerationSupersededError(bindingIdentity.sessionId);
     }
     startupBinding = bindingStore.read(bindingIdentity);
+    assertCodexSessionRuntimeOwnership(startupBinding, params.expectedSessionRuntimeOwnership);
   }
   preDynamicStartupStages.mark("read-binding");
   const usesSupervisionConnection = startupBinding?.connectionScope === "supervision";

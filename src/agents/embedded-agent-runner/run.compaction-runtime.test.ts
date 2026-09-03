@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ContextEngineRuntimeContext } from "../../context-engine/types.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import { withPluginRuntimeRegistryScope } from "../../plugins/runtime/gateway-request-scope.js";
+import { registerAgentHarness } from "../harness/registry.js";
+import type {
+  AgentHarness,
+  AgentHarnessContextEngineCompactionCommitMutation,
+  AgentHarnessContextEngineCompactionCommitParams,
+} from "../harness/types.js";
 import {
   type RecoveryFixture,
   waitForCompactionAbort,
@@ -68,11 +76,38 @@ describe("embedded compaction recovery authority", () => {
   it.each(["overflow", "timeout"] as const)(
     "records successor target and tokens before an identity observer aborts %s recovery",
     async (kind) => {
+      const registry = createEmptyPluginRegistry();
       await withRecoveryFixture({ oversized: false }, async (fixture) => {
         const { onSessionIdentityMutation } =
           await import("../../sessions/session-lifecycle-events.js");
         const previousSessionId = fixture.loadEntry()?.sessionId;
         const successorId = randomUUID();
+        const withContextEngineCompactionCommit = vi.fn(
+          async <T>(
+            params: AgentHarnessContextEngineCompactionCommitParams,
+            run: (mutation: AgentHarnessContextEngineCompactionCommitMutation) => Promise<T>,
+          ) => {
+            params.assertCurrent();
+            return await run({
+              commit() {},
+              rollback() {
+                throw new Error("unexpected rollback");
+              },
+              complete() {
+                expect(fixture.loadEntry()?.sessionId).toBe(successorId);
+              },
+            });
+          },
+        );
+        withPluginRuntimeRegistryScope(registry, () => {
+          registerAgentHarness({
+            id: "binding-test",
+            label: "Binding Test",
+            supports: () => ({ supported: true }),
+            runAttempt: vi.fn(),
+            withContextEngineCompactionCommit,
+          } satisfies AgentHarness);
+        });
         let atObserver:
           | {
               accepted: ReturnType<RecoveryFixture["getCommittedSuccessor"]>;
@@ -103,7 +138,11 @@ describe("embedded compaction recovery authority", () => {
           },
         });
         try {
-          await expect(fixture.recover(kind)).rejects.toBe(fixture.callerError);
+          await expect(
+            withPluginRuntimeRegistryScope(registry, () =>
+              fixture.recover(kind, false, "binding-test"),
+            ),
+          ).rejects.toBe(fixture.callerError);
           expect(atObserver).toMatchObject({
             accepted: {
               sessionId: successorId,
@@ -115,6 +154,7 @@ describe("embedded compaction recovery authority", () => {
           });
           expect(fixture.getCommittedSuccessor()).toBe(atObserver?.accepted);
           expect(fixture.loadEntry()?.sessionId).toBe(successorId);
+          expect(withContextEngineCompactionCommit).toHaveBeenCalledOnce();
           expect(fixture.maintain).not.toHaveBeenCalled();
           expect(fixture.afterHook).not.toHaveBeenCalled();
           expect(fixture.updates).not.toHaveBeenCalled();
@@ -347,6 +387,7 @@ describe("embedded compaction recovery authority", () => {
   it.each([
     { kind: "overflow", failure: "throw" },
     { kind: "timeout", failure: "safety timeout" },
+    { kind: "overflow", failure: "returned failed successor" },
   ] as const)(
     "retries $kind from committed context after an active backend $failure",
     async ({ kind, failure }) => {
@@ -359,6 +400,7 @@ describe("embedded compaction recovery authority", () => {
         const entryBefore = fixture.loadEntry();
         const targetBefore = fixture.getSessionTarget();
         const sourceError = new Error("backend failed after committing compaction");
+        const failedSuccessorId = randomUUID();
         const originalCompact = fixture.compact.getMockImplementation();
         if (!originalCompact) {
           throw new Error("Fixture must provide the real append implementation");
@@ -376,6 +418,20 @@ describe("embedded compaction recovery authority", () => {
           if (failure === "throw") {
             throw sourceError;
           }
+          if (failure === "returned failed successor") {
+            return {
+              ok: false,
+              compacted: true,
+              reason: sourceError.message,
+              result: {
+                summary: "failed successor must not be adopted",
+                tokensBefore: committed.result?.tokensBefore ?? 4_097,
+                tokensAfter: 1,
+                sessionId: failedSuccessorId,
+                sessionTarget: { ...params.sessionTarget, sessionId: failedSuccessorId },
+              },
+            };
+          }
           return await waitForCompactionAbort(childSignal);
         });
 
@@ -386,9 +442,15 @@ describe("embedded compaction recovery authority", () => {
         expect(fixture.compact).toHaveBeenCalledOnce();
         if (failure === "throw") {
           await expect(fixture.compact.mock.results[0]?.value).rejects.toBe(sourceError);
-        } else {
+        } else if (failure === "safety timeout") {
           expect(childSignal?.aborted).toBe(true);
           await expect(fixture.compact.mock.results[0]?.value).rejects.toBe(childSignal?.reason);
+        } else {
+          await expect(fixture.compact.mock.results[0]?.value).resolves.toMatchObject({
+            ok: false,
+            compacted: true,
+            result: { sessionId: failedSuccessorId },
+          });
         }
         expect.soft(outcome).toEqual(kind === "overflow" ? { action: "retry" } : true);
         const after = await fixture.snapshot();

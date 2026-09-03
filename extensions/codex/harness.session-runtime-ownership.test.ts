@@ -3,6 +3,7 @@ import { createCodexAppServerAgentHarness } from "./harness.js";
 import { clearCodexBindingAfterInvalidImagePayload } from "./src/app-server/run-attempt-state.js";
 import {
   createCodexTestBindingStore,
+  retainCodexTestCompactionTransition,
   sessionBindingIdentity,
   type CodexAppServerThreadBinding,
 } from "./src/app-server/session-binding.test-helpers.js";
@@ -20,6 +21,11 @@ const observedBinding: CodexAppServerThreadBinding = {
   modelProvider: "native-provider",
   authProfileId: "selected-profile",
 };
+const nativeOwnership = {
+  model: "native",
+  auth: "host",
+  modelRef: { provider: "native-provider", model: "native-model" },
+} as const;
 
 function createOwnershipFixture() {
   const bindingStore = createCodexTestBindingStore();
@@ -122,6 +128,25 @@ describe("Codex session runtime ownership", () => {
     expect(fixture.bindingStore.read(identity)).toEqual(binding);
   });
 
+  it.each([
+    { name: "predecessor", sessionId: "session-one", expected: nativeOwnership },
+    { name: "successor", sessionId: "session-two", expected: nativeOwnership },
+    { name: "unrelated generation", sessionId: "session-stale", expected: undefined },
+  ])("inspects retained transition ownership for the $name", async ({ sessionId, expected }) => {
+    const fixture = createOwnershipFixture();
+    await fixture.bindingStore.mutate(identity, {
+      kind: "set",
+      binding: { ...observedBinding, preserveNativeModel: true },
+    });
+    await retainCodexTestCompactionTransition(
+      fixture.bindingStore,
+      { ...identity, sessionId: "session-two" },
+      identity.sessionId,
+    );
+
+    expect(fixture.resolveOwnership({ sessionId })).toEqual(expected);
+  });
+
   it("does not reuse model ownership after binding retirement", async () => {
     const fixture = createOwnershipFixture();
     await fixture.bindingStore.mutate(identity, {
@@ -142,7 +167,7 @@ describe("Codex session runtime ownership", () => {
     "refuses %s admission before reading private state",
     async (reason) => {
       const fixture = createOwnershipFixture();
-      const read = vi.spyOn(fixture.bindingStore, "read");
+      const inspect = vi.spyOn(fixture.bindingStore, "inspectSessionRuntimeOwnership");
       if (reason === "disposed") {
         await fixture.harness.dispose?.();
       }
@@ -155,33 +180,36 @@ describe("Codex session runtime ownership", () => {
       expect(() => fixture.resolveOwnership({ assertCurrent })).toThrow(
         reason === "disposed" ? "harness is disposed" : "admission revoked",
       );
-      expect(read).not.toHaveBeenCalled();
+      expect(inspect).not.toHaveBeenCalled();
     },
   );
 
   it.each(["revoked", "disposed"] as const)(
-    "rejects ownership when admission becomes %s during the binding read",
+    "rejects ownership when admission becomes %s during private ownership inspection",
     async (reason) => {
       const fixture = createOwnershipFixture();
       await fixture.bindingStore.mutate(identity, {
         kind: "set",
         binding: { ...observedBinding, preserveNativeModel: true },
       });
-      const readBinding = fixture.bindingStore.read.bind(fixture.bindingStore);
+      const inspectBinding =
+        fixture.bindingStore.inspectSessionRuntimeOwnership.bind(fixture.bindingStore);
       let current = true;
       const cleanup: { disposal?: Promise<void> } = {};
-      vi.spyOn(fixture.bindingStore, "read").mockImplementationOnce((requestedIdentity) => {
-        const binding = readBinding(requestedIdentity);
-        if (reason === "disposed") {
-          const disposal = fixture.harness.dispose?.();
-          if (disposal) {
-            cleanup.disposal = disposal;
+      vi.spyOn(fixture.bindingStore, "inspectSessionRuntimeOwnership").mockImplementationOnce(
+        (requestedIdentity) => {
+          const inspection = inspectBinding(requestedIdentity);
+          if (reason === "disposed") {
+            const disposal = fixture.harness.dispose?.();
+            if (disposal) {
+              cleanup.disposal = disposal;
+            }
+          } else {
+            current = false;
           }
-        } else {
-          current = false;
-        }
-        return binding;
-      });
+          return inspection;
+        },
+      );
       try {
         expect(() =>
           fixture.resolveOwnership({

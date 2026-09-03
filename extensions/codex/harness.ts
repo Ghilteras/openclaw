@@ -124,7 +124,9 @@ export function createCodexAppServerAgentHarness(
         }
       };
       assertCurrent();
-      const binding = options.bindingStore.read(sessionBindingIdentity(params));
+      const binding = options.bindingStore.inspectSessionRuntimeOwnership(
+        sessionBindingIdentity(params),
+      )?.binding;
       assertCurrent();
       return binding?.preserveNativeModel === true
         ? {
@@ -318,6 +320,28 @@ export function createCodexAppServerAgentHarness(
         bindingStore: options.bindingStore,
         pluginConfig: options?.resolvePluginConfig?.() ?? options?.pluginConfig,
       });
+    },
+    withContextEngineCompactionCommit: async (params, run) => {
+      const assertCurrent = () => {
+        params.assertCurrent();
+        if (disposed) {
+          throw new Error("Codex agent harness is disposed");
+        }
+      };
+      assertCurrent();
+      const result = await options.bindingStore.withContextEngineCompactionCommit(
+        sessionBindingIdentity(params),
+        params.previousSessionId,
+        assertCurrent,
+        async (mutation) => {
+          assertCurrent();
+          const value = await run(mutation);
+          assertCurrent();
+          return value;
+        },
+      );
+      assertCurrent();
+      return result;
     },
     withSessionDeletion: async (params, run) => {
       const { withCodexAppServerSessionDeletion } =

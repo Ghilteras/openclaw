@@ -7,6 +7,11 @@ import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js"
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ContextEngine, ContextEngineRuntimeContext } from "../../context-engine/types.js";
+import type {
+  AgentHarness,
+  AgentHarnessContextEngineCompactionCommitMutation,
+  AgentHarnessContextEngineCompactionCommitParams,
+} from "../harness/types.js";
 import {
   acquireAgentRunPreparedModelRuntimeMock,
   contextEngineCompactMock,
@@ -402,6 +407,121 @@ describe("queued compaction successor ownership", () => {
       expect(engineInput).toBeDefined();
       expect(engineInput?.runtimeContext).not.toHaveProperty("onCommitted");
       expect(engineInput?.runtimeContext?.sessionEntry).not.toHaveProperty("activeWriterRunId");
+    },
+  );
+
+  it("threads the queued harness through the successor callback before maintenance", async () => {
+    const registry = await import("../harness/registry.js");
+    const { requireActivePluginRegistry } = await import("../../plugins/runtime.js");
+    const order: string[] = [];
+    const withContextEngineCompactionCommit = vi.fn(
+      async <T>(
+        _params: AgentHarnessContextEngineCompactionCommitParams,
+        run: (mutation: AgentHarnessContextEngineCompactionCommitMutation) => Promise<T>,
+      ): Promise<T> =>
+        await run({
+          commit() {
+            order.push("transition");
+          },
+          rollback() {
+            throw new Error("unexpected rollback");
+          },
+          complete() {
+            order.push("completed");
+          },
+        }),
+    );
+    registry.registerAgentHarness({
+      id: "codex",
+      label: "Queued transition owner",
+      supports: () => ({ supported: true }),
+      runAttempt: vi.fn(),
+      withContextEngineCompactionCommit,
+    } satisfies AgentHarness);
+    const pluginRegistry = requireActivePluginRegistry();
+    const previousAcquire = acquireAgentRunPreparedModelRuntimeMock.getMockImplementation()!;
+    acquireAgentRunPreparedModelRuntimeMock.mockImplementation(async (input) => {
+      const lease = await previousAcquire(input);
+      return { ...lease, snapshot: { ...lease.snapshot, pluginRegistry } };
+    });
+    maintain.mockImplementationOnce(async () => {
+      order.push("maintenance");
+      return { changed: false, bytesFreed: 0, rewrittenEntries: 0 };
+    });
+    try {
+      await expect(
+        compact(compactParams(), {
+          onCommitted: () => {
+            order.push("published");
+          },
+        }),
+      ).resolves.toMatchObject({ ok: true, compacted: true });
+      expect(withContextEngineCompactionCommit).toHaveBeenCalledOnce();
+      expect(order).toEqual(["transition", "completed", "published", "maintenance"]);
+    } finally {
+      acquireAgentRunPreparedModelRuntimeMock.mockImplementation(previousAcquire);
+      registry.clearAgentHarnesses();
+    }
+  });
+
+  it.each(["onCommitted", "maintenance"] as const)(
+    "keeps native synchronization pending when cancellation occurs during %s",
+    async (phase) => {
+      const registry = await import("../harness/registry.js");
+      const { requireActivePluginRegistry } = await import("../../plugins/runtime.js");
+      const controller = new AbortController();
+      let nativeSyncPending = false;
+      registry.registerAgentHarness({
+        id: "codex",
+        label: "Queued native synchronization owner",
+        supports: () => ({ supported: true }),
+        runAttempt: vi.fn(),
+        withContextEngineCompactionCommit: async (_params, run) =>
+          await run({
+            commit() {
+              nativeSyncPending = true;
+            },
+            rollback() {
+              nativeSyncPending = false;
+            },
+            complete() {},
+          }),
+      } satisfies AgentHarness);
+      const pluginRegistry = requireActivePluginRegistry();
+      const previousAcquire = acquireAgentRunPreparedModelRuntimeMock.getMockImplementation()!;
+      acquireAgentRunPreparedModelRuntimeMock.mockImplementation(async (input) => {
+        const lease = await previousAcquire(input);
+        return { ...lease, snapshot: { ...lease.snapshot, pluginRegistry } };
+      });
+      if (phase === "maintenance") {
+        maintain.mockImplementationOnce(async () => {
+          controller.abort(new Error("cancel during maintenance"));
+          return { changed: false, bytesFreed: 0, rewrittenEntries: 0 };
+        });
+      }
+      try {
+        await expect(
+          compact(compactParams(controller.signal), {
+            ...(phase === "onCommitted"
+              ? {
+                  onCommitted: () => {
+                    controller.abort(new Error("cancel after host commit"));
+                  },
+                }
+              : {}),
+          }),
+        ).resolves.toMatchObject({
+          ok: true,
+          compacted: true,
+          result: { sessionId: "successor" },
+        });
+        expect(nativeSyncPending).toBe(true);
+        expect(loadSessionEntry(target())).toMatchObject({ sessionId: "successor" });
+        expect(maybeCompactAgentHarnessSessionMock).not.toHaveBeenCalled();
+      } finally {
+        acquireAgentRunPreparedModelRuntimeMock.mockImplementation(previousAcquire);
+        registry.clearAgentHarnesses();
+      }
     },
   );
 

@@ -13,7 +13,10 @@ import {
   retainCodexAppServerLiveThread,
 } from "./client-runtime.js";
 import { CodexAppServerRpcError, type CodexAppServerClient } from "./client.js";
-import { maybeCompactCodexAppServerSession as maybeCompactCodexAppServerSessionImpl } from "./compact.js";
+import {
+  maybeCompactCodexAppServerSession as maybeCompactCodexAppServerSessionImpl,
+  synchronizePendingCodexNativeCompaction,
+} from "./compact.js";
 import { resolveCodexSupervisionAppServerRuntimeOptions } from "./config.js";
 import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key.js";
 import type { CodexServerNotification } from "./protocol.js";
@@ -268,6 +271,79 @@ describe("maybeCompactCodexAppServerSession", () => {
       result: { details: { reason: "native_tool_policy_restricted" } },
     });
     expect(fake.request).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["native-tool-policy", { nativeToolPolicyRestricted: true }],
+    ["ring-zero", { ringZeroConfigFingerprint: "ring-zero-1" }],
+  ] as const)(
+    "requires rotation for pending native compaction on a %s binding",
+    async (_, patch) => {
+      const fake = createFakeCodexClient();
+      const sessionFile = await writeTestBinding({
+        nativeCompactionSyncPending: true,
+        ...patch,
+      });
+      const expectedBinding = await readCodexAppServerBinding(sessionFile);
+      if (!expectedBinding) {
+        throw new Error("expected pending Codex binding");
+      }
+
+      await expect(
+        synchronizePendingCodexNativeCompaction(
+          {
+            sessionId: "session-1",
+            sessionKey: "agent:main:session-1",
+            sessionFile,
+            workspaceDir: tempDir,
+            trigger: "budget",
+          },
+          {
+            bindingStore: testCodexAppServerBindingStore,
+            clientFactory: async () => fake.client,
+            allowNonManualNativeRequest: true,
+            nativeCompactionRequest: "after_context_engine",
+            expectedBinding,
+          },
+        ),
+      ).resolves.toEqual({ kind: "rotation_required", binding: expectedBinding });
+      expect(fake.request).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps transient host isolation retryable for an unrestricted pending binding", async () => {
+    const fake = createFakeCodexClient();
+    const sessionFile = await writeTestBinding({ nativeCompactionSyncPending: true });
+    const expectedBinding = await readCodexAppServerBinding(sessionFile);
+    if (!expectedBinding) {
+      throw new Error("expected pending Codex binding");
+    }
+
+    await expect(
+      synchronizePendingCodexNativeCompaction(
+        {
+          sessionId: "session-1",
+          sessionKey: "agent:main:session-1",
+          sessionFile,
+          workspaceDir: tempDir,
+          trigger: "budget",
+          nativeToolSurface: "host-isolated",
+        },
+        {
+          bindingStore: testCodexAppServerBindingStore,
+          clientFactory: async () => fake.client,
+          allowNonManualNativeRequest: true,
+          nativeCompactionRequest: "after_context_engine",
+          expectedBinding,
+        },
+      ),
+    ).resolves.toEqual({
+      kind: "retry_pending",
+      reason: "native compaction is unavailable for a host-isolated Codex session",
+      binding: expectedBinding,
+    });
+    expect(fake.request).not.toHaveBeenCalled();
+    await expect(readCodexAppServerBinding(sessionFile)).resolves.toEqual(expectedBinding);
   });
 
   it("compacts a warm session without displacing its independently retained sibling", async () => {
@@ -673,6 +749,7 @@ describe("maybeCompactCodexAppServerSession", () => {
       fingerprint: "fingerprint-1",
     };
     const sessionFile = await writeTestBinding({
+      nativeCompactionSyncPending: true,
       contextEngine: {
         schemaVersion: 1,
         engineId: "lossless-claw",
@@ -711,6 +788,7 @@ describe("maybeCompactCodexAppServerSession", () => {
       fingerprint: "fingerprint-1",
     };
     const sessionFile = await writeTestBinding({
+      nativeCompactionSyncPending: true,
       contextEngine: {
         schemaVersion: 1,
         engineId: "lossless-claw",
@@ -1418,6 +1496,7 @@ describe("maybeCompactCodexAppServerSession", () => {
       fingerprint: "fingerprint-1",
     };
     const sessionFile = await writeTestBinding({
+      nativeCompactionSyncPending: true,
       contextEngine: {
         schemaVersion: 1,
         engineId: "lossless-claw",
@@ -1465,6 +1544,64 @@ describe("maybeCompactCodexAppServerSession", () => {
     await expect(readCodexAppServerBinding(sessionFile)).resolves.toMatchObject({
       threadId: "thread-1",
       contextEngine: { projection },
+      nativeCompactionSyncPending: true,
+    });
+  });
+
+  it("keeps sync state when completion belongs to a different compaction turn", async () => {
+    const fake = createFakeCodexClient({ autoCompleteCompaction: false });
+    setCodexAppServerClientFactoryForTest(async () => fake.client);
+    const sessionFile = await writeTestBinding({
+      nativeCompactionSyncPending: true,
+      contextEngine: {
+        schemaVersion: 1,
+        engineId: "lossless-claw",
+        policyFingerprint: "policy-1",
+      },
+    });
+    const pendingResult = maybeCompactCodexAppServerSession(
+      {
+        sessionId: "session-1",
+        sessionKey: "agent:main:session-1",
+        sessionFile,
+        workspaceDir: tempDir,
+        trigger: "budget",
+      },
+      {
+        allowNonManualNativeRequest: true,
+        nativeCompactionRequest: "after_context_engine",
+      },
+    );
+    await vi.waitFor(() => expect(fake.request).toHaveBeenCalledOnce());
+    fake.emit({
+      method: "turn/started",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "compact-turn-current", threadId: "thread-1", status: "inProgress" },
+      },
+    });
+    fake.emit({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "compact-turn-other",
+        item: { id: "compact-item-other", type: "contextCompaction" },
+      },
+    });
+    fake.emit({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "compact-turn-current", threadId: "thread-1", status: "failed" },
+      },
+    });
+
+    await expect(pendingResult).resolves.toMatchObject({
+      ok: false,
+      compacted: false,
+    });
+    await expect(readCodexAppServerBinding(sessionFile)).resolves.toMatchObject({
+      threadId: "thread-1",
       nativeCompactionSyncPending: true,
     });
   });

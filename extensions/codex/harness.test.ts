@@ -467,6 +467,52 @@ describe("Codex agent harness supports()", () => {
   });
 });
 
+describe("Codex agent harness context-engine compaction commit", () => {
+  it("moves only the exact predecessor binding through the host callback", async () => {
+    const bindingStore = createCodexTestBindingStore();
+    const harness = createCodexAppServerAgentHarness({ bindingStore });
+    const withContextEngineCompactionCommit = harness.withContextEngineCompactionCommit;
+    if (!withContextEngineCompactionCommit) {
+      throw new Error("expected Codex context-engine compaction commit");
+    }
+    const sessionKey = "agent:worker:main";
+    const previous = sessionBindingIdentity({
+      agentId: "worker",
+      sessionId: "session-1",
+      sessionKey,
+    });
+    const successor = { ...previous, sessionId: "session-2" };
+    await bindingStore.mutate(previous, {
+      kind: "set",
+      binding: { threadId: "thread-1", cwd: "/repo" },
+    });
+    const assertCurrent = vi.fn();
+    await expect(
+      withContextEngineCompactionCommit(
+        {
+          config: {},
+          agentId: "worker",
+          sessionKey,
+          previousSessionId: previous.sessionId,
+          sessionId: successor.sessionId,
+          assertCurrent,
+        },
+        async (mutation) => {
+          mutation.commit();
+          expect(() => bindingStore.read(previous)).toThrow("transition is unresolved");
+          mutation.complete();
+          return "completed";
+        },
+      ),
+    ).resolves.toBe("completed");
+
+    expect(bindingStore.read(previous)).toBeUndefined();
+    expect(bindingStore.read(successor)).toMatchObject({ threadId: "thread-1" });
+    expect(assertCurrent).toHaveBeenCalled();
+  });
+
+});
+
 describe("Codex agent harness reset()", () => {
   it("is idempotent before the retained session has a binding", async () => {
     const bindingStore = createCodexTestBindingStore();

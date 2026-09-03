@@ -4,7 +4,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import type { InternalSessionEntry } from "../../config/sessions/types.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import type { HookRunner } from "../../plugins/hooks.js";
+import { withPluginRuntimeRegistryScope } from "../../plugins/runtime/gateway-request-scope.js";
 import {
   getActiveGatewayRootWorkCount,
   markGatewayRestartDraining,
@@ -13,6 +15,12 @@ import {
 } from "../../process/gateway-work-admission.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import type { PreparedAgentRunAdmission } from "../admitted-run-context.js";
+import { getRegisteredAgentHarness, registerAgentHarness } from "../harness/registry.js";
+import type {
+  AgentHarness,
+  AgentHarnessContextEngineCompactionCommitMutation,
+  AgentHarnessContextEngineCompactionCommitParams,
+} from "../harness/types.js";
 import type {
   AcceptedCompactionSuccessor,
   acceptCompactionSuccessor,
@@ -30,7 +38,7 @@ vi.mock("../../plugins/hook-runner-global.js", () => ({
 }));
 
 async function withAcceptanceFixture(
-  options: { claimWriter?: boolean },
+  options: { claimWriter?: boolean; agentHarnessId?: string },
   body: (fixture: {
     target: AcceptanceInput["currentTarget"];
     entry: InternalSessionEntry;
@@ -44,6 +52,7 @@ async function withAcceptanceFixture(
     replaceWriter: () => Promise<void>;
     replaceEntry: (patch: Partial<InternalSessionEntry>) => Promise<unknown>;
     deleteEntry: () => Promise<unknown>;
+    rejectSuccessorWrite: () => () => void;
     observeIdentity: (observer: () => void) => void;
     writeLegacyArtifact: () => Promise<string>;
   }) => Promise<void>,
@@ -67,6 +76,7 @@ async function withAcceptanceFixture(
         await import("../../sessions/session-lifecycle-events.js");
       const { forgetActiveSessionForShutdown } =
         await import("../../gateway/active-sessions-shutdown-tracker.js");
+      const { openOpenClawAgentDatabase } = await import("../../state/openclaw-agent-db.js");
       const { acceptCompactionSuccessor } = await import("./compaction-successor.js");
       const target = {
         agentId: "main",
@@ -79,6 +89,7 @@ async function withAcceptanceFixture(
         lifecycleRevision: randomUUID(),
         updatedAt: 1,
         compactionCount: 7,
+        ...(options.agentHarnessId ? { agentHarnessId: options.agentHarnessId } : {}),
       });
       await appendTranscriptMessage(target, {
         cwd: state.workspaceDir,
@@ -132,6 +143,7 @@ async function withAcceptanceFixture(
           },
           assertActive,
           config: {},
+          contextEngineOwnsCompaction: true,
           result: {
             ok: true,
             compacted: true,
@@ -185,6 +197,23 @@ async function withAcceptanceFixture(
               removals: [{ sessionKey: target.sessionKey }],
               skipMaintenance: true,
             }),
+          rejectSuccessorWrite: () => {
+            const database = openOpenClawAgentDatabase({
+              agentId: target.agentId,
+              path: target.storePath,
+            });
+            const trigger = `reject_compaction_successor_${successorId.replaceAll("-", "_")}`;
+            database.db.exec(`
+              CREATE TRIGGER ${trigger}
+              BEFORE UPDATE OF current_session_id ON session_nodes
+              WHEN OLD.session_key = '${target.sessionKey}'
+                AND NEW.current_session_id = '${successorId}'
+              BEGIN
+                SELECT RAISE(ABORT, 'injected compaction successor failure');
+              END;
+            `);
+            return () => database.db.exec(`DROP TRIGGER ${trigger};`);
+          },
           observeIdentity: (observer) => {
             unsubscriptions.push(
               onSessionIdentityMutation((mutation) => {
@@ -272,24 +301,23 @@ describe("acceptCompactionSuccessor", () => {
     },
   );
 
-  it.each([false, true])(
-    "does not write or notify when the accepted identity is unchanged (compacted=%s)",
-    async (compacted) => {
-      await withAcceptanceFixture({}, async (fixture) => {
-        const before = fixture.loadEntry();
-        const identity = vi.fn();
-        fixture.observeIdentity(identity);
-        const accepted = await fixture.accept({ result: { ok: true, compacted } });
-        expect(accepted.previousSessionId).toBeUndefined();
-        expect(accepted.sessionTarget).toEqual(fixture.target);
-        expect(fixture.loadEntry()).toEqual(before);
-        expect(fixture.facts).toEqual([]);
-        expect(identity).not.toHaveBeenCalled();
-        expect(hooks.runSessionEnd).not.toHaveBeenCalled();
-        expect(hooks.runSessionStart).not.toHaveBeenCalled();
+  it("records same-ID acceptance without rewriting host metadata or lifecycle", async () => {
+    await withAcceptanceFixture({}, async (fixture) => {
+      const before = fixture.loadEntry();
+      const identity = vi.fn();
+      fixture.observeIdentity(identity);
+      const accepted = await fixture.accept({
+        result: { ok: true, compacted: true },
       });
-    },
-  );
+      expect(accepted.previousSessionId).toBeUndefined();
+      expect(accepted.sessionTarget).toEqual(fixture.target);
+      expect(fixture.loadEntry()).toEqual(before);
+      expect(fixture.facts).toEqual([accepted]);
+      expect(identity).not.toHaveBeenCalled();
+      expect(hooks.runSessionEnd).not.toHaveBeenCalled();
+      expect(hooks.runSessionStart).not.toHaveBeenCalled();
+    });
+  });
 
   it.each([
     { ok: false, compacted: true },
@@ -373,6 +401,275 @@ describe("acceptCompactionSuccessor", () => {
       expect(accepted.entry.sessionId).toBe(fixture.successorId);
       expect(fixture.loadEntry()).toEqual(accepted.entry);
       expect(fixture.assertActive).toThrow(fixture.callerError);
+    });
+  });
+
+  it("commits same-ID native synchronization without rewriting host session metadata", async () => {
+    await withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), async () => {
+      await withAcceptanceFixture({ agentHarnessId: "binding-test" }, async (fixture) => {
+        const before = fixture.loadEntry();
+        let nativeSyncPending = false;
+        registerAgentHarness({
+          id: "binding-test",
+          label: "Binding Test",
+          supports: () => ({ supported: true }),
+          runAttempt: vi.fn(),
+          withContextEngineCompactionCommit: async (_params, run) =>
+            await run({
+              commit() {
+                nativeSyncPending = true;
+              },
+              rollback() {
+                nativeSyncPending = false;
+              },
+              complete() {},
+            }),
+        } satisfies AgentHarness);
+
+        const accepted = await fixture.accept({
+          harnessRuntime: "binding-test",
+          result: {
+            ok: true,
+            compacted: true,
+            result: {
+              summary: "same generation",
+              tokensBefore: 4_097,
+              tokensAfter: 3_000,
+              sessionTarget: { sessionId: fixture.target.sessionId },
+            },
+          },
+        });
+
+        expect(nativeSyncPending).toBe(true);
+        expect(accepted.previousSessionId).toBeUndefined();
+        expect(accepted.entry).toEqual(before);
+        expect(fixture.loadEntry()).toEqual(before);
+        expect(fixture.facts).toEqual([accepted]);
+        expect(hooks.runSessionEnd).not.toHaveBeenCalled();
+        expect(hooks.runSessionStart).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  it("does not invoke the harness commit when the context engine does not own compaction", async () => {
+    await withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), async () => {
+      await withAcceptanceFixture({ agentHarnessId: "binding-test" }, async (fixture) => {
+        const withContextEngineCompactionCommit = vi.fn();
+        registerAgentHarness({
+          id: "binding-test",
+          label: "Binding Test",
+          supports: () => ({ supported: true }),
+          runAttempt: vi.fn(),
+          withContextEngineCompactionCommit,
+        } satisfies AgentHarness);
+
+        await expect(
+          fixture.accept({
+            harnessRuntime: "binding-test",
+            contextEngineOwnsCompaction: false,
+          }),
+        ).resolves.toMatchObject({ sessionId: fixture.successorId });
+        expect(withContextEngineCompactionCommit).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  it("completes the selected harness commit before identity and lifecycle observers", async () => {
+    const order: string[] = [];
+    await withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), async () => {
+      await withAcceptanceFixture({ agentHarnessId: "binding-test" }, async (fixture) => {
+        const withContextEngineCompactionCommit = vi.fn(
+          async <T>(
+            params: AgentHarnessContextEngineCompactionCommitParams,
+            run: (mutation: AgentHarnessContextEngineCompactionCommitMutation) => Promise<T>,
+          ) => {
+            params.assertCurrent();
+            expect(params).toMatchObject({
+              config: {},
+              agentId: fixture.target.agentId,
+              sessionKey: fixture.target.sessionKey,
+              previousSessionId: fixture.target.sessionId,
+              sessionId: fixture.successorId,
+            });
+            return await run({
+              commit() {
+                params.assertCurrent();
+                order.push("transition");
+              },
+              rollback() {
+                throw new Error("unexpected rollback");
+              },
+              complete() {
+                params.assertCurrent();
+                expect(fixture.loadEntry()?.sessionId).toBe(fixture.successorId);
+                fixture.assertActive();
+                order.push("completed");
+              },
+            });
+          },
+        );
+        const harness = {
+          id: "binding-test",
+          label: "Binding Test",
+          supports: () => ({ supported: true as const }),
+          async runAttempt() {
+            throw new Error("not used");
+          },
+          withContextEngineCompactionCommit,
+        } satisfies AgentHarness;
+        registerAgentHarness(harness);
+        hooks.hasHooks.mockImplementation((name) => name === "session_end");
+        hooks.runSessionEnd.mockImplementationOnce(async () => {
+          order.push("observed");
+        });
+        fixture.observeIdentity(fixture.stop);
+
+        const acceptance = fixture.accept({
+          harnessRuntime: harness.id,
+          onCommitted: () => {
+            order.push("published");
+            throw new Error("post-commit publication failed");
+          },
+        });
+        const accepted = await acceptance;
+
+        await vi.waitFor(() => expect(getActiveGatewayRootWorkCount()).toBe(0));
+        expect(accepted.entry.sessionId).toBe(fixture.successorId);
+        expect(fixture.assertActive).toThrow(fixture.callerError);
+        expect(withContextEngineCompactionCommit).toHaveBeenCalledOnce();
+        expect(order).toEqual(["transition", "completed", "published", "observed"]);
+      });
+    });
+  });
+
+  it("rolls back a prepared harness transition when the host SQL write fails", async () => {
+    await withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), async () => {
+      await withAcceptanceFixture({ agentHarnessId: "binding-test" }, async (fixture) => {
+        const before = fixture.loadEntry();
+        const mutation = {
+          commit: vi.fn(),
+          rollback: vi.fn(),
+          complete: vi.fn(),
+        } satisfies AgentHarnessContextEngineCompactionCommitMutation;
+        const withContextEngineCompactionCommit = vi.fn(
+          async <T>(
+            _params: AgentHarnessContextEngineCompactionCommitParams,
+            run: (prepared: AgentHarnessContextEngineCompactionCommitMutation) => Promise<T>,
+          ) => await run(mutation),
+        );
+        registerAgentHarness({
+          id: "binding-test",
+          label: "Binding Test",
+          supports: () => ({ supported: true }),
+          runAttempt: vi.fn(),
+          withContextEngineCompactionCommit,
+        } satisfies AgentHarness);
+        const removeFailure = fixture.rejectSuccessorWrite();
+        try {
+          await expect(fixture.accept({ harnessRuntime: "binding-test" })).rejects.toThrow(
+            "injected compaction successor failure",
+          );
+        } finally {
+          removeFailure();
+        }
+        expect(fixture.loadEntry()).toEqual(before);
+        expect(fixture.facts).toEqual([]);
+        expect(mutation.commit).toHaveBeenCalledOnce();
+        expect(mutation.rollback).toHaveBeenCalledOnce();
+        expect(mutation.complete).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  it("records host success when harness completion fails after COMMIT", async () => {
+    await withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), async () => {
+      await withAcceptanceFixture({ agentHarnessId: "binding-test" }, async (fixture) => {
+        const mutation = {
+          commit: vi.fn(),
+          rollback: vi.fn(),
+          complete: vi.fn(() => {
+            throw new Error("native transition remains recoverable");
+          }),
+        } satisfies AgentHarnessContextEngineCompactionCommitMutation;
+        registerAgentHarness({
+          id: "binding-test",
+          label: "Binding Test",
+          supports: () => ({ supported: true }),
+          runAttempt: vi.fn(),
+          withContextEngineCompactionCommit: async (_params, run) => await run(mutation),
+        } satisfies AgentHarness);
+
+        const accepted = await fixture.accept({ harnessRuntime: "binding-test" });
+
+        expect(fixture.facts).toEqual([accepted]);
+        expect(fixture.loadEntry()?.sessionId).toBe(fixture.successorId);
+        expect(mutation.commit).toHaveBeenCalledOnce();
+        expect(mutation.complete).toHaveBeenCalledOnce();
+        expect(mutation.rollback).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  it("fails closed before commit when a registered transition owner is unavailable", async () => {
+    await withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), async () => {
+      await withAcceptanceFixture({ agentHarnessId: "binding-test" }, async (fixture) => {
+        const before = fixture.loadEntry();
+        const withContextEngineCompactionCommit = vi.fn();
+        registerAgentHarness(
+          {
+            id: "binding-test",
+            label: "Binding Test",
+            supports: () => ({ supported: true }),
+            runAttempt: vi.fn(),
+            withContextEngineCompactionCommit,
+          } satisfies AgentHarness,
+          { ownerPluginId: "missing-owner" },
+        );
+
+        await expect(
+          fixture.accept({ harnessRuntime: "binding-test" }),
+        ).rejects.toThrow(
+          "Agent harness binding-test context-engine compaction owner is not current",
+        );
+        expect(fixture.loadEntry()).toEqual(before);
+        expect(withContextEngineCompactionCommit).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  it("fences a replaced harness lifecycle before either transition commits", async () => {
+    await withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), async () => {
+      await withAcceptanceFixture({ agentHarnessId: "binding-test" }, async (fixture) => {
+        const before = fixture.loadEntry();
+        const harness: AgentHarness = {
+          id: "binding-test",
+          label: "Binding Test",
+          supports: () => ({ supported: true }),
+          runAttempt: vi.fn(),
+          withContextEngineCompactionCommit: async (transitionParams, run) => {
+            const registeredHarness = getRegisteredAgentHarness("binding-test")?.harness;
+            if (!registeredHarness) {
+              throw new Error("expected registered binding-test harness");
+            }
+            registeredHarness.withContextEngineCompactionCommit = vi.fn();
+            transitionParams.assertCurrent();
+            return await run({
+              commit() {},
+              rollback() {},
+              complete() {},
+            });
+          },
+        };
+        registerAgentHarness(harness);
+
+        await expect(
+          fixture.accept({ harnessRuntime: "binding-test" }),
+        ).rejects.toThrow(
+          "Agent harness binding-test changed during context-engine compaction commit",
+        );
+        expect(fixture.loadEntry()).toEqual(before);
+        expect(fixture.facts).toEqual([]);
+      });
     });
   });
 

@@ -8,6 +8,7 @@ import { coerceRequiredSqliteNumber as sqliteNumber } from "../../infra/sqlite-n
 import type { ChannelRouteRef } from "../../plugin-sdk/channel-route.js";
 import { withOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
 import {
+  deferOpenClawAgentPostCommitPublication,
   isIncognitoOpenClawAgentSqlitePath,
   openOpenClawAgentDatabase,
   runOpenClawAgentWriteTransaction,
@@ -82,7 +83,13 @@ export { ensureSessionEntrySync } from "./session-accessor.sqlite-initial-entry.
 
 type SqliteSessionEntryPatchOptions = SessionEntryPatchOptions & {
   skipMaintenance?: boolean;
-  /** Synchronous owner bookkeeping after COMMIT, before observers can cancel the caller. */
+  /** Prepared companion state that joins this exact host transaction. */
+  preparedTransactionMutation?: {
+    commit: () => void;
+    rollback: () => void;
+    complete: () => void;
+  };
+  /** Synchronous fact publication after companion completion, before identity observers. */
   onCommitted?: (entry: SessionEntry) => void;
 };
 
@@ -501,6 +508,9 @@ async function patchSqliteSessionEntrySnapshot(
   let wrote = false;
   const committed = await runExclusiveSqliteSessionWrite(resolved, async () => {
     const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
+    if (options.preparedTransactionMutation && database.db.isTransaction) {
+      throw new Error("Prepared session entry mutation cannot join a nested host transaction");
+    }
     const prepared = params.readSnapshot(database);
     const existing = prepared[0]?.entry;
     const writeBase = existing ?? options.fallbackEntry;
@@ -532,30 +542,77 @@ async function patchSqliteSessionEntrySnapshot(
     let result: SessionEntry | null = null;
     let previousIdentity = new Map<string, SessionEntry>();
     let currentIdentity = new Map<string, SessionEntry>();
-    runOpenClawAgentWriteTransaction((writeDatabase) => {
-      const fresh = params.readSnapshot(writeDatabase);
-      assertLifecycleTargetSnapshotUnchanged(prepared, fresh, params.operationLabel);
-      options.assertCommitAllowed?.();
-      if (!next) {
-        result = cloneSessionEntry(writeBase);
-        return;
+    const transactionMutation = next ? options.preparedTransactionMutation : undefined;
+    let hostCommitted = false;
+    let transactionFailure: unknown;
+    try {
+      runOpenClawAgentWriteTransaction((writeDatabase) => {
+        const fresh = params.readSnapshot(writeDatabase);
+        assertLifecycleTargetSnapshotUnchanged(prepared, fresh, params.operationLabel);
+        options.assertCommitAllowed?.();
+        if (!next) {
+          result = cloneSessionEntry(writeBase);
+          return;
+        }
+        if (
+          transactionMutation &&
+          !deferOpenClawAgentPostCommitPublication(writeDatabase, () => {
+            hostCommitted = true;
+          })
+        ) {
+          throw new Error("Prepared session entry mutation requires a host commit publication");
+        }
+        // The companion mutation commits before the host row and rolls back only
+        // when this transaction definitely did not reach COMMIT.
+        transactionMutation?.commit();
+        previousIdentity = new Map(fresh.map((row) => [row.sessionKey, row.entry]));
+        const selectedPreviousEntry = fresh[0]?.entry ?? writeBase;
+        const persisted = writeSessionEntry(writeDatabase, sessionKey, next, {
+          previousEntry: selectedPreviousEntry,
+        });
+        wrote = true;
+        currentIdentity = readSessionIdentitySnapshot(writeDatabase, [sessionKey]);
+        result = cloneSessionEntry(persisted);
+      }, toDatabaseOptions(resolved));
+    } catch (error) {
+      transactionFailure = error;
+      if (transactionMutation && !hostCommitted) {
+        try {
+          transactionMutation.rollback();
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            "Prepared session entry mutation rollback failed",
+            { cause: error },
+          );
+        }
       }
-      // Commit reads own these entries; update callbacks only receive detached copies.
-      previousIdentity = new Map(fresh.map((row) => [row.sessionKey, row.entry]));
-      const selectedPreviousEntry = fresh[0]?.entry ?? writeBase;
-      const persisted = writeSessionEntry(writeDatabase, sessionKey, next, {
-        previousEntry: selectedPreviousEntry,
-      });
-      wrote = true;
-      currentIdentity = readSessionIdentitySnapshot(writeDatabase, [sessionKey]);
-      result = cloneSessionEntry(persisted);
-    }, toDatabaseOptions(resolved));
+      if (!hostCommitted) {
+        throw error;
+      }
+    }
+    let postCommitFailure = transactionFailure;
+    if (transactionMutation && hostCommitted) {
+      try {
+        transactionMutation.complete();
+      } catch (error) {
+        postCommitFailure ??= error;
+      }
+    }
     try {
       if (next && result) {
         options.onCommitted?.(cloneSessionEntry(result));
       }
-    } finally {
+    } catch (error) {
+      postCommitFailure ??= error;
+    }
+    try {
       emitCommittedSessionIdentityDiff(previousIdentity, currentIdentity);
+    } catch (error) {
+      postCommitFailure ??= error;
+    }
+    if (postCommitFailure) {
+      throw postCommitFailure;
     }
     return result;
   });

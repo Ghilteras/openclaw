@@ -370,6 +370,8 @@ async function compactCliTranscript(params: {
     onCommitted: params.onCommitted,
     config: params.cfg,
     currentSessionFile: params.sessionFile,
+    ...(params.harnessRuntime ? { harnessRuntime: params.harnessRuntime } : {}),
+    contextEngineOwnsCompaction: params.contextEngine.info.ownsCompaction === true,
     currentTarget: {
       agentId: params.agentId,
       sessionId: params.sessionId,

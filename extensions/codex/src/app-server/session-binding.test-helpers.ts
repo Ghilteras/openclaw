@@ -6,6 +6,7 @@ import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key
 import {
   bindingStoreKey,
   createCodexAppServerBindingStore,
+  type CodexAppServerBindingIdentity,
   type CodexAppServerBindingStore,
   type CodexAppServerThreadBinding,
   type StoredCodexAppServerBinding,
@@ -50,6 +51,29 @@ export function createCodexTestBindingStateStore(): PluginStateSyncKeyedStore<St
 
 export function createCodexTestBindingStore(): CodexAppServerBindingStore {
   return createCodexAppServerBindingStore(createCodexTestBindingStateStore());
+}
+
+export async function retainCodexTestCompactionTransition(
+  store: CodexAppServerBindingStore,
+  successor: Extract<CodexAppServerBindingIdentity, { kind: "session" }>,
+  previousSessionId: string,
+): Promise<void> {
+  const retained = new Error("retain compaction transition");
+  try {
+    await store.withContextEngineCompactionCommit(
+      successor,
+      previousSessionId,
+      () => {},
+      async (mutation) => {
+        mutation.commit();
+        throw retained;
+      },
+    );
+  } catch (error) {
+    if (error !== retained) {
+      throw error;
+    }
+  }
 }
 
 export function buildCodexSupervisionTestConnectionFingerprint(

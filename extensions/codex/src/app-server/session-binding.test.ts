@@ -17,9 +17,12 @@ import {
   createStoredCodexAppServerBinding,
   hashCodexAppServerBindingFingerprint,
   readCodexAppServerThreadBinding,
+  readStoredCodexAppServerBinding,
+  readStoredCodexAppServerCompactionTransition,
   reclaimCurrentCodexSessionGeneration,
   type StoredCodexAppServerBinding,
 } from "./session-binding.js";
+import { retainCodexTestCompactionTransition } from "./session-binding.test-helpers.js";
 
 function createStateStore() {
   const values = new Map<string, StoredCodexAppServerBinding>();
@@ -905,69 +908,397 @@ describe("Codex app-server binding store", () => {
     );
   });
 
-  it("keeps one binding across physical session rotations for a stable session key", async () => {
+  it.each([
+    {
+      name: "ordinary",
+      binding: {
+        threadId: "thread-ordinary",
+        clientId: "client-ordinary",
+        cwd: "/repo",
+        model: "gpt-5.6-codex",
+        modelProvider: "openai",
+        nativeCompactionSyncPending: true as const,
+        contextEngine: {
+          schemaVersion: 1 as const,
+          engineId: "legacy",
+          policyFingerprint: "policy",
+        },
+      },
+    },
+    {
+      name: "supervised",
+      binding: {
+        threadId: "thread-supervised",
+        cwd: "/repo",
+        connectionScope: "supervision" as const,
+        supervisionSourceThreadId: "thread-source",
+        model: "gpt-5.6-codex",
+        modelProvider: "openai",
+        preserveNativeModel: true as const,
+        conversationSourceTransferComplete: true as const,
+      },
+    },
+  ])("preserves every $name binding field through the v2 transition", async ({ binding }) => {
     const { state, values } = createStateStore();
     const store = createCodexAppServerBindingStore(state);
-    const first = {
+    const previous = {
       kind: "session" as const,
       agentId: "main",
       sessionId: "session-1",
       sessionKey: "agent:main:telegram:chat-1",
     };
-    const second = { ...first, sessionId: "session-2" };
+    const successor = { ...previous, sessionId: "session-2" };
+    await store.mutate(previous, { kind: "set", binding });
+    const before = values.get(bindingStoreKey(previous));
+    if (!before || before.state !== "active") {
+      throw new Error("expected the predecessor binding");
+    }
 
-    await store.mutate(first, {
-      kind: "set",
-      binding: { threadId: "thread-1", cwd: "/repo" },
-    });
-    expect(store.read(second)).toBeUndefined();
-    await store.withLease(second, async () => undefined);
+    await store.withContextEngineCompactionCommit(
+      successor,
+      previous.sessionId,
+      () => {},
+      async (mutation) => {
+        mutation.commit();
+        const raw = values.get(bindingStoreKey(previous));
+        expect(readStoredCodexAppServerBinding(raw)).toBeUndefined();
+        const transition = readStoredCodexAppServerCompactionTransition(raw);
+        expect(transition).toMatchObject({
+          version: 2,
+          state: "compaction-transition",
+          fromSessionId: previous.sessionId,
+          toSessionId: successor.sessionId,
+          nativeCompactionSyncPending: true,
+          previous: {
+            kind: "active",
+            value: {
+              version: 1,
+              state: "active",
+              sessionId: previous.sessionId,
+              binding,
+            },
+          },
+        });
+        await expect(store.hasOtherThreadOwner(binding.threadId)).resolves.toBe(true);
+        mutation.complete();
+      },
+    );
 
-    expect(bindingStoreKey(first)).toBe(bindingStoreKey(second));
-    expect(values.size).toBe(1);
-    expect(values.get(bindingStoreKey(second))).toMatchObject({ sessionId: "session-1" });
-    await expect(store.adoptSessionGeneration(second, first.sessionId)).resolves.toBe("adopted");
-    expect(values.get(bindingStoreKey(second))).toMatchObject({
-      state: "active",
-      sessionId: "session-2",
-      binding: { threadId: "thread-1" },
+    expect(bindingStoreKey(previous)).toBe(bindingStoreKey(successor));
+    expect(values.get(bindingStoreKey(successor))).toEqual({
+      ...before,
+      sessionId: successor.sessionId,
+      binding: { ...binding, nativeCompactionSyncPending: true },
     });
-    await expect(
-      store.mutate(first, {
-        kind: "patch",
-        threadId: "thread-1",
-        patch: { model: "stale-model" },
-      }),
-    ).resolves.toBe(false);
-    await expect(store.mutate(first, { kind: "clear" })).resolves.toBe(false);
-    expect(store.read(second)).toMatchObject({ threadId: "thread-1" });
-    await expect(store.mutate(second, { kind: "clear" })).resolves.toBe(true);
+    expect(store.read(previous)).toBeUndefined();
+    expect(store.read(successor)).toEqual({
+      ...binding,
+      nativeCompactionSyncPending: true,
+    });
   });
 
-  it("rejects a delayed adoption after a newer session generation wins", async () => {
-    const { state } = createStateStore();
+  it("marks a same-generation binding pending without changing other native state", async () => {
+    const { state, values } = createStateStore();
     const store = createCodexAppServerBindingStore(state);
-    const first = {
+    const identity = {
       kind: "session" as const,
       agentId: "main",
       sessionId: "session-1",
       sessionKey: "agent:main:telegram:chat-1",
     };
-    const second = { ...first, sessionId: "session-2" };
-    const third = { ...first, sessionId: "session-3" };
-    await store.mutate(first, {
+    const binding = {
+      threadId: "thread-1",
+      clientId: "client-1",
+      cwd: "/repo",
+      model: "gpt-5.6-codex",
+      contextEngine: {
+        schemaVersion: 1 as const,
+        engineId: "lossless-claw",
+        policyFingerprint: "policy-1",
+      },
+    };
+    await store.mutate(identity, { kind: "set", binding });
+
+    await store.withContextEngineCompactionCommit(
+      identity,
+      identity.sessionId,
+      () => {},
+      async (mutation) => {
+        mutation.commit();
+        expect(store.read(identity)).toEqual({
+          ...binding,
+          nativeCompactionSyncPending: true,
+        });
+        mutation.complete();
+      },
+    );
+
+    expect(values.get(bindingStoreKey(identity))).toEqual({
+      version: 1,
+      state: "active",
+      sessionId: identity.sessionId,
+      binding: { ...binding, nativeCompactionSyncPending: true },
+    });
+  });
+
+  it("restores the exact same-generation binding when host acceptance is rejected", async () => {
+    const { state, values } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const identity = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "agent:main:telegram:chat-1",
+    };
+    await store.mutate(identity, {
+      kind: "set",
+      binding: {
+        threadId: "thread-1",
+        cwd: "/repo",
+        nativeCompactionSyncPending: true,
+      },
+    });
+    const before = structuredClone(values.get(bindingStoreKey(identity)));
+    const hostFailure = new Error("host acceptance rejected");
+
+    await expect(
+      store.withContextEngineCompactionCommit(
+        identity,
+        identity.sessionId,
+        () => {},
+        async (mutation) => {
+          mutation.commit();
+          mutation.rollback();
+          throw hostFailure;
+        },
+      ),
+    ).rejects.toBe(hostFailure);
+
+    expect(values.get(bindingStoreKey(identity))).toEqual(before);
+  });
+
+  it("leaves no binding row for same-generation compaction without a native thread", async () => {
+    const { state, values } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const identity = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "agent:main:telegram:chat-1",
+    };
+
+    await store.withContextEngineCompactionCommit(
+      identity,
+      identity.sessionId,
+      () => {},
+      async (mutation) => {
+        mutation.commit();
+        mutation.complete();
+      },
+    );
+
+    expect(values.has(bindingStoreKey(identity))).toBe(false);
+  });
+
+  it("restores the exact predecessor when the host rolls back after transition commit", async () => {
+    const { state, values } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const previous = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "agent:main:telegram:chat-1",
+    };
+    const successor = { ...previous, sessionId: "session-2" };
+    await store.mutate(previous, {
+      kind: "set",
+      binding: {
+        threadId: "thread-1",
+        cwd: "/repo",
+        model: "gpt-5.6-codex",
+        nativeCompactionSyncPending: true,
+      },
+    });
+    const before = structuredClone(values.get(bindingStoreKey(previous)));
+
+    await store.withContextEngineCompactionCommit(
+      successor,
+      previous.sessionId,
+      () => {},
+      async (mutation) => {
+        mutation.commit();
+        expect(
+          readStoredCodexAppServerCompactionTransition(values.get(bindingStoreKey(previous))),
+        ).toBeDefined();
+        mutation.rollback();
+      },
+    );
+
+    expect(values.get(bindingStoreKey(previous))).toEqual(before);
+    expect(store.read(previous)).toMatchObject({
+      threadId: "thread-1",
+      nativeCompactionSyncPending: true,
+    });
+    expect(store.read(successor)).toBeUndefined();
+  });
+
+  it("does not reconcile a live transition until its owner releases the lease", async () => {
+    vi.useFakeTimers();
+    const { state, values } = createStateStore();
+    const owner = createCodexAppServerBindingStore(state);
+    const peer = createCodexAppServerBindingStore(state);
+    const previous = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "agent:main:telegram:chat-1",
+    };
+    const successor = { ...previous, sessionId: "session-2" };
+    await owner.mutate(previous, {
       kind: "set",
       binding: { threadId: "thread-1", cwd: "/repo" },
     });
+    let releaseOwner!: () => void;
+    let markCommitted!: () => void;
+    const ownerReleased = new Promise<void>((resolve) => {
+      releaseOwner = resolve;
+    });
+    const committed = new Promise<void>((resolve) => {
+      markCommitted = resolve;
+    });
+    const ownerFailure = new Error("owner stopped after transition commit");
+    const ownerRun = owner.withContextEngineCompactionCommit(
+      successor,
+      previous.sessionId,
+      () => {},
+      async (mutation) => {
+        mutation.commit();
+        markCommitted();
+        await ownerReleased;
+        throw ownerFailure;
+      },
+    );
+    await committed;
+    const transition = readStoredCodexAppServerCompactionTransition(
+      values.get(bindingStoreKey(previous)),
+    );
+    if (!transition) {
+      throw new Error("expected a committed compaction transition");
+    }
+    let peerFinished = false;
+    const readHost = vi.fn(() => ({ sessionId: previous.sessionId }));
+    const peerReconcile = peer
+      .reconcileCompactionSuccessor(previous, transition.transitionId, readHost)
+      .then((result) => {
+        peerFinished = true;
+        return result;
+      });
 
-    await expect(store.adoptSessionGeneration(second, first.sessionId)).resolves.toBe("adopted");
-    await expect(store.adoptSessionGeneration(third, second.sessionId)).resolves.toBe("adopted");
-    await expect(store.adoptSessionGeneration(third, second.sessionId)).resolves.toBe("current");
-    await expect(store.adoptSessionGeneration(second, first.sessionId)).resolves.toBe("conflict");
-    await expect(store.retireSessionGeneration(second)).resolves.toBe("conflict");
+    await vi.advanceTimersByTimeAsync(66_000);
+    expect(peerFinished).toBe(false);
+    expect(readHost).not.toHaveBeenCalled();
+    expect(
+      readStoredCodexAppServerCompactionTransition(values.get(bindingStoreKey(previous))),
+    ).toMatchObject({ transitionId: transition.transitionId });
 
-    expect(store.read(second)).toBeUndefined();
-    expect(store.read(third)).toMatchObject({ threadId: "thread-1" });
+    releaseOwner();
+    await expect(ownerRun).rejects.toBe(ownerFailure);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(peerReconcile).resolves.toBe(true);
+    expect(readHost).toHaveBeenCalledOnce();
+    expect(values.get(bindingStoreKey(previous))).toEqual({
+      version: 1,
+      state: "active",
+      sessionId: previous.sessionId,
+      binding: { threadId: "thread-1", cwd: "/repo" },
+    });
+  });
+
+  it("fences exact absence and rejects a binding that appears before commit", async () => {
+    const { state, values } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const previous = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "agent:main:telegram:chat-1",
+    };
+    const successor = { ...previous, sessionId: "session-2" };
+
+    await store.withContextEngineCompactionCommit(
+      successor,
+      previous.sessionId,
+      () => {},
+      async (mutation) => {
+        mutation.commit();
+        expect(
+          readStoredCodexAppServerCompactionTransition(values.get(bindingStoreKey(successor))),
+        ).toMatchObject({ previous: { kind: "absent" } });
+        mutation.complete();
+      },
+    );
+    expect(values.size).toBe(0);
+
+    await expect(
+      store.withContextEngineCompactionCommit(
+        successor,
+        previous.sessionId,
+        () => {},
+        async (mutation) => {
+          state.register(bindingStoreKey(successor), {
+            version: 1,
+            state: "active",
+            sessionId: previous.sessionId,
+            binding: { threadId: "thread-raced", cwd: "/repo" },
+          });
+          mutation.commit();
+        },
+      ),
+    ).rejects.toThrow("changed before context-engine compaction commit");
+    expect(values.get(bindingStoreKey(successor))).toMatchObject({
+      state: "active",
+      binding: { threadId: "thread-raced" },
+    });
+  });
+
+  it("fails normal reads, mutations, resets, and deletion on a retained transition", async () => {
+    const { state, values } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const previous = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "agent:main:telegram:chat-1",
+    };
+    const successor = { ...previous, sessionId: "session-2" };
+    await store.mutate(previous, {
+      kind: "set",
+      binding: { threadId: "thread-1", cwd: "/repo" },
+    });
+    await retainCodexTestCompactionTransition(store, successor, previous.sessionId);
+
+    expect(() => store.read(successor)).toThrow("transition is unresolved");
+    await expect(
+      store.mutate(successor, {
+        kind: "patch",
+        threadId: "thread-1",
+        patch: { cwd: "/changed" },
+      }),
+    ).rejects.toThrow("transition is unresolved");
+    await expect(store.resetSessionGeneration(successor)).rejects.toThrow(
+      "transition is unresolved",
+    );
+    await expect(
+      store.withSessionDeletion(
+        successor,
+        () => {},
+        async () => undefined,
+      ),
+    ).rejects.toThrow("transition is unresolved");
+    await expect(store.hasOtherThreadOwner("thread-1")).resolves.toBe(true);
+    expect(
+      readStoredCodexAppServerCompactionTransition(values.get(bindingStoreKey(successor))),
+    ).toBeDefined();
   });
 
   it("rejects reclaim when another session generation wins after verification", async () => {
@@ -988,7 +1319,12 @@ describe("Codex app-server binding store", () => {
 
     const plan = await store.prepareSessionGenerationReclaim(second);
     expect(plan).toEqual({ kind: "verify", expectedPreviousSessionId: first.sessionId });
-    await expect(store.adoptSessionGeneration(third, first.sessionId)).resolves.toBe("adopted");
+    state.register(bindingStoreKey(third), {
+      version: 1,
+      state: "active",
+      sessionId: third.sessionId,
+      binding: { threadId: "thread-1", cwd: "/repo" },
+    });
     if (plan.kind !== "verify") {
       throw new Error("expected stale session generation");
     }
@@ -999,6 +1335,227 @@ describe("Codex app-server binding store", () => {
       }),
     ).resolves.toBe(false);
     expect(store.read(third)).toMatchObject({ threadId: "thread-1" });
+  });
+
+  it.each([
+    {
+      name: "rolls back to P when the host still owns P",
+      hostSessionId: "session-1",
+      hostPreviousSessionId: undefined,
+      reclaimSessionId: "session-1",
+      expectedSessionId: "session-1",
+      expectedNativeCompactionSyncPending: false,
+    },
+    {
+      name: "finalizes S when the host owns S with previous P",
+      hostSessionId: "session-2",
+      hostPreviousSessionId: "session-1",
+      reclaimSessionId: "session-2",
+      expectedSessionId: "session-2",
+      expectedNativeCompactionSyncPending: true,
+    },
+  ])("$name", async (scenario) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-transition-reclaim-"));
+    const storePath = path.join(root, "sessions.json");
+    const { state, values } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const previous = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "agent:main:telegram:direct:123",
+    };
+    const successor = { ...previous, sessionId: "session-2" };
+    const binding = {
+      threadId: "thread-1",
+      clientId: "client-1",
+      cwd: "/repo",
+      model: "gpt-5.6-codex",
+    };
+    try {
+      await upsertSessionEntry({
+        agentId: previous.agentId,
+        sessionKey: previous.sessionKey,
+        storePath,
+        entry: {
+          sessionId: scenario.hostSessionId,
+          updatedAt: 1,
+          ...(scenario.hostPreviousSessionId
+            ? { previousSessionId: scenario.hostPreviousSessionId }
+            : {}),
+        },
+      });
+      await store.mutate(previous, { kind: "set", binding });
+      await retainCodexTestCompactionTransition(store, successor, previous.sessionId);
+
+      await expect(
+        reclaimCurrentCodexSessionGeneration({
+          bindingStore: store,
+          identity: { ...previous, sessionId: scenario.reclaimSessionId },
+          config: { session: { store: storePath } },
+        }),
+      ).resolves.toBe(true);
+      expect(values.get(bindingStoreKey(previous))).toEqual({
+        version: 1,
+        state: "active",
+        sessionId: scenario.expectedSessionId,
+        binding: {
+          ...binding,
+          ...(scenario.expectedNativeCompactionSyncPending
+            ? { nativeCompactionSyncPending: true as const }
+            : {}),
+        },
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      name: "wrong predecessor",
+      hostSessionId: "session-2",
+      hostPreviousSessionId: "session-other",
+      reclaimSessionId: "session-2",
+    },
+    {
+      name: "unrelated host",
+      hostSessionId: "session-3",
+      hostPreviousSessionId: "session-2",
+      reclaimSessionId: "session-2",
+    },
+    {
+      name: "stale caller",
+      hostSessionId: "session-2",
+      hostPreviousSessionId: "session-1",
+      reclaimSessionId: "session-3",
+    },
+  ])("preserves v2 and fails closed for $name reconciliation", async (scenario) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-transition-stale-"));
+    const storePath = path.join(root, "sessions.json");
+    const { state, values } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const previous = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "agent:main:telegram:direct:123",
+    };
+    const successor = { ...previous, sessionId: "session-2" };
+    try {
+      await upsertSessionEntry({
+        agentId: previous.agentId,
+        sessionKey: previous.sessionKey,
+        storePath,
+        entry: {
+          sessionId: scenario.hostSessionId,
+          previousSessionId: scenario.hostPreviousSessionId,
+          updatedAt: 1,
+        },
+      });
+      await store.mutate(previous, {
+        kind: "set",
+        binding: { threadId: "thread-1", cwd: "/repo" },
+      });
+      await retainCodexTestCompactionTransition(store, successor, previous.sessionId);
+      const retained = structuredClone(values.get(bindingStoreKey(previous)));
+
+      await expect(
+        reclaimCurrentCodexSessionGeneration({
+          bindingStore: store,
+          identity: { ...previous, sessionId: scenario.reclaimSessionId },
+          config: { session: { store: storePath } },
+        }),
+      ).resolves.toBe(false);
+      expect(values.get(bindingStoreKey(previous))).toEqual(retained);
+      expect(readStoredCodexAppServerCompactionTransition(retained)).toBeDefined();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves recoverable v2 evidence when completion fails after host COMMIT", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-transition-complete-"));
+    const storePath = path.join(root, "sessions.json");
+    const fixture = createStateStore();
+    const originalUpdate = fixture.state.update!.bind(fixture.state);
+    let rejectCompletion = false;
+    fixture.state.update = (key, updateValue, options) => {
+      if (
+        rejectCompletion &&
+        readStoredCodexAppServerCompactionTransition(fixture.values.get(key))
+      ) {
+        rejectCompletion = false;
+        throw new Error("injected transition completion failure");
+      }
+      return originalUpdate(key, updateValue, options);
+    };
+    const store = createCodexAppServerBindingStore(fixture.state);
+    const previous = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "agent:main:telegram:direct:123",
+    };
+    const successor = { ...previous, sessionId: "session-2" };
+    try {
+      await upsertSessionEntry({
+        agentId: previous.agentId,
+        sessionKey: previous.sessionKey,
+        storePath,
+        entry: {
+          sessionId: previous.sessionId,
+          updatedAt: 1,
+        },
+      });
+      await store.mutate(previous, {
+        kind: "set",
+        binding: { threadId: "thread-1", cwd: "/repo" },
+      });
+
+      await expect(
+        store.withContextEngineCompactionCommit(
+          successor,
+          previous.sessionId,
+          () => {},
+          async (mutation) => {
+            mutation.commit();
+            await upsertSessionEntry({
+              agentId: previous.agentId,
+              sessionKey: previous.sessionKey,
+              storePath,
+              entry: {
+                sessionId: successor.sessionId,
+                previousSessionId: previous.sessionId,
+                updatedAt: 2,
+              },
+            });
+            rejectCompletion = true;
+            mutation.complete();
+          },
+        ),
+      ).rejects.toThrow("injected transition completion failure");
+      expect(
+        readStoredCodexAppServerCompactionTransition(
+          fixture.values.get(bindingStoreKey(successor)),
+        ),
+      ).toBeDefined();
+
+      await expect(
+        reclaimCurrentCodexSessionGeneration({
+          bindingStore: store,
+          identity: successor,
+          config: { session: { store: storePath } },
+        }),
+      ).resolves.toBe(true);
+      expect(store.read(successor)).toEqual({
+        threadId: "thread-1",
+        cwd: "/repo",
+        nativeCompactionSyncPending: true,
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("falls back to physical session identity when no stable session key exists", () => {

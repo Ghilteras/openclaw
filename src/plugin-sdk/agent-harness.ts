@@ -11,6 +11,8 @@ export {
 export type {
   AgentHarness,
   AgentHarnessV2,
+  AgentHarnessContextEngineCompactionCommitMutation,
+  AgentHarnessContextEngineCompactionCommitParams,
   AgentToolResultMiddleware,
   AgentToolResultMiddlewareEvent,
   AnyAgentTool,

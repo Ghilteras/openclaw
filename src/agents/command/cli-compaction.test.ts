@@ -10,9 +10,17 @@ import { SESSION_TOTAL_TOKENS_VERSION, type SessionEntry } from "../../config/se
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ContextEngine } from "../../context-engine/types.js";
 import { resolveRuntimeWorkerUrl } from "../../infra/runtime-worker-url.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import { withPluginRuntimeRegistryScope } from "../../plugins/runtime/gateway-request-scope.js";
 import { withEnv } from "../../test-utils/env.js";
 import { resolveCliBackendConfig } from "../cli-backends.js";
 import { createModelGenerationFixture } from "../embedded-agent-runner/model.generation-scope.test-support.js";
+import { registerAgentHarness } from "../harness/registry.js";
+import type {
+  AgentHarness,
+  AgentHarnessContextEngineCompactionCommitMutation,
+  AgentHarnessContextEngineCompactionCommitParams,
+} from "../harness/types.js";
 import { SessionManager } from "../sessions/session-manager.js";
 import { cliCompactionBackendEntrypoints } from "./cli-compaction-runtime.test-support.js";
 import {
@@ -1124,6 +1132,88 @@ describe("runCliTurnCompactionLifecycle", () => {
       expect.objectContaining({ sessionKey }),
     );
     expect(updatedEntry?.compactionCount).toBe(1);
+  });
+
+  it("completes a selected harness successor before CLI fallback maintenance", async () => {
+    const registry = createEmptyPluginRegistry();
+    const successorSessionId = "session-cli-adopted";
+    const order: string[] = [];
+    const withContextEngineCompactionCommit = vi.fn(
+      async <T>(
+        params: AgentHarnessContextEngineCompactionCommitParams,
+        run: (mutation: AgentHarnessContextEngineCompactionCommitMutation) => Promise<T>,
+      ) => {
+        params.assertCurrent();
+        expect(params).toMatchObject({
+          previousSessionId: "session-cli-adoption",
+          sessionId: successorSessionId,
+        });
+        return await run({
+          commit() {
+            order.push("transition");
+          },
+          rollback() {
+            throw new Error("unexpected rollback");
+          },
+          complete() {
+            order.push("completed");
+          },
+        });
+      },
+    );
+    withPluginRuntimeRegistryScope(registry, () => {
+      registerAgentHarness({
+        id: "codex",
+        label: "Codex",
+        supports: () => ({ supported: true }),
+        runAttempt: vi.fn(),
+        withContextEngineCompactionCommit,
+      } satisfies AgentHarness);
+    });
+    const scenario = await prepareCompactionScenario({
+      suffix: "cli-adoption",
+      tmpDir,
+      provider: "codex",
+      model: "gpt-5.5",
+      sessionEntry: { agentHarnessId: "codex" },
+      contextEngine: (compactCalls) => {
+        const contextEngine = buildContextEngine({ compactCalls });
+        return {
+          ...contextEngine,
+          info: { ...contextEngine.info, ownsCompaction: true },
+          async compact(compactParams) {
+            compactCalls.push(compactParams);
+            return {
+              ok: true,
+              compacted: true,
+              result: {
+                summary: "compacted",
+                tokensBefore: compactParams.currentTokenCount ?? 0,
+                tokensAfter: 100,
+                sessionId: successorSessionId,
+              },
+            };
+          },
+        };
+      },
+      maintenance: async () => {
+        order.push("maintenance");
+        return { changed: false, bytesFreed: 0, rewrittenEntries: 0 };
+      },
+      deps: {
+        maybeCompactAgentHarnessSession: vi.fn(async () => ({
+          ok: false,
+          compacted: false,
+          reason: "unsupported",
+          failure: { reason: "unsupported_harness_compaction" },
+        })) as never,
+      },
+    });
+
+    await withPluginRuntimeRegistryScope(registry, () => scenario.run());
+
+    expect(withContextEngineCompactionCommit).toHaveBeenCalledOnce();
+    expect(order).toEqual(["transition", "completed", "maintenance"]);
   });
 
   it("initializes built-in context engines before resolving CLI compaction engine", async () => {

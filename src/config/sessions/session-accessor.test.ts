@@ -2266,6 +2266,47 @@ describe("session accessor seam", () => {
     expect(loadSessionEntry(scope)?.model).toBeUndefined();
   });
 
+  it("rejects a prepared companion mutation inside a nested host transaction", async () => {
+    const scope = {
+      agentId: "main",
+      sessionKey: "agent:main:main",
+      storePath,
+    };
+    await upsertSessionEntryCore(scope, {
+      sessionId: "session-1",
+      updatedAt: 10,
+    });
+    const before = loadSessionEntry(scope);
+    const mutation = {
+      commit: vi.fn(),
+      rollback: vi.fn(),
+      complete: vi.fn(),
+    };
+    const databasePath = expectDefined(
+      resolveSqliteTargetFromSessionStorePath(storePath, { agentId: scope.agentId }).path,
+      "nested prepared mutation database path",
+    );
+    const database = openOpenClawAgentDatabase({
+      agentId: scope.agentId,
+      path: databasePath,
+    });
+
+    database.db.exec("BEGIN IMMEDIATE;");
+    try {
+      await expect(
+        patchSessionEntryCore(scope, () => ({ model: "gpt-5.6" }), {
+          preparedTransactionMutation: mutation,
+        }),
+      ).rejects.toThrow("cannot join a nested host transaction");
+      expect(mutation.commit).not.toHaveBeenCalled();
+      expect(mutation.rollback).not.toHaveBeenCalled();
+      expect(mutation.complete).not.toHaveBeenCalled();
+      expect(loadSessionEntry(scope)).toEqual(before);
+    } finally {
+      database.db.exec("ROLLBACK;");
+    }
+  });
+
   it("can patch metadata without refreshing session activity", async () => {
     const scope = {
       sessionKey: "agent:main:main",

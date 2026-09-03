@@ -9,7 +9,10 @@ import {
   CODEX_APP_SERVER_BINDING_MAX_ENTRIES,
   CODEX_APP_SERVER_BINDING_NAMESPACE,
 } from "./session-binding-meta.js";
-import { readCurrentCodexAppServerBinding } from "./session-binding-record.js";
+import {
+  inspectCodexSessionRuntimeOwnership,
+  readCurrentCodexAppServerBinding,
+} from "./session-binding-record.js";
 import type { CodexAppServerBindingStore, StoredCodexAppServerBinding } from "./session-binding.js";
 
 export { CODEX_APP_SERVER_BINDING_MAX_ENTRIES, CODEX_APP_SERVER_BINDING_NAMESPACE };
@@ -37,14 +40,33 @@ export function createLazyCodexAppServerBindingStore(
   return {
     ...(managedThreads ? { managedThreads } : {}),
     read: (identity) => readCurrentCodexAppServerBinding(state, identity),
+    inspectSessionRuntimeOwnership: (identity) =>
+      inspectCodexSessionRuntimeOwnership(state, identity),
     hasOtherThreadOwner: async (threadId, currentIdentity) =>
       (await store()).hasOtherThreadOwner(threadId, currentIdentity),
     mutate: async (identity, mutation, assertCurrent) =>
       (await store()).mutate(identity, mutation, assertCurrent),
     prepareSessionGenerationReclaim: async (identity) =>
       (await store()).prepareSessionGenerationReclaim(identity),
-    adoptSessionGeneration: async (identity, previousSessionId) =>
-      (await store()).adoptSessionGeneration(identity, previousSessionId),
+    reconcileCompactionSuccessor: async (identity, transitionId, readHost, assertCurrent) =>
+      (await store()).reconcileCompactionSuccessor(
+        identity,
+        transitionId,
+        readHost,
+        assertCurrent,
+      ),
+    withContextEngineCompactionCommit: async (
+      identity,
+      previousSessionId,
+      assertCurrent,
+      run,
+    ) =>
+      (await store()).withContextEngineCompactionCommit(
+        identity,
+        previousSessionId,
+        assertCurrent,
+        run,
+      ),
     resetSessionGeneration: async (identity) => (await store()).resetSessionGeneration(identity),
     retireSessionGeneration: async (identity) => (await store()).retireSessionGeneration(identity),
     withSessionDeletion: async (identity, assertCurrent, run) =>

@@ -14,6 +14,8 @@ import {
   type AgentHarness,
   type AgentHarnessAttemptParams,
   type AgentHarnessAttemptParamsV2,
+  type AgentHarnessContextEngineCompactionCommitMutation,
+  type AgentHarnessContextEngineCompactionCommitParams,
   type AgentHarnessSideQuestionParams,
   type AgentHarnessSideQuestionParamsV2,
   type AgentHarnessSupportContext,
@@ -176,6 +178,14 @@ describe("agent harness runtime SDK facade", () => {
 
     expectTypeOf(legacyHarness).toMatchTypeOf<AgentHarness>();
     expectTypeOf<AgentHarnessV2>().toMatchTypeOf<AgentHarness>();
+    expectTypeOf<
+      Parameters<NonNullable<AgentHarnessV2["withContextEngineCompactionCommit"]>>[0]
+    >().toEqualTypeOf<AgentHarnessContextEngineCompactionCommitParams>();
+    expectTypeOf<
+      Parameters<
+        Parameters<NonNullable<AgentHarnessV2["withContextEngineCompactionCommit"]>>[1]
+      >[0]
+    >().toEqualTypeOf<AgentHarnessContextEngineCompactionCommitMutation>();
     expectTypeOf<
       Omit<AgentHarnessSideQuestionParams, "hostCapabilities">
     >().toMatchTypeOf<AgentHarnessSideQuestionParams>();

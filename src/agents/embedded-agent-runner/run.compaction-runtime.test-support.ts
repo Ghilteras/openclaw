@@ -261,7 +261,11 @@ async function createRecoveryFixture(state: OpenClawTestState, options: FixtureO
         updates(event);
       }
     });
-    const recover = (kind: RecoveryKind, mixedPreflight = false) => {
+    const recover = (
+      kind: RecoveryKind,
+      mixedPreflight = false,
+      harnessRuntime = "openclaw",
+    ) => {
       const promptError = makeOverflowError();
       const input: EmbeddedRunCompactionRecoveryInput = {
         runParams,
@@ -285,7 +289,7 @@ async function createRecoveryFixture(state: OpenClawTestState, options: FixtureO
         workspaceDir: state.workspaceDir,
         provider: "fixture-provider",
         modelId: "fixture-model",
-        harnessRuntime: "openclaw",
+        harnessRuntime,
         thinkLevel: "off",
         authProfileIdSource: "auto",
         resolveContextEnginePluginId: () => undefined,

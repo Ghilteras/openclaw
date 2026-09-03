@@ -26,9 +26,16 @@ import {
 import { resolveStableSessionEndTranscript } from "../../gateway/session-transcript-files.fs.js";
 import { logVerbose } from "../../globals.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+import { capturePluginLifecycleAuthority } from "../../plugins/registry-lifecycle.js";
+import { getPluginRegistryForContext } from "../../plugins/runtime.js";
+import { getPluginRuntimeGatewayRequestScope } from "../../plugins/runtime/gateway-request-scope.js";
 import { runWithGatewayIndependentRootWorkContinuation } from "../../process/gateway-work-admission.js";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { resolvePreferredSessionKeyForSessionIdMatches } from "../../sessions/session-id-resolution.js";
+import type {
+  AgentHarnessContextEngineCompactionCommitMutation,
+  AgentHarnessContextEngineCompactionCommitParams,
+} from "../harness/types.js";
 import { resolveAgentRunSessionTarget } from "../run-session-target.js";
 import { captureSessionPlacementCompactionSuccessorAssertion } from "../session-placement-admission.js";
 import { log } from "./logger.js";
@@ -173,11 +180,86 @@ export type AcceptedCompactionSuccessor = Awaited<
   previousSessionId?: string;
 };
 
+function captureHarnessContextEngineCompactionCommit(harnessRuntime?: string) {
+  const runtime = harnessRuntime?.trim();
+  const scopedRegistry = getPluginRuntimeGatewayRequestScope()?.pluginRegistry;
+  const registry = getPluginRegistryForContext();
+  const registration = runtime
+    ? registry?.agentHarnesses.find((candidate) => candidate.harness.id === runtime)
+    : undefined;
+  if (!runtime || !registry || !registration) {
+    return undefined;
+  }
+  const harness = registration.harness;
+  const withContextEngineCompactionCommit = harness.withContextEngineCompactionCommit;
+  if (!withContextEngineCompactionCommit) {
+    return undefined;
+  }
+  const owner =
+    registration.pluginId !== "core"
+      ? registry.plugins.find((plugin) => plugin.id === registration.pluginId)
+      : undefined;
+  const lifecycleCurrent =
+    (registration.pluginId === "core" || owner)
+      ? capturePluginLifecycleAuthority(registry, owner, {
+          scopedRuntime: scopedRegistry === registry,
+        })
+      : undefined;
+  if (!lifecycleCurrent?.()) {
+    const failClosed = () => {
+      throw new Error(`Agent harness ${runtime} context-engine compaction owner is not current`);
+    };
+    return {
+      assertCurrent: failClosed,
+      run: async <T>(
+        _params: Omit<AgentHarnessContextEngineCompactionCommitParams, "assertCurrent">,
+        _operation: (mutation: AgentHarnessContextEngineCompactionCommitMutation) => Promise<T>,
+      ): Promise<T> => failClosed(),
+    };
+  }
+  let active = true;
+  const assertCurrent = () => {
+    if (
+      !active ||
+      getPluginRegistryForContext() !== registry ||
+      !lifecycleCurrent() ||
+      !registry.agentHarnesses.includes(registration) ||
+      harness.withContextEngineCompactionCommit !== withContextEngineCompactionCommit
+    ) {
+      throw new Error(`Agent harness ${runtime} changed during context-engine compaction commit`);
+    }
+  };
+  return {
+    assertCurrent,
+    run: async <T>(
+      params: Omit<AgentHarnessContextEngineCompactionCommitParams, "assertCurrent">,
+      operation: (mutation: AgentHarnessContextEngineCompactionCommitMutation) => Promise<T>,
+    ): Promise<T> => {
+      assertCurrent();
+      try {
+        const result = await withContextEngineCompactionCommit(
+          { ...params, assertCurrent },
+          async (mutation) => {
+            assertCurrent();
+            return await operation(mutation);
+          },
+        );
+        assertCurrent();
+        return result;
+      } finally {
+        active = false;
+      }
+    },
+  };
+}
+
 /** Accepts a declared successor under the predecessor's exact host-owned claim. */
 export async function acceptCompactionSuccessor(params: {
   result: CompactResult;
   currentTarget: SessionTranscriptRuntimeTarget;
   currentSessionFile?: string;
+  harnessRuntime?: string;
+  contextEngineOwnsCompaction?: boolean;
   expectedEntry: Readonly<{
     sessionId: InternalSessionEntry["sessionId"];
     lifecycleRevision: InternalSessionEntry["lifecycleRevision"];
@@ -191,6 +273,10 @@ export async function acceptCompactionSuccessor(params: {
   const expected = { ...params.expectedEntry };
   const assertPlacement = captureSessionPlacementCompactionSuccessorAssertion();
   params.assertActive();
+  const harnessCommit =
+    params.contextEngineOwnsCompaction === true
+      ? captureHarnessContextEngineCompactionCommit(params.harnessRuntime)
+      : undefined;
   if (currentTarget.sessionId !== expected.sessionId) {
     throw new SessionTranscriptWriterClaimReboundError();
   }
@@ -218,49 +304,75 @@ export async function acceptCompactionSuccessor(params: {
       readConsistency: "latest",
     }),
   );
-  if (successor.sessionId === currentTarget.sessionId) {
-    return { ...successor, entry: previousEntry };
-  }
   if (!params.result.ok || !params.result.compacted) {
     throw new Error("Cannot accept a successor without a successful completed compaction");
   }
+  const rotated = successor.sessionId !== currentTarget.sessionId;
   const assertCommitAllowed = () => {
     params.assertActive();
-    assertPlacement({ currentTarget, successorSessionId: successor.sessionId });
+    harnessCommit?.assertCurrent();
+    if (rotated) {
+      assertPlacement({ currentTarget, successorSessionId: successor.sessionId });
+    }
   };
   assertCommitAllowed();
   let committed: AcceptedCompactionSuccessor | undefined;
-  try {
+  let postCommitFailure: { error: unknown } | undefined;
+  const commitSuccessor = async (
+    mutation?: AgentHarnessContextEngineCompactionCommitMutation,
+  ) => {
     await patchSessionEntryCore(
       currentTarget,
       (entry) => {
         requireExpectedEntry(entry);
-        return { sessionId: successor.sessionId };
+        return rotated ? { sessionId: successor.sessionId } : {};
       },
       {
         skipMaintenance: true,
+        preserveActivity: !rotated,
         assertCommitAllowed,
+        ...(mutation ? { preparedTransactionMutation: mutation } : {}),
         onCommitted: (entry) => {
-          // Capture the actual commit before identity observers can abort the caller.
-          // This sink records facts only; no authority checks or lifecycle hooks.
-          committed = { ...successor, entry, previousSessionId: currentTarget.sessionId };
+          // Record the durable commit before identity observers can cancel the caller.
+          committed = {
+            ...successor,
+            entry,
+            ...(rotated ? { previousSessionId: currentTarget.sessionId } : {}),
+          };
           params.onCommitted?.(committed);
         },
       },
     );
-    if (!committed) {
-      throw new SessionTranscriptWriterClaimReboundError();
+  };
+  try {
+    const transitionParams = {
+      ...(params.config ? { config: params.config } : {}),
+      ...(currentTarget.agentId ? { agentId: currentTarget.agentId } : {}),
+      sessionKey: currentTarget.sessionKey,
+      previousSessionId: currentTarget.sessionId,
+      sessionId: successor.sessionId,
+    };
+    if (harnessCommit) {
+      await harnessCommit.run(transitionParams, commitSuccessor);
+    } else {
+      await commitSuccessor();
     }
-    return committed;
   } catch (error) {
-    if (!committed) {
-      params.assertActive();
-      throw error;
+    postCommitFailure = { error };
+  }
+  if (!committed) {
+    params.assertActive();
+    throw postCommitFailure?.error ?? new SessionTranscriptWriterClaimReboundError();
+  }
+  try {
+    if (postCommitFailure) {
+      log.warn(
+        `compaction successor committed but publication failed: ${String(postCommitFailure.error)}`,
+      );
     }
-    log.warn(`compaction successor committed but publication failed: ${String(error)}`);
     return committed;
   } finally {
-    if (committed && params.config) {
+    if (committed?.previousSessionId && params.config) {
       try {
         emitCompactionSessionLifecycleHooks({
           agentId: currentTarget.agentId,

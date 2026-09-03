@@ -87,6 +87,8 @@ export type {
   AgentHarnessAttemptResult,
   AgentHarnessCompactParams,
   AgentHarnessCompactResult,
+  AgentHarnessContextEngineCompactionCommitMutation,
+  AgentHarnessContextEngineCompactionCommitParams,
   AgentHarnessNativeCompaction,
   AgentHarnessNativeCompactionParams,
   AgentHarnessNativeCompactionRequest,

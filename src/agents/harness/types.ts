@@ -466,7 +466,32 @@ export type AgentHarnessSessionDeletionMutation = {
   rollback: () => void;
 };
 
+export type AgentHarnessContextEngineCompactionCommitParams = {
+  config?: OpenClawConfig;
+  agentId?: string;
+  sessionKey: string;
+  previousSessionId: string;
+  sessionId: string;
+  /** Revalidate the captured registry and harness around persistent mutation. */
+  assertCurrent: () => void;
+};
+
+export type AgentHarnessContextEngineCompactionCommitMutation = {
+  /** Synchronously record the native synchronization obligation at the host commit edge. */
+  commit: () => void;
+  /** Restore only the exact native predecessor after a definite host rollback. */
+  rollback: () => void;
+  /** Finalize any staged successor after host COMMIT and before observers run. */
+  complete: () => void;
+};
+
 type AgentHarnessSessionLifecycleCapability = {
+  /** Prepare native state outside the host writer, then join context-engine compaction commit. */
+  withContextEngineCompactionCommit?<T>(
+    this: void,
+    params: AgentHarnessContextEngineCompactionCommitParams,
+    run: (mutation: AgentHarnessContextEngineCompactionCommitMutation) => Promise<T>,
+  ): Promise<T>;
   reset?(params: AgentHarnessResetParams): Promise<void> | void;
   /** Prepare outside the session writer; release native resources after its commit completes. */
   withSessionDeletion?<T>(

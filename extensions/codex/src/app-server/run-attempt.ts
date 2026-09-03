@@ -71,10 +71,12 @@ async function retryPendingCodexNativeCompaction(
   if (outcome.kind === "synchronized") {
     return "continue";
   }
-  if (outcome.kind === "stale_thread") {
+  if (outcome.kind === "stale_thread" || outcome.kind === "rotation_required") {
     assertCodexBindingMayBeReplaced(
       outcome.binding,
-      "recovering stale native compaction history",
+      outcome.kind === "stale_thread"
+        ? "recovering stale native compaction history"
+        : "rotating a thread whose persisted restrictions prohibit native compaction",
       connection.params.expectedSessionRuntimeOwnership,
     );
     if (connection.bindingIdentity.kind !== "session") {

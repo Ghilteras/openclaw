@@ -12,6 +12,7 @@ import { prepareCodexAttemptConnection } from "./run-attempt-connection.js";
 import {
   createCodexRuntimePlanFixture,
   createParams,
+  seedRunSessionOwnerForTest,
   setupRunAttemptTestHooks,
   tempDir,
 } from "./run-attempt-test-harness.js";
@@ -19,6 +20,8 @@ import { createSandboxContext } from "./sandbox-exec-server.test-helpers.js";
 import {
   readCodexAppServerBinding,
   registerCodexTestSessionIdentity,
+  retainCodexTestCompactionTransition,
+  sessionBindingIdentity,
   testCodexAppServerBindingStore,
   writeCodexAppServerBinding,
 } from "./session-binding.test-helpers.js";
@@ -75,6 +78,98 @@ describe("prepareCodexAttemptConnection", () => {
       await expect(readCodexAppServerBinding(sessionFile)).resolves.toEqual(before);
     },
   );
+
+  it("reconciles retained successor ownership before the next normal binding read", async () => {
+    const sessionFile = path.join(tempDir, "retained-successor.jsonl");
+    const workspaceDir = path.join(tempDir, "retained-successor-workspace");
+    const previousSessionId = "session-1";
+    const sessionKey = "agent:main:session-1";
+    const params = createParams(sessionFile, workspaceDir, {
+      sessionId: "session-2",
+      sessionKey,
+    });
+    params.expectedSessionRuntimeOwnership = {
+      model: "native",
+      auth: "host",
+      modelRef: { provider: "openai", model: "gpt-5.6-luna" },
+    };
+    const previous = sessionBindingIdentity({
+      agentId: "main",
+      sessionId: previousSessionId,
+      sessionKey,
+    });
+    const successor = { ...previous, sessionId: params.sessionId };
+    const binding = {
+      threadId: "thread-retained",
+      cwd: workspaceDir,
+      preserveNativeModel: true as const,
+      model: "gpt-5.6-luna",
+      modelProvider: "openai",
+    };
+    await testCodexAppServerBindingStore.mutate(previous, { kind: "set", binding });
+    await retainCodexTestCompactionTransition(
+      testCodexAppServerBindingStore,
+      successor,
+      previousSessionId,
+    );
+    await seedRunSessionOwnerForTest(successor.sessionId, sessionKey, previousSessionId);
+    expect(() => testCodexAppServerBindingStore.read(successor)).toThrow(
+      "compaction transition is unresolved",
+    );
+    const reachedConnectionPreparation = new Error("reached connection preparation");
+    const connect = vi
+      .spyOn(bindingConnection, "resolveCodexBindingAppServerConnection")
+      .mockImplementation(() => {
+        throw reachedConnectionPreparation;
+      });
+
+    await expect(
+      prepareCodexAttemptConnection({
+        params,
+        options: { bindingStore: testCodexAppServerBindingStore },
+      }),
+    ).rejects.toBe(reachedConnectionPreparation);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(testCodexAppServerBindingStore.read(successor)).toEqual(binding);
+  });
+
+  it("routes an unrelated retained transition through the superseded reconciliation fence", async () => {
+    const sessionFile = path.join(tempDir, "retained-unrelated.jsonl");
+    const workspaceDir = path.join(tempDir, "retained-unrelated-workspace");
+    const sessionKey = "agent:main:session-1";
+    const previous = sessionBindingIdentity({
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey,
+    });
+    const successor = { ...previous, sessionId: "session-2" };
+    const params = createParams(sessionFile, workspaceDir, {
+      sessionId: "session-unrelated",
+      sessionKey,
+    });
+    await testCodexAppServerBindingStore.mutate(previous, {
+      kind: "set",
+      binding: { threadId: "thread-retained", cwd: workspaceDir },
+    });
+    await retainCodexTestCompactionTransition(
+      testCodexAppServerBindingStore,
+      successor,
+      previous.sessionId,
+    );
+    await seedRunSessionOwnerForTest(params.sessionId, sessionKey);
+    const connect = vi.spyOn(bindingConnection, "resolveCodexBindingAppServerConnection");
+
+    await expect(
+      prepareCodexAttemptConnection({
+        params,
+        options: { bindingStore: testCodexAppServerBindingStore },
+      }),
+    ).rejects.toMatchObject({ name: "AgentHarnessSessionSupersededError" });
+    expect(connect).not.toHaveBeenCalled();
+    expect(() =>
+      testCodexAppServerBindingStore.read({ ...previous, sessionId: params.sessionId }),
+    ).toThrow("compaction transition is unresolved");
+  });
 
   it.each([
     "preserved",

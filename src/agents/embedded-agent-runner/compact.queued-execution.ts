@@ -331,6 +331,8 @@ export async function executeQueuedContextEngineCompaction(input: {
               config: params.config,
               currentSessionFile: params.sessionFile,
               currentTarget: runtimeTarget,
+              ...(preparedHarnessRuntime ? { harnessRuntime: preparedHarnessRuntime } : {}),
+              contextEngineOwnsCompaction: engineOwnsCompaction,
               expectedEntry,
               assertActive: assertCallerActive,
               result,

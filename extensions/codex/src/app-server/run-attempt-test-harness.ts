@@ -316,13 +316,24 @@ export function createTestParams(): EmbeddedRunAttemptParams {
 }
 
 /** Models the core owner required for a reusable stable-key Codex binding. */
-export async function seedRunSessionOwnerForTest(sessionId: string, sessionKey: string) {
+export async function seedRunSessionOwnerForTest(
+  sessionId: string,
+  sessionKey: string,
+  previousSessionId?: string,
+) {
   const scope = {
     agentId: "main",
     sessionKey,
     storePath: resolveStorePath(undefined, { agentId: "main" }),
   };
-  await upsertSessionEntry({ ...scope, entry: { sessionId, updatedAt: Date.now() } });
+  await upsertSessionEntry({
+    ...scope,
+    entry: {
+      sessionId,
+      updatedAt: Date.now(),
+      ...(previousSessionId ? { previousSessionId } : {}),
+    },
+  });
   seededSessionOwnersForTest.push({ ...scope, expectedSessionId: sessionId });
 }
 

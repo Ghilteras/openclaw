@@ -72,8 +72,15 @@ type CodexAppServerCompactOptions = {
 export type CodexPendingNativeCompactionOutcome =
   | { kind: "synchronized"; binding: CodexAppServerThreadBinding }
   | { kind: "retry_pending"; reason: string; binding: CodexAppServerThreadBinding }
+  | { kind: "rotation_required"; binding: CodexAppServerThreadBinding }
   | { kind: "binding_changed" }
   | { kind: "stale_thread"; reason: string; binding: CodexAppServerThreadBinding };
+
+function isPersistedNativeCompactionRestricted(binding: CodexAppServerThreadBinding): boolean {
+  return (
+    binding.nativeToolPolicyRestricted === true || binding.ringZeroConfigFingerprint !== undefined
+  );
+}
 
 type CodexNativeCompactionCompletion = {
   completed: boolean;
@@ -401,6 +408,12 @@ export async function synchronizePendingCodexNativeCompaction(
       binding: currentBinding,
     };
   }
+  if (
+    currentBinding.nativeCompactionSyncPending === true &&
+    isPersistedNativeCompactionRestricted(currentBinding)
+  ) {
+    return { kind: "rotation_required", binding: currentBinding };
+  }
   return currentBinding.nativeCompactionSyncPending === true
     ? {
         kind: "retry_pending",
@@ -529,8 +542,7 @@ async function compactCodexNativeThread(
   }
   if (
     params.nativeToolSurface === "host-isolated" ||
-    initialBinding.nativeToolPolicyRestricted === true ||
-    initialBinding.ringZeroConfigFingerprint !== undefined
+    isPersistedNativeCompactionRestricted(initialBinding)
   ) {
     // Compact is a separate Codex operation without a turn-scoped environment
     // override, so resuming here would silently restore ambient native tools.
@@ -778,7 +790,6 @@ async function compactCodexNativeThread(
               bindingStore: options.bindingStore,
               identity: bindingIdentity,
               binding,
-              syncPending: syncAfterContextEngine,
             });
             try {
               completionWatch.beginRequest();
@@ -1052,18 +1063,14 @@ async function prepareContextEngineProjectionForNativeCompaction(params: {
   bindingStore: CodexAppServerBindingStore;
   identity: CodexAppServerBindingIdentity;
   binding: CodexAppServerThreadBinding;
-  syncPending: boolean;
 }): Promise<CodexAppServerThreadBinding> {
   const contextEngineBinding = params.binding.contextEngine;
   const previousProjection = contextEngineBinding?.projection;
-  if (
-    !previousProjection &&
-    (!params.syncPending || params.binding.nativeCompactionSyncPending === true)
-  ) {
+  if (!previousProjection) {
     return params.binding;
   }
-  // Post-context-engine compaction records its durable synchronization
-  // obligation in the same write that invalidates the old projection.
+  // Host compaction acceptance already recorded the durable synchronization
+  // obligation. Native preparation only invalidates the stale projection.
   const preparedBinding = await mutateExactNativeCompactionBinding(
     params.bindingStore,
     params.identity,
@@ -1075,7 +1082,6 @@ async function prepareContextEngineProjectionForNativeCompaction(params: {
         contextEngine: contextEngineBinding
           ? { ...contextEngineBinding, projection: undefined }
           : undefined,
-        ...(params.syncPending ? { nativeCompactionSyncPending: true as const } : {}),
       },
     },
   );

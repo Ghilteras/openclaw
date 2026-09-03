@@ -78,6 +78,7 @@ export type EmbeddedRunCompactionRecoveryInput = {
   ) => Promise<void>;
   adoptCompactionTranscript: (
     result: CompactionResult,
+    harnessRuntime: string,
     onAccepted?: () => void,
   ) => Promise<string | undefined>;
   getActiveSession: () => {
@@ -255,11 +256,15 @@ export async function compactEmbeddedRunForRecovery(
     );
     result = { ok: false, compacted: false, reason: String(error) };
   }
-  if (observedCompactions > 0 && !result.compacted) {
-    // Post-commit failure is not an unperformed compaction. Retry the observed
-    // current context, but never adopt a failed backend's successor proposal.
+  if (observedCompactions > 0 && (!result.ok || !result.compacted)) {
+    // The producer's commit outranks an unsuccessful backend return only for
+    // the current transcript. Strip any failed successor proposal before retry.
     result = { ok: result.ok, compacted: true, reason: result.reason };
   }
+  // The producer recorder proves the transcript commit even when the backend
+  // subsequently fails. Grant host acceptance that fact without enabling
+  // success-only hooks, maintenance, or post-effects for the failed result.
+  const acceptanceResult = observedCompactions > 0 ? { ...result, ok: true } : result;
   const successor = resolveCompactionSuccessorTranscript(result);
   const target = result.result?.sessionTarget;
   const sameTarget =
@@ -295,7 +300,11 @@ export async function compactEmbeddedRunForRecovery(
     (target?.threadId === undefined || target.threadId === activeSession.target.threadId);
   const previousSessionId =
     result.compacted && !retainMemoryTranscript
-      ? await input.adoptCompactionTranscript(result, sameTarget ? undefined : recordTokensAfter)
+      ? await input.adoptCompactionTranscript(
+          acceptanceResult,
+          input.harnessRuntime,
+          sameTarget ? undefined : recordTokensAfter,
+        )
       : undefined;
   input.assertRecoveryActive();
   return { result, runtimeContext, runtimeSettings, previousSessionId };
@@ -443,6 +452,7 @@ export function createEmbeddedRunCompactionRuntime(input: {
   });
   const adoptCompactionTranscript = async (
     compactResult: CompactionResult,
+    harnessRuntime: string,
     onAccepted?: () => void,
   ): Promise<string | undefined> => {
     assertRecoveryActive();
@@ -470,6 +480,8 @@ export function createEmbeddedRunCompactionRuntime(input: {
       config: params.config,
       currentSessionFile: sessionPromptState.sessionFile,
       currentTarget,
+      harnessRuntime,
+      contextEngineOwnsCompaction: contextEngine.info.ownsCompaction === true,
       result: compactResult,
       expectedEntry: {
         sessionId: currentTarget.sessionId,
@@ -479,11 +491,6 @@ export function createEmbeddedRunCompactionRuntime(input: {
       assertActive: assertAdmittedActive,
       onCommitted: recordAccepted,
     });
-    // Unchanged identity has no storage publication, but its validated current
-    // row still identifies the already-recorded compaction for accounting.
-    if (!accepted.previousSessionId) {
-      recordAccepted(accepted);
-    }
     assertRecoveryActive();
     sessionPromptState.notifyCompactionSessionAdopted(accepted.previousSessionId);
     assertRecoveryActive();
