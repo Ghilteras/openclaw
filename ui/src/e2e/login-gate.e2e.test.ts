@@ -21,6 +21,53 @@ const suite = createControlUiE2eSuite({
     `Playwright Chromium is not installed or cannot start at ${executablePath}. Run \`pnpm --dir ui exec playwright install --with-deps chromium\`, or set OPENCLAW_UI_E2E_ALLOW_MISSING_CHROMIUM=1 only when intentionally skipping this lane.`,
 });
 let RECOVERY_ARTIFACT_DIR: string;
+
+type PhoneRecoveryObservation = {
+  schemaVersion: 1;
+  serviceWorker: "normal" | "blocked";
+  targetPath: string;
+  scenarioCompleted: boolean;
+  documentRecoveryMarkers: boolean[];
+  documentResponses: Array<{ cacheControl: string | undefined; fromWorker: boolean }>;
+  reloadRequired?: {
+    actionCount: number;
+    access: {
+      ariaLive: string | null;
+      disabled: boolean;
+      height: number;
+      insideFencedOutlet: boolean;
+      tabIndex: number;
+      width: number;
+    };
+    focused: boolean;
+    terminalInvocationCount: number;
+  };
+  recovered?: {
+    actionCount: number;
+    artifactIdentity: {
+      bodyDisplay: string;
+      buildId: string | null;
+      font: string | null | undefined;
+      icon: string | null | undefined;
+      theme: string | null | undefined;
+    };
+    routePath: string;
+  };
+  assignment?: {
+    chatSendCount: number;
+    visible: boolean;
+  };
+  final?: {
+    buildRejectionLoads: string | null;
+    chatSendCount: number;
+    mainInert: boolean | null;
+    recoveryActionCount: number;
+    routePath: string;
+    routerOutletInert: boolean | null;
+    terminalInvocationCount: number;
+  };
+};
+
 beforeEach(() => {
   RECOVERY_ARTIFACT_DIR = createControlUiE2eArtifactDir("zombie-reload");
 });
@@ -198,6 +245,15 @@ suite.define(() => {
       };
       const target = new URL("chat/main", suite.server.baseUrl);
 
+      const observation: PhoneRecoveryObservation = {
+        schemaVersion: 1,
+        serviceWorker,
+        targetPath: target.pathname,
+        scenarioCompleted: false,
+        documentRecoveryMarkers: documentRequests,
+        documentResponses,
+      };
+
       try {
         await page.goto(target.href);
         await gateway.waitForRequest("connect");
@@ -241,12 +297,22 @@ suite.define(() => {
         expect(recoveryAccess.height).toBeGreaterThanOrEqual(44);
         expect(recoveryAccess.width).toBeGreaterThanOrEqual(44);
         await recovery.focus();
-        expect(await recovery.evaluate((button) => document.activeElement === button)).toBe(true);
+        const recoveryFocused = await recovery.evaluate(
+          (button) => document.activeElement === button,
+        );
+        expect(recoveryFocused).toBe(true);
+        const terminalInvocationCount = (await gateway.getRequests("terminal.open")).length;
+        observation.reloadRequired = {
+          actionCount: await recovery.count(),
+          access: recoveryAccess,
+          focused: recoveryFocused,
+          terminalInvocationCount,
+        };
         await writeFile(
           path.join(RECOVERY_ARTIFACT_DIR, `01-${serviceWorker}-reload-required.png`),
           await takeControlUiViewportScreenshot(page, page.locator(".shell"), [recovery]),
         );
-        expect(await gateway.getRequests("terminal.open")).toHaveLength(0);
+        expect(terminalInvocationCount).toBe(0);
 
         await recovery.tap();
         await expect.poll(() => documentRequests.length).toBe(3);
@@ -299,6 +365,11 @@ suite.define(() => {
           theme: artifactIdentity.buildId,
           bodyDisplay: "block",
         });
+        observation.recovered = {
+          actionCount: await page.getByRole("button", { name: /Server updated/u }).count(),
+          artifactIdentity,
+          routePath: new URL(page.url()).pathname,
+        };
         const actions = page.getByRole("button", { name: "Actions for Main" });
         await writeFile(
           path.join(RECOVERY_ARTIFACT_DIR, `02-${serviceWorker}-recovered.png`),
@@ -307,12 +378,46 @@ suite.define(() => {
         await actions.tap();
         const assignment = page.getByRole("menuitem", { name: "Assign to…", exact: true });
         await assignment.waitFor();
-        expect(await gateway.getRequests("chat.send")).toHaveLength(0);
+        const chatSendCount = (await gateway.getRequests("chat.send")).length;
+        expect(chatSendCount).toBe(0);
+        observation.assignment = {
+          chatSendCount,
+          visible: await assignment.isVisible(),
+        };
         await writeFile(
           path.join(RECOVERY_ARTIFACT_DIR, `03-${serviceWorker}-assignment-menu.png`),
           await takeControlUiViewportScreenshot(page, page.locator(".shell"), [assignment]),
         );
+        observation.scenarioCompleted = true;
       } finally {
+        if (!page.isClosed()) {
+          observation.final = {
+            buildRejectionLoads: await page
+              .evaluate(() =>
+                sessionStorage.getItem("openclaw.control-ui-e2e.build-rejection-loads"),
+              )
+              .catch(() => null),
+            chatSendCount: (await gateway.getRequests("chat.send")).length,
+            mainInert: await page
+              .locator("#control-ui-main")
+              .evaluate((element) => element.hasAttribute("inert"))
+              .catch(() => null),
+            recoveryActionCount: await page
+              .getByRole("button", { name: /Server updated/u })
+              .count()
+              .catch(() => 0),
+            routePath: new URL(page.url()).pathname,
+            routerOutletInert: await page
+              .locator("openclaw-router-outlet")
+              .evaluate((element) => element.hasAttribute("inert"))
+              .catch(() => null),
+            terminalInvocationCount: (await gateway.getRequests("terminal.open")).length,
+          };
+        }
+        await writeFile(
+          path.join(RECOVERY_ARTIFACT_DIR, `observed-${serviceWorker}.json`),
+          `${JSON.stringify(observation, null, 2)}\n`,
+        );
         await closeContext(context);
       }
     },
