@@ -31,6 +31,7 @@ import {
   replaceTranscriptEvents,
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
+import { SessionTranscriptProjectionUnavailableError } from "../config/sessions/session-transcript-projection-error.js";
 import {
   waitForSessionTranscriptIndexReconcile,
   waitForSessionTranscriptProjection,
@@ -4516,6 +4517,100 @@ describe("gateway server chat", () => {
         },
       ]);
       expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+    } finally {
+      resetDirectChatSession();
+    }
+  });
+
+  test("chat.send retries a transient post-admission projection failure under the same run", async () => {
+    const { storePath } = openDirectChatSession();
+    const runId = "idem-restart-safe-projection-retry";
+    try {
+      await writeStoredMainSession(makeDoneSessionEntry());
+      const context = createDirectChatContext();
+      const responses: Array<{ ok: boolean; payload?: unknown }> = [];
+      const agentStarts = vi.fn();
+      dispatchInboundMessageMock
+        .mockRejectedValueOnce(new SessionTranscriptProjectionUnavailableError("sess-main"))
+        .mockImplementationOnce(async (params: unknown) => {
+          const options = (params as { replyOptions?: GetReplyOptions }).replyOptions;
+          options?.onAgentRunStart?.(runId);
+          agentStarts();
+          return undefined;
+        });
+
+      await sendControlUiChat({
+        context,
+        idempotencyKey: runId,
+        message: "retry projection before starting the model",
+        respond: captureChatResult(responses),
+      });
+
+      expect(responses).toEqual([
+        {
+          ok: true,
+          payload: expect.objectContaining({ runId, status: "started" }),
+        },
+      ]);
+      await waitForFast(
+        () => expect(context.removeChatRun).toHaveBeenCalledTimes(1),
+        FAST_WAIT_OPTS,
+      );
+      expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(2);
+      expect(agentStarts).toHaveBeenCalledOnce();
+      expect(context.broadcast).not.toHaveBeenCalledWith(
+        "chat",
+        expect.objectContaining({ runId, state: "error" }),
+        expect.anything(),
+      );
+      expect(loadSessionEntry({ sessionKey: "agent:main:main", storePath })).toMatchObject({
+        abortedLastRun: false,
+        status: "done",
+      });
+    } finally {
+      resetDirectChatSession();
+    }
+  });
+
+  test("chat.send terminalizes a retryable projection failure only after bounded exhaustion", async () => {
+    const { storePath } = openDirectChatSession();
+    const runId = "idem-restart-safe-projection-exhaustion";
+    try {
+      await writeStoredMainSession(makeDoneSessionEntry());
+      const context = createDirectChatContext();
+      const responses: Array<{ ok: boolean; payload?: unknown }> = [];
+      dispatchInboundMessageMock.mockRejectedValue(
+        new SessionTranscriptProjectionUnavailableError("sess-main"),
+      );
+
+      await sendControlUiChat({
+        context,
+        idempotencyKey: runId,
+        message: "exhaust projection retries",
+        respond: captureChatResult(responses),
+      });
+
+      expect(responses).toEqual([
+        {
+          ok: true,
+          payload: expect.objectContaining({ runId, status: "started" }),
+        },
+      ]);
+      await waitForFast(
+        () => expect(context.removeChatRun).toHaveBeenCalledTimes(1),
+        FAST_WAIT_OPTS,
+      );
+      expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(3);
+      expect(context.broadcast).toHaveBeenCalledTimes(1);
+      expect(context.broadcast).toHaveBeenCalledWith(
+        "chat",
+        expect.objectContaining({ runId, state: "error" }),
+        { sessionKeys: ["agent:main:main"] },
+      );
+      expect(loadSessionEntry({ sessionKey: "agent:main:main", storePath })).toMatchObject({
+        abortedLastRun: false,
+        status: "failed",
+      });
     } finally {
       resetDirectChatSession();
     }
