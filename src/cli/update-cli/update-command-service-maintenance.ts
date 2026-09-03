@@ -248,10 +248,6 @@ export class UpdateCommandAbort extends Error {
   }
 }
 
-function serviceControlStdoutForMode(jsonMode: boolean): NodeJS.WritableStream {
-  return jsonMode ? JSON_MODE_SERVICE_STDOUT : process.stdout;
-}
-
 function armWindowsTaskAutoStartRecovery(
   serviceEnv: NodeJS.ProcessEnv,
   assertCurrentService?: () => Promise<void>,
@@ -580,7 +576,7 @@ export async function maybeStopManagedServiceBeforeMutableUpdate(params: {
     }
     await service.stop({
       env: currentState.env,
-      stdout: serviceControlStdoutForMode(params.jsonMode),
+      stdout: params.jsonMode ? JSON_MODE_SERVICE_STDOUT : process.stdout,
     });
     if (windowsTaskAutoStartRecovery) {
       await abortWindowsTaskUpdateIfInterrupted(windowsTaskAutoStartRecovery);

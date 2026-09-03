@@ -1,7 +1,8 @@
 // Update CLI tests cover update command behavior, runtime calls, and output handling.
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
@@ -38,6 +39,7 @@ import type { UpdateRunResult } from "../infra/update-runner.js";
 import { CLAWHUB_INSTALL_ERROR_CODE } from "../plugins/clawhub-error-codes.js";
 import { ManagedPluginLifecycleError } from "../plugins/management-lifecycle-error.js";
 import { captureEnv, withEnvAsync } from "../test-utils/env.js";
+import { getFreePort } from "../test-utils/ports.js";
 import { VERSION } from "../version.js";
 import { createCliRuntimeCapture, getMockCallOutput } from "./test-runtime-capture.js";
 
@@ -73,6 +75,7 @@ const managedUpdateHandoff = vi.hoisted(() => ({
 const mockedRunDaemonInstall = vi.fn();
 const serviceReadCommand = vi.fn();
 const serviceReadRuntime = vi.fn();
+let absentServicePort: number;
 const mockGetSelfAndAncestorPidsSync = vi.fn(() => new Set<number>([process.pid]));
 const terminateStaleGatewayPids = vi.fn();
 const inspectPortUsage = vi.fn();
@@ -431,13 +434,17 @@ vi.mock("../daemon/service.js", () => ({
     const command = await serviceReadCommand(
       args?.requireEffective ? { requireEffective: true } : undefined,
     );
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...(args?.env ?? process.env),
       ...(process.platform === "win32" ? { PATH: path.dirname(process.execPath) } : undefined),
       ...(command && typeof command === "object" && "environment" in command
         ? (command.environment as NodeJS.ProcessEnv | undefined)
         : undefined),
     };
+    // An absent fixture service must probe its own port, not the operator's listener.
+    if (command === null) {
+      env.OPENCLAW_GATEWAY_PORT ??= String(absentServicePort);
+    }
     args?.validateEnvBeforeStatusRead?.(env);
     const [loadState, runtime] = await Promise.all([
       serviceLoaded({ env })
@@ -1747,6 +1754,7 @@ describe("update-cli", () => {
   };
 
   beforeEach(async () => {
+    absentServicePort = await getFreePort();
     const gatewayEntrypoint = await import("../daemon/gateway-entrypoint.js");
     const actualGatewayEntrypoint = await vi.importActual<
       typeof import("../daemon/gateway-entrypoint.js")
@@ -5520,6 +5528,25 @@ describe("update-cli", () => {
     expectPackageInstallSpec("openclaw@9999.0.0");
   });
 
+  it("refuses an absent service update while its selected port has a real listener", async () => {
+    await mockPackageInstallAtCaseDir();
+    const listener = createServer();
+    try {
+      listener.listen(absentServicePort, "127.0.0.1");
+      await once(listener, "listening");
+      await expect(runWithGatewayServiceEnv({ yes: true })).rejects.toEqual(new ExitError(1));
+      expect(getErrorOutput()).toContain("Gateway service inspection is unavailable");
+      expect(packageInstallCommandCall()).toBeUndefined();
+      expectNoSideEffects(serviceStop, serviceStart, serviceRestart);
+    } finally {
+      if (listener.listening) {
+        const closed = once(listener, "close");
+        listener.close();
+        await closed;
+      }
+    }
+  });
+
   it("refuses package updates from inherited gateway service env when --no-restart leaves the gateway running", async () => {
     await mockPackageInstallAtCaseDir();
     primeServiceCommand(["openclaw", "gateway", "run"], {
@@ -6045,7 +6072,14 @@ describe("update-cli", () => {
           ? []
           : [
               [
-                [process.execPath, entryPath, "gateway", "restart", "--preserve-definition"],
+                [
+                  process.execPath,
+                  entryPath,
+                  "gateway",
+                  "restart",
+                  "--preserve-definition",
+                  "--json",
+                ],
                 expect.objectContaining({ baseEnv: {} }),
               ],
             ],
@@ -6688,7 +6722,7 @@ describe("update-cli", () => {
     expect(defaultRuntime.exit).not.toHaveBeenCalled();
     expect(freshRestartCalls()).toEqual([
       [
-        [nodeRunner, entryPath, "gateway", "restart", "--preserve-definition"],
+        [nodeRunner, entryPath, "gateway", "restart", "--preserve-definition", "--json"],
         expect.objectContaining({ timeoutMs: 17_000 }),
       ],
     ]);
