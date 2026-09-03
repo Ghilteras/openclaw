@@ -103,7 +103,7 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
     },
     onComplete: ({ client, data, mode }) => {
       this.loadClient = null;
-      this.adoptLoadedData(client, data, mode !== "revalidate");
+      this.supplemental.adoptCoreData(client, data, { startSupplemental: mode !== "revalidate" });
       this.finishCoreRefresh();
     },
     onError: () => {
@@ -222,7 +222,9 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
         (this.routeData.agentId ?? "") === selectedAgentId &&
         this.gateway.isRouteDataCurrent(this.routeData)
       ) {
-        this.adoptLoadedData(this.routeData.client, this.routeData.data);
+        this.supplemental.adoptCoreData(this.routeData.client, this.routeData.data, {
+          startSupplemental: true,
+        });
       } else {
         this.data = null;
         this.dataClient = null;
@@ -257,14 +259,6 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
       return;
     }
     void this.refresh("prepared");
-  }
-
-  private adoptLoadedData(
-    client: GatewayBrowserClient | null,
-    data: ModelProvidersData,
-    startSupplemental = true,
-  ) {
-    this.supplemental.adoptCoreData(client, data, { startSupplemental });
   }
 
   private invalidateRequests() {
