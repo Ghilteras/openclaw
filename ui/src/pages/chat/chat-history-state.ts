@@ -56,6 +56,9 @@ export function chatHistoryRequests(owner: object): ChatHistoryPaneRequests {
   return requests;
 }
 
+/** Dispatched by a presented pane once its authoritative transcript has committed. */
+export const CHAT_TRANSCRIPT_COMMITTED_EVENT = "openclaw-chat-transcript-committed";
+
 export function getChatHistoryLoadState(state: ChatState): ChatHistoryLoadState {
   const requests = chatHistoryRequests(state);
   const load = requests.historyLoad;

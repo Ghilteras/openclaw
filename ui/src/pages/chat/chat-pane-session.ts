@@ -27,6 +27,7 @@ import { parseAgentSessionKey } from "../../lib/sessions/session-key.ts";
 import { releaseChatAttachmentPayloads } from "./attachment-payload-store.ts";
 import { catalogMessageId } from "./catalog-message-id.ts";
 import { loadChatBranches } from "./chat-history-branches.ts";
+import { CHAT_TRANSCRIPT_COMMITTED_EVENT } from "./chat-history-state.ts";
 import {
   CATALOG_TOOL_RESULT_PREVIEW_MAX_CHARS,
   catalogRawResult,
@@ -200,6 +201,11 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
       state.renderLifecycle.afterCommit((complete) => {
         if (isCurrent() && this.presented) {
           this.deferredSessionHydrationActive = false;
+          // Background transcript warming waits on this: it must not share the
+          // socket with the transcript the user is looking at.
+          this.dispatchEvent(
+            new CustomEvent(CHAT_TRANSCRIPT_COMMITTED_EVENT, { bubbles: true, composed: true }),
+          );
           if (historyCommitted) {
             this.markSessionRead(selectedChatSessionRow(state));
           }
