@@ -72,13 +72,7 @@ The process runs the normal embedded agent loop with a restricted backend:
 
 Worker mode does not start channels, Gateway HTTP surfaces, or plugin auto-start
 beyond the assigned session toolset. It uses a throwaway state directory and has
-no model provider credentials. When the Gateway's effective shared GitHub identity
-is available, the worker receives a turn-bound access token in its private launch
-envelope. The token is materialized in a private per-turn profile inside the
-throwaway state directory, with earlier profiles removed before the next binding,
-and scrubbed when that directory is removed. The sealed worker launcher binds it
-to each `exec` child. GitHub CLI must be installed on the worker host; the bundle
-includes the launcher, not `gh`.
+no standing provider or forge credentials.
 
 Materialized skill files are temporary turn inputs in a private directory separate
 from worker state and its GitHub credentials. A failed per-turn deletion logs
