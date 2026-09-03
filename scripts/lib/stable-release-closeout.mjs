@@ -87,6 +87,12 @@ function readVerifiedAssetNames(assets) {
   );
 }
 
+function copyOwnFields(source, ...keys) {
+  return Object.fromEntries(
+    keys.filter((key) => Object.hasOwn(source, key)).map((key) => [key, source[key]]),
+  );
+}
+
 function isCloseoutEvidenceAsset(assetName, tag) {
   const releaseVersion = tag.slice(1);
   return (
@@ -199,13 +205,18 @@ export function verifyStableMainCloseout(params) {
     (asset) => !isCloseoutEvidenceAsset(asset.name, params.tag),
   );
   const existingManifest = params.existingManifest;
-  const releaseAssets = existingManifest?.githubReleaseAssets ?? observedAssets;
+  const releaseAssets =
+    existingManifest?.githubReleaseAssets ??
+    observedAssets.map((asset) => ({
+      name: asset.name,
+      digest: typeof asset.digest === "string" ? asset.digest : null,
+    }));
   if (existingManifest) {
     // Closeout records a publication-time snapshot. Later app attachments may
     // extend it, but must never rewrite recorded assets or release evidence.
     for (const recorded of releaseAssets) {
       const observed = observedAssets.find((asset) => asset.name === recorded.name);
-      if (!observed || (observed.digest ?? null) !== recorded.digest) {
+      if (!observed || (recorded.digest != null && observed.digest !== recorded.digest)) {
         errors.push(`Recorded release asset changed or disappeared: ${recorded.name}.`);
       }
     }
@@ -222,9 +233,14 @@ export function verifyStableMainCloseout(params) {
   const verifiedObservedAssetNames = readVerifiedAssetNames(observedAssets);
   const macAttachedAtCloseout = expectedMacAssets.every((asset) => verifiedAssetNames.has(asset));
   const macPublished = expectedMacAssets.every((name) => verifiedObservedAssetNames.has(name));
+  const appcastVerifiedAtCloseout = existingManifest
+    ? existingManifest.appcast === "verified" ||
+      (!Object.hasOwn(existingManifest, "appcast") &&
+        Object.hasOwn(existingManifest, "appcastSha256"))
+    : macAttachedAtCloseout;
   // A recorded appcast remains bound to its main snapshot. Only late macOS
   // publication needs the current feed, which may have retired older entries.
-  const appcast = macAttachedAtCloseout
+  const appcast = appcastVerifiedAtCloseout
     ? params.mainAppcast
     : (params.publishedAppcast ?? params.mainAppcast);
   if (
@@ -258,15 +274,19 @@ export function verifyStableMainCloseout(params) {
     mainPackageVersion: mainVersion,
     releaseTagPackageVersion: tagPackageVersion,
     changelogSha256: sha256(mainChangelog),
-    ...(!existingManifest || "apps" in existingManifest
-      ? { apps, appPlatforms, appcast: macAttachedAtCloseout ? "verified" : "pending" }
-      : {}),
-    ...(macAttachedAtCloseout ? { appcastSha256: sha256(params.mainAppcast) } : {}),
+    ...(existingManifest
+      ? copyOwnFields(existingManifest, "apps", "appPlatforms", "appcast", "appcastSha256")
+      : {
+          apps,
+          appPlatforms,
+          appcast: macAttachedAtCloseout ? "verified" : "pending",
+          ...(macAttachedAtCloseout ? { appcastSha256: sha256(params.mainAppcast) } : {}),
+        }),
     fullReleaseValidationRunId: params.fullReleaseValidationRunId,
     fullReleaseValidationRunAttempt,
     releasePublishRunId: params.releasePublishRunId,
-    ...(existingManifest?.releasePublishRecovery
-      ? { releasePublishRecovery: existingManifest.releasePublishRecovery }
+    ...(existingManifest
+      ? copyOwnFields(existingManifest, "releasePublishRecovery")
       : params.allowFailedPublishRecovery
         ? { releasePublishRecovery: { npmDockerVerified: true } }
         : {}),
@@ -274,12 +294,7 @@ export function verifyStableMainCloseout(params) {
       id: params.rollbackDrillId,
       date: params.rollbackDrillDate,
     },
-    githubReleaseAssets: releaseAssets
-      .filter((asset) => !isCloseoutEvidenceAsset(asset.name, params.tag))
-      .map((asset) => ({
-        name: asset.name,
-        digest: typeof asset.digest === "string" ? asset.digest : null,
-      })),
+    githubReleaseAssets: releaseAssets,
   };
   if (existingManifest && JSON.stringify(manifest) !== JSON.stringify(existingManifest)) {
     return {
