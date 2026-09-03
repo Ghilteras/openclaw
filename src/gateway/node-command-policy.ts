@@ -590,13 +590,11 @@ export function resolveRequiredNodeCommandAuthority(params: {
     ) {
       continue;
     }
-    if (declaredCommands.has(command) && !effectiveCommands.has(command)) {
-      return { command, state: "pending-approval" };
+    let state: RequiredNodeCommandAuthority["state"] = "undeclared";
+    if (declaredCommands.has(command)) {
+      state = effectiveCommands.has(command) ? "unauthorized" : "pending-approval";
     }
-    if (declaredCommands.has(command) || withheldCommands.has(command)) {
-      return { command, state: "unauthorized" };
-    }
-    return { command, state: "undeclared" };
+    return { command, state: withheldCommands.has(command) ? "unauthorized" : state };
   }
   const command = params.requiredCommands[0];
   return command ? { command, state: "invocable" } : undefined;

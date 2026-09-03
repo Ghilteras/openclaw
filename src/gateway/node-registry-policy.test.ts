@@ -6,7 +6,11 @@ import {
   mergeRemoteNodeSkillEntries,
   removeRemoteNodeSkills,
 } from "../skills/runtime/remote-skills.js";
-import { TALK_PTT_COMMANDS } from "./node-command-policy.js";
+import {
+  resolveNodeCommandAllowlist,
+  resolveRequiredNodeCommandAuthority,
+  TALK_PTT_COMMANDS,
+} from "./node-command-policy.js";
 import { listConnectedNodePluginTools } from "./node-plugin-tool-snapshot.js";
 import { NodeRegistry, readNodeSessionWithheldCommands } from "./node-registry.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
@@ -303,18 +307,48 @@ describe("connected node runtime policy", () => {
 
   it("withdraws and restores approved commands without granting an unapproved declaration", () => {
     const { node, client, socket, reload } = createFixture();
-    reload({ gateway: { nodes: { commands: { deny: ["computer.act"] } } } });
+    const readCommandState = (command: string, config: OpenClawConfig = {}) =>
+      resolveRequiredNodeCommandAuthority({
+        requiredCommands: [command],
+        declaredCommands: node.declaredCommands,
+        effectiveCommands: node.commands,
+        withheldCommands: readNodeSessionWithheldCommands(node),
+        allowlist: resolveNodeCommandAllowlist(config, node),
+      });
+    expect(readCommandState("computer.act")).toEqual({
+      command: "computer.act",
+      state: "invocable",
+    });
+    const deniedConfig: OpenClawConfig = {
+      gateway: { nodes: { commands: { deny: ["computer.act"] } } },
+    };
+    reload(deniedConfig);
 
     expect(node.commands).toEqual(["system.run"]);
     expect(node.caps).toEqual([]);
     expect(client.connect.commands).toEqual(["system.run"]);
     expect(readNodeSessionWithheldCommands(node)).toContain("computer.act");
+    expect(readCommandState("computer.act", deniedConfig)).toEqual({
+      command: "computer.act",
+      state: "unauthorized",
+    });
 
-    reload({ gateway: { nodes: { commands: { allow: ["screen.snapshot"] } } } });
+    const restoredConfig: OpenClawConfig = {
+      gateway: { nodes: { commands: { allow: ["screen.snapshot"] } } },
+    };
+    reload(restoredConfig);
 
     expect(node.commands).toEqual(["computer.act", "system.run"]);
     expect(node.caps).toEqual(["computer"]);
     expect(readNodeSessionWithheldCommands(node)).not.toContain("computer.act");
+    expect(readCommandState("computer.act", restoredConfig)).toEqual({
+      command: "computer.act",
+      state: "invocable",
+    });
+    expect(readCommandState("screen.snapshot", restoredConfig)).toEqual({
+      command: "screen.snapshot",
+      state: "pending-approval",
+    });
     expect(node.connId).toBe("policy-conn");
     expect(node.pairingGeneration).toBe("policy-generation");
     expect(socket.close).not.toHaveBeenCalled();
