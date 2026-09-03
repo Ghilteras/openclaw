@@ -14,7 +14,6 @@ import {
   type PersonActivityRouting,
 } from "../../components/person-activity-link.ts";
 import { sessionMenuReasons } from "../../components/session-menu-access.ts";
-import { listAssignableSessionOwners } from "../../components/session-owner-chip.ts";
 import { isCloudWorkerPlacementState } from "../../components/session-row-badges.ts";
 import { t } from "../../i18n/index.ts";
 import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
@@ -409,16 +408,6 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
       (user) =>
         presenceMatchesProfile(user, renderedOwnerIdentity) && user.watchedSessions.includes(key),
     );
-    const ownerOptions = listAssignableSessionOwners({
-      facet: result?.owners,
-      agents: this.context.agents.state.agentsList?.agents,
-      self: sharingSnapshot.selfUser ?? null,
-    });
-    const selfOwner = sharingSnapshot.selfUser
-      ? (ownerOptions.find(
-          (owner) => owner.type === "human" && owner.id === sharingSnapshot.selfUser?.id,
-        ) ?? null)
-      : null;
     const header = renderChatPaneHeader({
       paneId: this.paneId,
       narrow: this.narrow,
@@ -541,9 +530,7 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
               .layoutActions=${layoutMenuActions}
               .sharing=${sharing}
               .groups=${knownGroups}
-              .ownerOptions=${ownerOptions}
-              .selfOwner=${selfOwner}
-              .currentOwnerId=${row.owner?.actor.id ?? null}
+              .currentOwner=${row.owner?.actor ?? null}
               .actionDisabledReasons=${actionDisabledReasons}
               .forkDisabled=${this.state.sessionsLoading || row.modelSelectionLocked === true}
               .forkFromLastCompleted=${row.hasActiveRun === true}

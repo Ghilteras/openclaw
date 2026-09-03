@@ -14,7 +14,7 @@ import {
   renderCompactSessionMenuFrame,
   type CompactSessionMenuView,
 } from "../../../components/session-menu-compact.ts";
-import type { SessionOwnerOption } from "../../../components/session-owner-chip.ts";
+import type { SessionCreatedActor } from "../../../components/session-owner-chip.ts";
 import { t } from "../../../i18n/index.ts";
 import { OpenClawLightDomElement } from "../../../lit/openclaw-element.ts";
 import {
@@ -64,9 +64,7 @@ class ChatHeaderSessionMenu extends OpenClawLightDomElement {
   @property({ attribute: false }) layoutActions: HeaderMenuQuickAction[] = [];
   @property({ attribute: false }) sharing: ChatSessionSharingProps | null = null;
   @property({ attribute: false }) groups: readonly string[] = [];
-  @property({ attribute: false }) ownerOptions: readonly SessionOwnerOption[] = [];
-  @property({ attribute: false }) selfOwner: SessionOwnerOption | null = null;
-  @property({ attribute: false }) currentOwnerId: string | null = null;
+  @property({ attribute: false }) currentOwner: SessionCreatedActor | null = null;
   @property({ attribute: false }) actionDisabledReasons: Partial<
     Record<HeaderMenuActionKind, string>
   > = {};
@@ -96,9 +94,7 @@ class ChatHeaderSessionMenu extends OpenClawLightDomElement {
       archiveAllowed: this.archiveAllowed,
       deleteAllowed: this.deleteAllowed,
       groups: this.groups,
-      ownerOptions: this.ownerOptions,
-      selfOwner: this.selfOwner,
-      currentOwnerId: this.currentOwnerId,
+      currentOwner: this.currentOwner,
       worktreePath: this.worktreePath,
     }),
     (action) => this.onAction(action),
@@ -179,6 +175,7 @@ class ChatHeaderSessionMenu extends OpenClawLightDomElement {
       return;
     }
     if (this.managementActions.handleSelect(value)) {
+      event.preventDefault();
       return;
     }
     if (value === "continue-in-terminal" && !this.actionDisabled(value)) {
@@ -355,6 +352,7 @@ class ChatHeaderSessionMenu extends OpenClawLightDomElement {
 
   private readonly handleShow = () => {
     this.compactView = "root";
+    this.managementActions.loadOwners();
     this.onOpen();
   };
 
