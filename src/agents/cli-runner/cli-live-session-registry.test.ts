@@ -4,7 +4,10 @@ import type {
   CliBackendLiveSessionCapability,
   CliBackendLiveSessionHandle,
 } from "../../plugins/cli-backend.types.js";
-import { prepareSystemAgentRunAdmission } from "../admitted-run-context.js";
+import {
+  prepareSystemAgentRunAdmission,
+  resolveAdmittedRunActiveAssertion,
+} from "../admitted-run-context.js";
 import { buildPreparedCliRunContext } from "../cli-runner.test-helpers.js";
 import { withAgentCleanupOutcome } from "../run-cleanup-timeout.js";
 import {
@@ -14,6 +17,7 @@ import {
   createCliLiveSessionCapability,
   getCliLiveSessionGeneration,
   hasCliLiveSession,
+  restartCliLiveSession,
 } from "./cli-live-session-registry.js";
 import { settlePreparedCliRun } from "./cli-run-settlement.js";
 import { buildCliLiveSessionFingerprint } from "./live-session-fingerprint.js";
@@ -53,6 +57,14 @@ async function createOwner(
   );
   admissions.push(admission);
   context.params.admittedRunContext = await admission.admit("plugin-harness");
+  const controller = new AbortController();
+  context.params.abortSignal = controller.signal;
+  let callerCurrent = true;
+  context.params.assertCurrent = () => {
+    if (!callerCurrent) {
+      throw new Error("caller is no longer active");
+    }
+  };
   const grant = options.capture
     ? {
         transportToken: options.capture.token,
@@ -71,7 +83,7 @@ async function createOwner(
     argv: ["claude", "-p"],
     env: { PATH: "/usr/bin:/bin" },
     beginCapture,
-    abortSignal: new AbortController().signal,
+    abortSignal: controller.signal,
     ...(options.cleanup ? { claimResources: () => options.cleanup } : {}),
     ...(options.capture ? { captureKey: options.capture.key } : {}),
     ...(options.requiredGeneration ? { requiredGeneration: options.requiredGeneration } : {}),
@@ -102,6 +114,8 @@ async function createOwner(
     capability,
     close,
     context,
+    controller,
+    revokeCaller: () => (callerCurrent = false),
     exited,
     grant,
     register,
@@ -216,19 +230,123 @@ describe("generic plugin-owned live session registry", () => {
     expect(hasCliLiveSession(identity)).toBe(false);
   });
 
-  it("rejects registration once its exact admitted run has closed", async () => {
-    const owner = await createOwner();
-    owner.admission.close();
+  it.each(["admission", "caller", "signal"] as const)(
+    "rejects registration after %s revocation",
+    async (revocation) => {
+      const owner = await createOwner();
+      if (revocation === "admission") {
+        owner.admission.close();
+      } else if (revocation === "caller") {
+        owner.revokeCaller();
+      } else {
+        owner.controller.abort();
+      }
 
-    expect(() => owner.register()).toThrow("no longer active");
-    expect(
-      hasCliLiveSession({
-        backendId: "claude-cli",
-        agentId: "main",
-        sessionId: owner.sessionId,
-        sessionKey: owner.sessionKey,
-      }),
-    ).toBe(false);
+      expect(() => owner.register()).toThrow(
+        revocation === "signal" ? /no longer active|aborted/ : "no longer active",
+      );
+      expect(
+        hasCliLiveSession({
+          backendId: "claude-cli",
+          agentId: "main",
+          sessionId: owner.sessionId,
+          sessionKey: owner.sessionKey,
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("fences caller-revoked live access while allowing its owned cleanup", async () => {
+    const owner = await createOwner();
+    owner.register();
+    owner.capability.activate(owner.session);
+    expect(owner.capability.current()).toBe(owner.session);
+    owner.revokeCaller();
+    expect(owner.controller.signal.aborted).toBe(false);
+    expect(resolveAdmittedRunActiveAssertion(owner.context.params.admittedRunContext)).toBeTypeOf(
+      "function",
+    );
+    expect(() => owner.capability.current()).toThrow("caller is no longer active");
+    expect(() => owner.capability.activate(owner.session)).toThrow("caller is no longer active");
+    await closeCliLiveSession(owner.context, "restart");
+    expect(owner.close).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a caller-revoked restart before closing the registered process", async () => {
+    const owner = await createOwner();
+    owner.register();
+    owner.revokeCaller();
+    await expect(restartCliLiveSession(owner.context)).rejects.toThrow(
+      "caller is no longer active",
+    );
+    expect(owner.close).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "rechecks caller authority after registered process cleanup (revoked=%s)",
+    async (revoked) => {
+      const entered = createDeferred();
+      const held = createDeferred();
+      const owner = await createOwner({
+        cleanup: async () => {
+          entered.resolve();
+          await held.promise;
+        },
+      });
+      owner.register();
+      const restarting = await createOwner({ sessionId: owner.sessionId });
+      const run = restartCliLiveSession(restarting.context);
+      const observed = run.then(
+        () => "restarted",
+        (error: unknown) => error,
+      );
+      try {
+        await entered.promise;
+        if (revoked) {
+          restarting.revokeCaller();
+        }
+        expect(restarting.controller.signal.aborted).toBe(false);
+        expect(
+          resolveAdmittedRunActiveAssertion(restarting.context.params.admittedRunContext),
+        ).toBeTypeOf("function");
+      } finally {
+        held.resolve();
+      }
+      expect(await observed).toEqual(
+        revoked ? new Error("caller is no longer active") : "restarted",
+      );
+      expect(owner.close).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not close a successor when caller authority expires during retained cleanup", async () => {
+    const entered = createDeferred();
+    const held = createDeferred();
+    const original = await createOwner({
+      cleanup: async () => {
+        entered.resolve();
+        await held.promise;
+      },
+    });
+    original.register();
+    original.capability.remove(original.session);
+    original.exited.resolve();
+    const successor = await createOwner({ sessionId: original.sessionId });
+    successor.register();
+    const restarting = restartCliLiveSession(original.context);
+    const observed = restarting.then(
+      () => "restarted",
+      (error: unknown) => error,
+    );
+    try {
+      await entered.promise;
+      original.revokeCaller();
+    } finally {
+      held.resolve();
+    }
+    expect(await observed).toEqual(new Error("caller is no longer active"));
+    expect(successor.close).not.toHaveBeenCalled();
+    expect(successor.capability.current()).toBe(successor.session);
   });
 
   it("rejects the same process handle under a different owner despite a matching fingerprint", async () => {
@@ -292,26 +410,35 @@ describe("generic plugin-owned live session registry", () => {
     expect(original.capability.current()).toBeUndefined();
   });
 
-  it("fences MCP capture when its admitted authority closes during process transfer", async () => {
-    const original = await createOwner({
-      sessionId: "transfer-closed-owner",
-      capture: { token: "original-process-token", key: "original-capture" },
-    });
-    original.register();
-    const resumed = await createOwner({
-      sessionId: "transfer-closed-owner",
-      capture: { token: "replacement-turn-token", key: "replacement-capture" },
-    });
-    resumed.grant?.adoptProcessToken.mockImplementation(() => resumed.admission.close());
+  it.each(["admission", "caller"] as const)(
+    "fences MCP capture when %s authority closes during process transfer",
+    async (authority) => {
+      const original = await createOwner({
+        sessionId: "transfer-closed-owner",
+        capture: { token: "original-process-token", key: "original-capture" },
+      });
+      original.register();
+      const resumed = await createOwner({
+        sessionId: "transfer-closed-owner",
+        capture: { token: "replacement-turn-token", key: "replacement-capture" },
+      });
+      resumed.grant?.adoptProcessToken.mockImplementation(() => {
+        if (authority === "caller") {
+          resumed.revokeCaller();
+        } else {
+          resumed.admission.close();
+        }
+      });
 
-    expect(() => resumed.capability.activate(original.session)).toThrow("no longer active");
+      expect(() => resumed.capability.activate(original.session)).toThrow("no longer active");
 
-    expect(resumed.grant?.adoptProcessToken).toHaveBeenCalledExactlyOnceWith(
-      "original-process-token",
-    );
-    expect(resumed.beginCapture).not.toHaveBeenCalled();
-    expect(original.capability.current()).toBe(original.session);
-  });
+      expect(resumed.grant?.adoptProcessToken).toHaveBeenCalledExactlyOnceWith(
+        "original-process-token",
+      );
+      expect(resumed.beginCapture).not.toHaveBeenCalled();
+      expect(original.capability.current()).toBe(original.session);
+    },
+  );
 
   it.each([
     {
@@ -379,6 +506,7 @@ describe("generic plugin-owned live session registry", () => {
       original.exited.resolve();
       const successor = await createOwner({ sessionId: "natural-owner" });
       successor.register();
+      original.revokeCaller();
       const completed = vi.fn();
       const rejected = vi.fn();
       const closing = closeCliLiveSession(original.context, "restart").then(completed, rejected);

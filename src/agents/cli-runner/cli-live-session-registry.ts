@@ -4,7 +4,6 @@ import type {
   CliBackendLiveSessionCloseReason,
   CliBackendLiveSessionHandle,
 } from "../../plugins/cli-backend.types.js";
-import { resolveAdmittedRunActiveAssertion } from "../admitted-run-context.js";
 import { runCliCleanup } from "./cleanup.js";
 import { createCliRunCurrentAssertion } from "./execution-target.js";
 import { createCliFailoverError } from "./exit-error.js";
@@ -98,20 +97,19 @@ export async function restartCliLiveSession(
   context: PreparedCliRunContext,
   signal = context.params.abortSignal,
 ): Promise<void> {
-  const assertActive = resolveAdmittedRunActiveAssertion(context.params.admittedRunContext, signal);
-  if (!assertActive) {
-    throw new Error("CLI live session restart requires its active run");
-  }
+  const assertActive = createCliRunCurrentAssertion(context.params, signal);
   assertActive();
   const key = buildCliLiveSessionKey(context);
   const record = liveSessions.get(key);
   await closeCliLiveSession(context, "restart");
-  assertActive();
   if (record && liveSessions.get(key) === record) {
-    await runCliCleanup(context.params, "cli-live-session-restart", () =>
-      closeRecord(record, "restart"),
-    );
+    await runCliCleanup(context.params, "cli-live-session-restart", () => {
+      // One-shot cleanup schedules this callback; fence the actual close.
+      assertActive();
+      return closeRecord(record, "restart");
+    });
   }
+  assertActive();
 }
 
 async function closeRecord(
