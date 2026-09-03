@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT_DIR/scripts/lib/docker-e2e-image.sh"
+source "$ROOT_DIR/scripts/lib/frozen-target-compat.sh"
 IMAGE_NAME="$(docker_e2e_resolve_image "openclaw-bundled-plugin-install-uninstall-e2e" OPENCLAW_BUNDLED_PLUGIN_INSTALL_UNINSTALL_E2E_IMAGE)"
 LIST_TIMEOUT_MS="$(
   docker_e2e_read_positive_int_env OPENCLAW_BUNDLED_PLUGIN_LIST_TIMEOUT_MS 30000
@@ -62,6 +63,17 @@ DOCKER_ENV_ARGS=(
   -e "OPENCLAW_BUNDLED_PLUGIN_RUNTIME_TEARDOWN_KILL_GRACE_MS=$RUNTIME_TEARDOWN_KILL_GRACE_MS"
   -e "OPENCLAW_TEST_STATE_SCRIPT_B64=$OPENCLAW_TEST_STATE_SCRIPT_B64"
 )
+authorization_status=0
+if openclaw_frozen_target_omissions_authorized; then
+  DOCKER_ENV_ARGS+=(
+    -e OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS
+    -e OPENCLAW_SELECTED_SHA
+    -e OPENCLAW_TOOLING_SHA
+  )
+else
+  authorization_status=$?
+  [ "$authorization_status" -eq 1 ] || exit "$authorization_status"
+fi
 for env_name in \
   OPENCLAW_BUNDLED_PLUGIN_SWEEP_TOTAL \
   OPENCLAW_BUNDLED_PLUGIN_SWEEP_INDEX \

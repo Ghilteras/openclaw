@@ -6417,6 +6417,22 @@ source "$ROOT_DIR/scripts/lib/docker-e2e-logs.sh"
     expect(missing).toEqual([]);
   });
 
+  it("forwards authorized frozen-target context into plugin Docker lanes", () => {
+    for (const runnerPath of [
+      "scripts/e2e/bundled-plugin-install-uninstall-docker.sh",
+      KITCHEN_SINK_PLUGIN_DOCKER_E2E_PATH,
+      KITCHEN_SINK_RPC_DOCKER_E2E_PATH,
+      "scripts/e2e/mcp-channels-docker.sh",
+    ]) {
+      const runner = readFileSync(runnerPath, "utf8");
+      expect(runner).toContain('source "$ROOT_DIR/scripts/lib/frozen-target-compat.sh"');
+      expect(runner).toContain("openclaw_frozen_target_omissions_authorized");
+      expect(runner).toContain("OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS");
+      expect(runner).toContain("OPENCLAW_SELECTED_SHA");
+      expect(runner).toContain("OPENCLAW_TOOLING_SHA");
+    }
+  });
+
   it("keeps the kitchen-sink RPC Docker watchdog above the internal walk budgets", () => {
     const runner = readFileSync(KITCHEN_SINK_RPC_DOCKER_E2E_PATH, "utf8");
     expect(runner).toContain(
