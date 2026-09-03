@@ -345,6 +345,9 @@ suite.define(() => {
         const ownerLink = page.locator(".chat-pane__sharing-owner a.person-activity-link");
         await ownerLink.waitFor({ state: "visible" });
         expect(await ownerLink.getAttribute("href")).toBe("/activity?person=profile-ada");
+        await page
+          .locator(".chat-pane__sharing-owner .session-owner-chip--away")
+          .waitFor({ state: "visible" });
         const participantLink = page.locator(
           ".chat-pane__participants a.person-activity-avatar-link",
         );
@@ -450,6 +453,7 @@ suite.define(() => {
         );
         await ownerLink.waitFor({ state: "visible" });
         expect(await ownerLink.getAttribute("href")).toBe("/activity?person=profile-ada");
+        await ownerLink.locator(".session-owner-chip--away").waitFor({ state: "visible" });
 
         await ownerLink.click();
         await waitForControlUiRoute(page, { pathname: "/activity", routeId: "activity" });

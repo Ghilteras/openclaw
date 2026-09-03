@@ -32,6 +32,7 @@ export type ChatSessionSharingProps = {
   visibilityDisabledReason?: string;
   memberAddDisabledReason?: string;
   memberRemoveDisabledReason?: string;
+  ownerViewing?: boolean;
   personActivity?: PersonActivityRouting;
   showOwner?: boolean;
   onOpen: () => void;
@@ -120,7 +121,7 @@ export function renderChatSessionSharing(props: ChatSessionSharingProps, inline 
     return visibility === "draft"
       ? html`${props.showOwner && owner
             ? renderStandalonePersonLink(
-                renderSessionOwnerChip(owner, "header", "owned"),
+                renderSessionOwnerChip(owner, "header", "owned", props.ownerViewing),
                 ownerActivity,
               )
             : nothing}<span
@@ -190,7 +191,7 @@ export function renderChatSessionSharing(props: ChatSessionSharingProps, inline 
             <span class="chat-pane__sharing-member-icon" aria-hidden="true">
               ${owner.type === "human"
                 ? renderPersonAvatarLink(
-                    renderSessionOwnerChip(owner, "header", "owned"),
+                    renderSessionOwnerChip(owner, "header", "owned", props.ownerViewing),
                     ownerActivity,
                   )
                 : icons.bot}

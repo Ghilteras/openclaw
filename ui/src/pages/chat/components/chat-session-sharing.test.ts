@@ -49,6 +49,7 @@ describe("chat session sharing menu", () => {
             allowedVisibilities: ["shared", "read-only"],
           },
         },
+        ownerViewing: false,
         personActivity: { basePath: "", navigate },
         onOpen: vi.fn(),
         onVisibilityChange,
@@ -69,6 +70,11 @@ describe("chat session sharing menu", () => {
     expect(
       root.querySelector(".chat-pane__sharing-owner openclaw-session-owner-chip"),
     ).not.toBeNull();
+    expect(
+      root.querySelector<HTMLElement & { viewingNow?: boolean }>(
+        ".chat-pane__sharing-owner openclaw-session-owner-chip",
+      )?.viewingNow,
+    ).toBe(false);
     const ownerLink = root.querySelector<HTMLAnchorElement>(
       ".chat-pane__sharing-owner a.person-activity-link",
     );
@@ -240,6 +246,7 @@ describe("chat session sharing menu", () => {
           },
         },
         state: undefined,
+        ownerViewing: false,
         personActivity: { basePath: "", navigate: vi.fn() },
         showOwner: true,
         onOpen: vi.fn(),
@@ -256,6 +263,11 @@ describe("chat session sharing menu", () => {
         .querySelector("a.person-activity-avatar-link:has(openclaw-session-owner-chip)")
         ?.getAttribute("href"),
     ).toBe("/activity?person=owner");
+    expect(
+      root.querySelector<HTMLElement & { viewingNow?: boolean }>(
+        "a.person-activity-avatar-link openclaw-session-owner-chip",
+      )?.viewingNow,
+    ).toBe(false);
   });
 
   it("publishes a manageable draft through the shared visibility callback", () => {

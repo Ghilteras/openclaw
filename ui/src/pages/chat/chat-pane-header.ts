@@ -169,6 +169,12 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
             : null;
     const result = this.state?.sessionsResult;
     const showOwnerChip = (result?.owners?.length ?? 0) >= 2 || (row?.participantCount ?? 0) > 0;
+    const key = this.state?.sessionKey ?? "";
+    const renderedOwnerIdentity = showOwnerChip ? row?.owner?.actor.identity : undefined;
+    const ownerViewing = projectPresencePayload(this.presencePayload).users.some(
+      (user) =>
+        presenceMatchesProfile(user, renderedOwnerIdentity) && user.watchedSessions.includes(key),
+    );
     const sharingSnapshot = this.context.gateway.snapshot;
     // Sharing was introduced behind this advertised method. Keep the control
     // hidden for older Gateways that omit method metadata.
@@ -212,6 +218,7 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
             memberRemoveDisabledReason: sharingMemberRemoveAccess.allowed
               ? undefined
               : sharingMemberRemoveAccess.reason,
+            ownerViewing,
             personActivity,
             showOwner: showOwnerChip,
             onOpen: () => void this.loadSessionSharing(row),
@@ -407,12 +414,10 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
       restartingKey: this.headerPlacementRestartingKey,
       row,
     });
-    const key = this.state?.sessionKey ?? "";
     const knownGroups = collectKnownSessionGroups(
       this.context.sessions?.state?.groups ?? [],
       this.context.sessions?.state?.result?.sessions ?? [],
     );
-    const renderedOwnerIdentity = showOwnerChip ? row?.owner?.actor.identity : undefined;
     const viewers = catalog
       ? undefined
       : projectPresenceViewers(
@@ -425,10 +430,6 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
             ...(showOwnerChip ? (row?.participants ?? []).map(({ identity }) => identity) : []),
           ],
         );
-    const ownerViewing = projectPresencePayload(this.presencePayload).users.some(
-      (user) =>
-        presenceMatchesProfile(user, renderedOwnerIdentity) && user.watchedSessions.includes(key),
-    );
     const ownerOptions = listAssignableSessionOwners({
       facet: result?.owners,
       agents: this.context.agents.state.agentsList?.agents,
