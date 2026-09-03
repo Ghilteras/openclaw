@@ -30,11 +30,11 @@ import {
   type PreparedAgentRuntimeAuthAttempt,
 } from "../runtime-plan/prepare-auth.js";
 import type { AgentRuntimeAuthPlan, AgentRuntimePlan } from "../runtime-plan/types.js";
+import type { CompactEmbeddedAgentSessionParams } from "./compact.types.js";
 import {
   resolveCompactionHarnessRuntime,
   resolveEmbeddedCompactionTarget,
 } from "./compaction-runtime-context.js";
-import type { CompactEmbeddedAgentSessionParams } from "./compact.types.js";
 
 export function isCodexHostTranscriptBytePreflight(
   params: Pick<

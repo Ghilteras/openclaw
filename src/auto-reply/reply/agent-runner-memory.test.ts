@@ -3670,9 +3670,7 @@ describe("runMemoryFlushIfNeeded", () => {
       totalTokensFresh: true,
       totalTokensVersion: 1,
       compactionCount: 0,
-      ...(runtime === "codex"
-        ? { agentRuntimeOverride: "codex", agentHarnessId: "openclaw" }
-        : {}),
+      ...(runtime === "codex" ? { agentRuntimeOverride: "codex", agentHarnessId: "openclaw" } : {}),
     };
     const sessionStore = { [sessionKey]: sessionEntry };
     const replyOperation = createReplyOperation();

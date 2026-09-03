@@ -1057,8 +1057,7 @@ export async function runSessionCompactionIfNeeded(params: {
     }
 
     const postCompactionBytes =
-      compactionTrigger === "transcript_bytes" &&
-      typeof maxActiveTranscriptBytes === "number"
+      compactionTrigger === "transcript_bytes" && typeof maxActiveTranscriptBytes === "number"
         ? readSessionLogSnapshot({
             agentId: compactionAgentId,
             sessionId: entry.sessionId,
