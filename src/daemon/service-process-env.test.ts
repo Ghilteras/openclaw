@@ -1,4 +1,13 @@
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { stopChildProcess } from "../../test/helpers/stop-child-process.js";
+import { mergeProcessEnv } from "../infra/process-env.js";
+import { getWindowsPowerShellExePath } from "../infra/windows-install-roots.js";
+import { readWindowsProcessStartTimeSync } from "../infra/windows-process-start.js";
 import { resolveServiceManagerEnv } from "./service-process-env.js";
 
 afterEach(() => {
@@ -140,4 +149,87 @@ describe("resolveServiceManagerEnv", () => {
       }),
     ).toEqual({});
   });
+
+  it.runIf(process.platform === "win32")(
+    "preserves the caller's cache in native PowerShell and bounds fresh foreign PID queries",
+    async () => {
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-native-service-env-"));
+      try {
+        const cachePath = path.join(await fs.realpath(tempDir), "ModuleAnalysisCache");
+        const excluded = {
+          BOUNDARY_APPLICATION: "synthetic-application",
+          OPENCLAW_GATEWAY_TOKEN: "synthetic-not-a-credential",
+          NODE_OPTIONS: "--synthetic-injection-must-not-be-inherited",
+        };
+        // A separate source owns overrides even if the native block uses uppercase aliases.
+        // Keep the real executable/account context; only the cache and controls are synthetic.
+        const source = mergeProcessEnv([
+          process.env,
+          { PSModuleAnalysisCachePath: cachePath, ...excluded },
+        ]);
+        const env = { ...resolveServiceManagerEnv(source), LC_ALL: "C", TZ: "UTC" };
+        await expect(fs.access(cachePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+        const beforeSpawn = Date.now();
+        const child = spawn(
+          process.execPath,
+          ["-e", "process.stdin.resume(); process.send('ready');"],
+          { env, stdio: ["pipe", "ignore", "ignore", "ipc"], windowsHide: true },
+        );
+        const closed = new Promise<void>((resolve) => {
+          child.once("close", () => resolve());
+        });
+        try {
+          const [message] = await once(child, "message", { signal: AbortSignal.timeout(5_000) });
+          expect(message).toBe("ready");
+          const readyAt = Date.now();
+          const pid = child.pid;
+          if (!pid) {
+            throw new Error("expected the ready native child to have a PID");
+          }
+          expect(pid).not.toBe(process.pid);
+
+          // Probe before the environment observation: no preparatory PowerShell/CIM warmup.
+          // A foreign owned PID cannot succeed through the file-lock reader's self cache.
+          const identities = ["first", "repeated"].map((attempt) => {
+            const identity = readWindowsProcessStartTimeSync(pid, 1000, env);
+            expect(identity, attempt).not.toBeNull();
+            expect(identity, attempt).toBeGreaterThanOrEqual(beforeSpawn);
+            expect(identity, attempt).toBeLessThanOrEqual(readyAt);
+            return identity;
+          });
+          expect(identities[1]).toBe(identities[0]);
+
+          const names = ["PSModuleAnalysisCachePath", ...Object.keys(excluded)];
+          const fields = names.map(
+            (name) => `${name} = [Environment]::GetEnvironmentVariable('${name}')`,
+          );
+          const observed = spawnSync(
+            getWindowsPowerShellExePath(env),
+            [
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              `[Console]::Out.Write((@{ ${fields.join("; ")} } | ConvertTo-Json -Compress))`,
+            ],
+            { env, encoding: "utf8", timeout: 1000, windowsHide: true, maxBuffer: 4096 },
+          );
+          expect(observed.error).toBeUndefined();
+          expect(observed.status, observed.stderr).toBe(0);
+          // Identity speed alone could pass with the host's default cache after dropping this key.
+          expect(JSON.parse(observed.stdout)).toEqual({
+            PSModuleAnalysisCachePath: cachePath,
+            BOUNDARY_APPLICATION: null,
+            OPENCLAW_GATEWAY_TOKEN: null,
+            NODE_OPTIONS: null,
+          });
+        } finally {
+          await stopChildProcess(child, 5_000);
+          await closed;
+        }
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
