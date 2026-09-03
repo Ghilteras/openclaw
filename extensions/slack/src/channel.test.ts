@@ -337,6 +337,8 @@ describe("slackPlugin actions", () => {
         "delete",
         "download-file",
         "upload-file",
+        "canvas-create",
+        "canvas-edit",
       ],
     });
     expect(requireArray(workDiscovery.capabilities, "work capabilities")).toContain("presentation");

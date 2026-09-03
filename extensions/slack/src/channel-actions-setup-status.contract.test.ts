@@ -22,6 +22,8 @@ const slackDefaultActions = [
   "delete",
   "download-file",
   "upload-file",
+  "canvas-create",
+  "canvas-edit",
   "pin",
   "unpin",
   "list-pins",

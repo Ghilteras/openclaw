@@ -53,6 +53,17 @@ export function listSlackMessageActions(
     actions.add("download-file");
     actions.add("upload-file");
   }
+  if (
+    accounts.some(
+      (account) =>
+        account.identity !== "user" &&
+        account.botTokenStatus === "available" &&
+        createActionGate(account.actions ?? cfg.channels?.slack?.actions)("messages"),
+    )
+  ) {
+    actions.add("canvas-create");
+    actions.add("canvas-edit");
+  }
   if (isActionEnabled("pins")) {
     actions.add("pin");
     actions.add("unpin");

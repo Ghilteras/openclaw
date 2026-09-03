@@ -213,6 +213,8 @@ describe("Slack message tools", () => {
       "delete",
       "download-file",
       "upload-file",
+      "canvas-create",
+      "canvas-edit",
       "pin",
       "unpin",
       "list-pins",
@@ -284,6 +286,8 @@ describe("Slack message tools", () => {
       "delete",
       "download-file",
       "upload-file",
+      "canvas-create",
+      "canvas-edit",
       "pin",
       "unpin",
       "list-pins",
@@ -370,6 +374,8 @@ describe("Slack message tools", () => {
       "delete",
       "download-file",
       "upload-file",
+      "canvas-create",
+      "canvas-edit",
     ]);
   });
 
