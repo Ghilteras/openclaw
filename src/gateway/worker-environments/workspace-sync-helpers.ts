@@ -13,6 +13,7 @@ import {
   workerSshRemoteCommand,
 } from "./ssh.js";
 import type { WorkerWorkspaceCommand, WorkerWorkspaceSyncRequest } from "./tunnel-contract.js";
+import { workerCommandSucceeded } from "./worker-command-result.js";
 import {
   parseRemoteWorkspaceManifestEnvelope,
   recordRemoteWorkspaceHashMetrics,
@@ -58,10 +59,6 @@ export function waitForQuiescenceRenewal(
     }, intervalMs);
     signal.addEventListener("abort", onAbort, { once: true });
   });
-}
-
-export function workerWorkspaceCommandSucceeded(result: SpawnResult): boolean {
-  return result.termination === "exit" && result.code === 0;
 }
 
 export function workspaceSyncError(result: SpawnResult): Error {
@@ -193,7 +190,7 @@ async function resolveRemoteWorkspaceBaseManifest(
       baseDigest,
     ],
   });
-  if (!workerWorkspaceCommandSucceeded(resolved)) {
+  if (!workerCommandSucceeded(resolved)) {
     throw workspaceSyncError(resolved);
   }
   if (parseManifestRef(resolved.stdout.trim()) !== expectedRef) {
@@ -242,7 +239,7 @@ export async function captureRemoteWorkspaceManifest(params: {
     .finally(() => {
       params.metrics.remoteManifestWallDurationMs += performance.now() - startedAt;
     });
-  if (!workerWorkspaceCommandSucceeded(captured)) {
+  if (!workerCommandSucceeded(captured)) {
     throw workspaceSyncError(captured);
   }
   let response;
@@ -282,10 +279,10 @@ export async function probeWorkspaceGitMode(params: {
       params.commandOptions,
     ),
   ]);
-  if (!workerWorkspaceCommandSucceeded(gitRootResult)) {
+  if (!workerCommandSucceeded(gitRootResult)) {
     throw workspaceSyncError(gitRootResult);
   }
-  if (workerWorkspaceCommandSucceeded(gitBaseResult)) {
+  if (workerCommandSucceeded(gitBaseResult)) {
     return {
       mode: "git",
       gitRoot: gitRootResult.stdout.trim(),
@@ -305,7 +302,7 @@ export async function resolveWorkerWorkspaceGitAuthor(
   const git = ["git", "-C", request.localPath, "config", "--get"];
   const read = async (key: "name" | "email") => {
     const result = await runTask([...git, `user.${key}`]);
-    return workerWorkspaceCommandSucceeded(result) ? result.stdout.trim() : "";
+    return workerCommandSucceeded(result) ? result.stdout.trim() : "";
   };
   const [name, email] = await Promise.all([read("name"), read("email")]);
   return {

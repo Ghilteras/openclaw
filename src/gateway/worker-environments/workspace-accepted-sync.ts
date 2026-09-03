@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { SpawnResult } from "../../process/exec.js";
 import type { WorkerWorkspaceCommand } from "./tunnel-contract.js";
+import { workerCommandSucceeded } from "./worker-command-result.js";
 import {
   AcceptedWorkspacePublicationIndeterminateError,
   isAcceptedWorkspacePublicationIndeterminateError,
@@ -20,7 +21,6 @@ import {
   captureRemoteWorkspaceManifest,
   WORKER_WORKSPACE_RSYNC_DESTINATION,
   workerAcceptedWorkspaceRsyncReceiverPath,
-  workerWorkspaceCommandSucceeded,
   workspaceSyncError,
 } from "./workspace-sync-helpers.js";
 import {
@@ -55,7 +55,7 @@ export async function recoverAcceptedWorkspacePublication(params: {
       randomBytes(16).toString("hex"),
     ],
   });
-  if (!workerWorkspaceCommandSucceeded(recovered)) {
+  if (!workerCommandSucceeded(recovered)) {
     throw workspaceSyncError(recovered);
   }
 }
@@ -94,7 +94,7 @@ function createAcceptedWorkspacePublisher(params: {
       ],
       input: acceptedRaw,
     });
-    if (!workerWorkspaceCommandSucceeded(published)) {
+    if (!workerCommandSucceeded(published)) {
       throw workspaceSyncError(published);
     }
 
@@ -150,7 +150,7 @@ function createAcceptedWorkspacePublisher(params: {
           observationFailure,
         );
       }
-      if (!workerWorkspaceCommandSucceeded(settled)) {
+      if (!workerCommandSucceeded(settled)) {
         throw new AcceptedWorkspacePublicationIndeterminateError(
           operation,
           publicationFailure,
@@ -185,7 +185,7 @@ function createAcceptedWorkspacePublisher(params: {
           observationFailure,
         );
       }
-      if (!workerWorkspaceCommandSucceeded(retried)) {
+      if (!workerCommandSucceeded(retried)) {
         const retryFailure = workspaceSyncError(retried);
         if (!isIndeterminateWorkspaceCommandResult(retried)) {
           throw retryFailure;
@@ -211,7 +211,7 @@ function createAcceptedWorkspacePublisher(params: {
         ],
         input: JSON.stringify([...changed]),
       });
-      if (!workerWorkspaceCommandSucceeded(begun)) {
+      if (!workerCommandSucceeded(begun)) {
         throw workspaceSyncError(begun);
       }
       transactionBegun = true;
@@ -254,7 +254,7 @@ function createAcceptedWorkspacePublisher(params: {
             localSource,
             `${params.scpTarget}:${WORKER_WORKSPACE_RSYNC_DESTINATION}`,
           ]);
-          if (!workerWorkspaceCommandSucceeded(transferred)) {
+          if (!workerCommandSucceeded(transferred)) {
             throw workspaceSyncError(transferred);
           }
         } finally {
@@ -271,7 +271,7 @@ function createAcceptedWorkspacePublisher(params: {
           throw applyFailure;
         }
       }
-      if (applied && !workerWorkspaceCommandSucceeded(applied)) {
+      if (applied && !workerCommandSucceeded(applied)) {
         const applyFailure = workspaceSyncError(applied);
         if (!isIndeterminateWorkspaceCommandResult(applied)) {
           throw applyFailure;
@@ -289,7 +289,7 @@ function createAcceptedWorkspacePublisher(params: {
         await finishIndeterminateCommit(commitFailure);
         return;
       }
-      if (!workerWorkspaceCommandSucceeded(committed)) {
+      if (!workerCommandSucceeded(committed)) {
         const commitFailure = workspaceSyncError(committed);
         if (isIndeterminateWorkspaceCommandResult(committed)) {
           await finishIndeterminateCommit(commitFailure);
@@ -306,7 +306,7 @@ function createAcceptedWorkspacePublisher(params: {
       if (transactionBegun) {
         try {
           const rolledBack = await transactionCommand("rollback");
-          if (!workerWorkspaceCommandSucceeded(rolledBack)) {
+          if (!workerCommandSucceeded(rolledBack)) {
             throw workspaceSyncError(rolledBack);
           }
         } catch (rollbackFailure) {

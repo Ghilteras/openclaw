@@ -27,6 +27,7 @@ import {
   workerSshProcessError,
   WORKER_TUNNEL_READY_MARKER,
 } from "./tunnel-ssh-runner.js";
+import { workerCommandSucceeded } from "./worker-command-result.js";
 
 const PASSWORD_READ_TIMEOUT_MS = 20_000;
 const APP_LAUNCH_TIMEOUT_MS = 30_000;
@@ -62,10 +63,6 @@ class WorkerDesktopUnsupportedError extends Error {
     super(`${operation} is not supported on Windows gateway hosts`);
     this.name = "WorkerDesktopUnsupportedError";
   }
-}
-
-function successful(result: Awaited<ReturnType<WorkerSshRunner["run"]>>): boolean {
-  return result.termination === "exit" && result.code === 0;
 }
 
 /** Owns worker-specific desktop SSH acquisition and app launch processes. */
@@ -191,7 +188,7 @@ export function createWorkerDesktopTunnels(deps: {
             ],
             workerSshCommandOptions({ timeoutMs: PASSWORD_READ_TIMEOUT_MS }),
           );
-          if (!successful(result)) {
+          if (!workerCommandSucceeded(result)) {
             throw workerSshProcessError(result.stderr || result.stdout);
           }
           vncPassword = result.stdout.replace(/(?:\r?\n)+$/u, "");
@@ -331,7 +328,7 @@ export function createWorkerDesktopTunnels(deps: {
             signal: abortController.signal,
           }),
         );
-        if (!successful(result)) {
+        if (!workerCommandSucceeded(result)) {
           throw workerSshProcessError(result.stderr || result.stdout);
         }
       } finally {

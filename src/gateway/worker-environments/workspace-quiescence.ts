@@ -1,16 +1,13 @@
 import path from "node:path";
 import type { SpawnResult } from "../../process/exec.js";
 import type { WorkerWorkspaceCommand, WorkerWorkspaceQuiescence } from "./tunnel-contract.js";
+import { workerCommandSucceeded } from "./worker-command-result.js";
 import {
   REMOTE_WORKSPACE_QUIESCE_JS,
   REMOTE_WORKSPACE_RENEW_QUIESCENCE_JS,
   REMOTE_WORKSPACE_RESUME_JS,
 } from "./workspace-quiescence-scripts.js";
-import {
-  waitForQuiescenceRenewal,
-  workerWorkspaceCommandSucceeded,
-  workspaceSyncError,
-} from "./workspace-sync-helpers.js";
+import { waitForQuiescenceRenewal, workspaceSyncError } from "./workspace-sync-helpers.js";
 
 const WORKSPACE_QUIESCENCE_TIMEOUT_MS = 12 * 60_000;
 const WORKSPACE_QUIESCENCE_RENEW_INTERVAL_MS = 4 * 60_000;
@@ -32,7 +29,7 @@ export function createWorkerWorkspaceQuiescence(params: {
     const hostMode = params.sharedHost ? "shared-host" : "dedicated";
     const run = async (argv: string[]) => {
       const result = await params.runWorkspaceCommand({ transportRetry: "never", argv });
-      if (!workerWorkspaceCommandSucceeded(result)) {
+      if (!workerCommandSucceeded(result)) {
         throw workspaceSyncError(result);
       }
       return result;

@@ -9,6 +9,7 @@ import type {
   WorkerWorkspaceSyncRequest,
   WorkerWorkspaceSyncResult,
 } from "./tunnel-contract.js";
+import { workerCommandSucceeded } from "./worker-command-result.js";
 import { boundedWorkerError } from "./worker-error.js";
 import {
   resolveWorkerWorkspaceGitAuthor,
@@ -174,10 +175,6 @@ async function inspectEligibleOrigin(localPath: string): Promise<OriginInspectio
   }
 }
 
-function succeeded(result: SpawnResult): boolean {
-  return result.termination === "exit" && result.code === 0;
-}
-
 /** Optional published-origin fast path; HTTPS transfer remains the canonical fallback. */
 export function createNodeWorkerWorkspaceFallback(exec: WorkspaceExec) {
   let supportsSeeds = true;
@@ -206,12 +203,12 @@ export function createNodeWorkerWorkspaceFallback(exec: WorkspaceExec) {
       timeoutMs: GIT_TIMEOUT_MS,
       transportRetry: "never",
     });
-    if (!succeeded(checkedOut) || checkedOut.workspaceDir !== workspaceDir) {
+    if (!workerCommandSucceeded(checkedOut) || checkedOut.workspaceDir !== workspaceDir) {
       return { kind: "fallback", reason: "checkout-failed" };
     }
     const captured = await capture(checkedOut.workspaceDir, identity.commit);
     const manifestRef = captured.stdout.trim();
-    if (!succeeded(captured) || !MANIFEST_REF_PATTERN.test(manifestRef)) {
+    if (!workerCommandSucceeded(captured) || !MANIFEST_REF_PATTERN.test(manifestRef)) {
       return { kind: "fallback", reason: "manifest-capture-failed" };
     }
     if (manifestRef !== expectedManifestRef) {
@@ -227,10 +224,10 @@ export function createNodeWorkerWorkspaceFallback(exec: WorkspaceExec) {
     async captureManifest(dir: string, base: string | null, reference: string) {
       const captured = await capture(dir, base, reference);
       const manifestRef = captured.stdout.trim();
-      if (!succeeded(captured) || !MANIFEST_REF_PATTERN.test(manifestRef)) {
+      if (!workerCommandSucceeded(captured) || !MANIFEST_REF_PATTERN.test(manifestRef)) {
         const detail = boundedWorkerError(
           captured.stderr.trim() ||
-            (!succeeded(captured)
+            (!workerCommandSucceeded(captured)
               ? `${captured.termination} (exit code ${captured.code}, signal ${captured.signal})`
               : "invalid manifest reference"),
         );
@@ -258,13 +255,13 @@ export function createNodeWorkerWorkspaceFallback(exec: WorkspaceExec) {
             timeoutMs: GIT_TIMEOUT_MS,
             transportRetry: "never",
           });
-          if (succeeded(applied) && applied.stdout.trim() === "applied") {
+          if (workerCommandSucceeded(applied) && applied.stdout.trim() === "applied") {
             const remote = await exec({
               argv: ["git", ...GIT_NONINTERACTIVE_ARGS, "remote", "get-url", "origin"],
               timeoutMs: GIT_TIMEOUT_MS,
               transportRetry: "never",
             });
-            if (!succeeded(remote) || remote.stdout.trim() !== identity.origin) {
+            if (!workerCommandSucceeded(remote) || remote.stdout.trim() !== identity.origin) {
               throw new Error("Node workspace seed origin mismatch");
             }
             const fetched = await exec({
@@ -279,7 +276,7 @@ export function createNodeWorkerWorkspaceFallback(exec: WorkspaceExec) {
               timeoutMs: GIT_TIMEOUT_MS,
               transportRetry: "never",
             });
-            if (!succeeded(fetched)) {
+            if (!workerCommandSucceeded(fetched)) {
               throw workspaceSyncError(fetched);
             }
             outcome = await checkoutAndCapture(
@@ -319,7 +316,7 @@ export function createNodeWorkerWorkspaceFallback(exec: WorkspaceExec) {
           timeoutMs: GIT_TIMEOUT_MS,
           transportRetry: "never",
         });
-        if (!succeeded(cloned)) {
+        if (!workerCommandSucceeded(cloned)) {
           return { kind: "fallback", reason: "clone-failed" };
         }
         outcome = await checkoutAndCapture(
@@ -337,7 +334,7 @@ export function createNodeWorkerWorkspaceFallback(exec: WorkspaceExec) {
             timeoutMs: 180_000,
             transportRetry: "never",
           });
-          if (!succeeded(stored)) {
+          if (!workerCommandSucceeded(stored)) {
             throw workspaceSyncError(stored);
           }
         } catch (error) {
@@ -373,7 +370,7 @@ export function createNodeWorkerWorkspaceFallback(exec: WorkspaceExec) {
           argv: [...git, `user.${key}`, value],
           transportRetry: "never",
         });
-        if (!succeeded(configured)) {
+        if (!workerCommandSucceeded(configured)) {
           throw workspaceSyncError(configured);
         }
       }

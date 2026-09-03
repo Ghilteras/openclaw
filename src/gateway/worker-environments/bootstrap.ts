@@ -30,6 +30,7 @@ import {
   workerSshOptions,
   workerSshRemoteCommand,
 } from "./ssh.js";
+import { workerCommandSucceeded } from "./worker-command-result.js";
 
 const BOOTSTRAP_ROOT = ".openclaw-worker";
 const BOOTSTRAP_RECEIPT = "bootstrap-receipt.json";
@@ -574,10 +575,6 @@ function commandFailure(phase: string, result: SpawnResult): Error {
   return new Error(`Worker bootstrap ${phase} failed (${status})${output ? `: ${output}` : ""}`);
 }
 
-function isSuccess(result: SpawnResult): boolean {
-  return result.termination === "exit" && result.code === 0;
-}
-
 async function runSshScript(params: {
   prepared: PreparedWorkerSsh;
   runCommand: WorkerBootstrapCommandRunner;
@@ -697,7 +694,7 @@ function parsePreflight(
       "Worker bootstrap requires Node 22.22.3+, 24.15.0+, or 25.9.0+ with WAL-reset-safe SQLite on the leased host; install a supported Node runtime in the provider setup phase and retry",
     );
   }
-  if (!isSuccess(result)) {
+  if (!workerCommandSucceeded(result)) {
     throw commandFailure("preflight", result);
   }
   const output = parseTaggedOutput(result.stdout);
@@ -784,7 +781,7 @@ export async function bootstrapWorker(
             workerSshCommandOptions({ timeoutMs: remainingTimeoutMs, signal: dependencies.signal }),
           ),
       );
-      if (!isSuccess(transfer)) {
+      if (!workerCommandSucceeded(transfer)) {
         throw commandFailure("bundle transfer", transfer);
       }
     }
@@ -817,7 +814,7 @@ export async function bootstrapWorker(
         "Worker npm bootstrap requires npm on the leased host; use bundle install or provide npm in the provider setup phase",
       );
     }
-    if (!isSuccess(install)) {
+    if (!workerCommandSucceeded(install)) {
       throw commandFailure("install", install);
     }
     const output = parseTaggedOutput(install.stdout);

@@ -13,6 +13,7 @@ import type {
   WorkerWorkspaceSyncRequest,
   WorkerWorkspaceSyncResult,
 } from "./tunnel-contract.js";
+import { workerCommandSucceeded as success } from "./worker-command-result.js";
 import {
   createAcceptedWorkspacePublisherFactory,
   recoverAcceptedWorkspacePublication,
@@ -57,7 +58,6 @@ import {
   stableWorkerPathComponent,
   validateWorkspaceSyncRequest,
   WORKER_WORKSPACE_RSYNC_DESTINATION,
-  workerWorkspaceCommandSucceeded as success,
   workerWorkspaceRsyncRemoteCommand,
   workerWorkspaceRsyncReceiverEntryPath,
   workerWorkspaceSshArgv,
