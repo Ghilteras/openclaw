@@ -1,6 +1,7 @@
 // Webhooks TaskFlow E2E covers route-bound child cancellation on a real Gateway listener.
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { AcpRuntimeEvent } from "@openclaw/acp-core/runtime/types";
 import type { OpenClawPluginService } from "openclaw/plugin-sdk/core";
 import {
   createPluginStateKeyedStoreForTests,
@@ -581,7 +582,8 @@ describe("webhooks TaskFlow child cancellation authority", () => {
             backendId: "acpx",
           });
           const queuedTargetEntered = createDeferred();
-          const releaseQueuedTarget = createDeferred();
+          const queuedTurnOrder: string[] = [];
+          const queuedTargetEvents: AcpRuntimeEvent[] = [];
           const queuedTargetTurn = acpManager.runTurn({
             admittedRunContext: createTestAdmittedRunContext(queuedAcpRunId),
             cfg: config,
@@ -590,10 +592,22 @@ describe("webhooks TaskFlow child cancellation authority", () => {
             text: "Keep the target active while its same-id successor queues.",
             mode: "prompt",
             requestId: queuedAcpRunId,
-            onElicitation: async () => {
+            onElicitation: async (_request, context) => {
               queuedTargetEntered.resolve();
-              await releaseQueuedTarget.promise;
-              return { action: "accept", content: { question: "cancel target" } };
+              await new Promise<void>((resolve) => {
+                if (context.signal.aborted) {
+                  resolve();
+                  return;
+                }
+                context.signal.addEventListener("abort", () => resolve(), { once: true });
+              });
+              return { action: "cancel" };
+            },
+            onEvent: (event) => {
+              queuedTargetEvents.push(event);
+              if (event.type === "done" && event.status === "cancelled") {
+                queuedTurnOrder.push("target-cancelled");
+              }
             },
           });
           await queuedTargetEntered.promise;
@@ -610,6 +624,7 @@ describe("webhooks TaskFlow child cancellation authority", () => {
           ).length;
           const queuedSuccessorEntered = createDeferred();
           const releaseQueuedSuccessor = createDeferred();
+          const queuedSuccessorEvents: AcpRuntimeEvent[] = [];
           const queuedSuccessorTurn = acpManager.runTurn({
             admittedRunContext: createTestAdmittedRunContext(queuedAcpRunId),
             cfg: config,
@@ -619,9 +634,13 @@ describe("webhooks TaskFlow child cancellation authority", () => {
             mode: "prompt",
             requestId: queuedAcpRunId,
             onElicitation: async () => {
+              queuedTurnOrder.push("successor-entered");
               queuedSuccessorEntered.resolve();
               await releaseQueuedSuccessor.promise;
               return { action: "accept", content: { question: "complete successor" } };
+            },
+            onEvent: (event) => {
+              queuedSuccessorEvents.push(event);
             },
           });
           const queuedCancelPromise = postWebhook(origin, {
@@ -637,21 +656,40 @@ describe("webhooks TaskFlow child cancellation authority", () => {
             },
             { interval: 10, timeout: 10_000 },
           );
-          releaseQueuedTarget.resolve();
           const queuedCancel = await queuedCancelPromise;
           expect(queuedCancel).toMatchObject({ status: 200, body: { ok: true } });
           const interruptsAfterTargetCancel = (await readAcpTraceMethods(acpxTracePath)).filter(
             (method) => method === "turn/interrupt",
           ).length;
-          expect(interruptsAfterTargetCancel - interruptsBeforeQueuedCancel).toBeGreaterThan(0);
+          expect(interruptsAfterTargetCancel - interruptsBeforeQueuedCancel).toBe(1);
           await queuedTargetTurn;
+          expect(queuedTargetEvents.at(-1)).toEqual({
+            type: "done",
+            status: "cancelled",
+            stopReason: "cancelled",
+          });
           await queuedSuccessorEntered.promise;
+          expect(queuedTurnOrder).toEqual(["target-cancelled", "successor-entered"]);
           const interruptsWhileSuccessorActive = (await readAcpTraceMethods(acpxTracePath)).filter(
             (method) => method === "turn/interrupt",
           ).length;
           expect(interruptsWhileSuccessorActive - interruptsAfterTargetCancel).toBe(0);
           releaseQueuedSuccessor.resolve();
           await queuedSuccessorTurn;
+          expect(queuedSuccessorEvents.at(-1)).toEqual({
+            type: "done",
+            status: "completed",
+            stopReason: "end_turn",
+          });
+          expect(
+            queuedSuccessorEvents.filter(
+              (event) =>
+                event.type === "done" &&
+                (event.status === "cancelled" ||
+                  event.stopReason === "cancel" ||
+                  event.stopReason === "cancelled"),
+            ),
+          ).toHaveLength(0);
 
           console.info(
             "webhooks-taskflow-authority-proof",
