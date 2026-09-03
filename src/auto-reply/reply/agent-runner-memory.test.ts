@@ -3768,7 +3768,7 @@ describe("runMemoryFlushIfNeeded", () => {
     ["fresh session selected from the outset", "fresh", "codex"],
     ["upgraded session with historical embedded ownership", "upgraded", "openclaw"],
   ])(
-    "byte-guards a Codex runtime %s through native preflight",
+    "latches host byte compaction for a Codex runtime %s heartbeat",
     async (_label, fixtureId, agentHarnessId) => {
       const storePath = path.join(rootDir, `sqlite-codex-byte-guard-${fixtureId}.json`);
       const sessionKey = "agent:main:main";
@@ -3814,15 +3814,15 @@ describe("runMemoryFlushIfNeeded", () => {
           sessionStore,
           sessionKey,
           storePath,
-          isHeartbeat: false,
+          isHeartbeat: true,
           ...createCompactionLifecycle(replyOperation),
         });
       }
 
-      expect(entry?.compactionCount).toBe(2);
+      expect(entry?.compactionCount).toBe(1);
       expect(replyOperation.setPhase).toHaveBeenCalledWith("preflight_compacting");
-      expect(compactEmbeddedAgentSessionMock).toHaveBeenCalledTimes(2);
-      expect(requireCompactEmbeddedAgentSessionCall(1)).toMatchObject({
+      expect(compactEmbeddedAgentSessionMock).toHaveBeenCalledOnce();
+      expect(requireCompactEmbeddedAgentSessionCall()).toMatchObject({
         agentHarnessId: "codex",
         contextTokenBudget: 1_000_000,
         deferOwningContextEngineCompaction: false,
@@ -3832,7 +3832,11 @@ describe("runMemoryFlushIfNeeded", () => {
         sessionKey,
         trigger: "budget",
       });
-      expect(loadMainSessionEntry(storePath).transcriptByteCompactionLatch).toBeUndefined();
+      expect(loadMainSessionEntry(storePath).transcriptByteCompactionLatch).toMatchObject({
+        activeBytes: expect.any(Number),
+        maxBytes: 10,
+        sessionId: "session",
+      });
     },
   );
 
