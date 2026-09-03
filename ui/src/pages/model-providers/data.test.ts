@@ -523,6 +523,7 @@ describe("buildModelProviderCards", () => {
           {
             provider: "github-copilot",
             apiKeySupported: false,
+            quickApiKeySetup: false,
             accessOptions: [{ id: "copilot", label: "GitHub Copilot", mode: "login" }],
           },
         ],
