@@ -26,7 +26,12 @@ afterEach(async () => {
 describe("skill_workshop description validation", () => {
   it("lets the proposal service explain overlong descriptions", async () => {
     const workspaceDir = await tempDirs.make("openclaw-skill-workshop-description-limit-");
-    const tool = createSkillWorkshopTool({ config: {} satisfies OpenClawConfig, workspaceDir, env: testState.env });
+    const tool = createSkillWorkshopTool({
+      config: {} satisfies OpenClawConfig,
+      workspaceDir,
+      agentId: "main",
+      env: testState.env,
+    });
     const args = {
       action: "create" as const,
       name: "Long Description",

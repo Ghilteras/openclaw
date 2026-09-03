@@ -37,7 +37,14 @@ async function proposalArtifactPath(
   relativePath: string,
   options: { stateDir?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<string> {
-  const record = await readSkillProposalRecord(proposalId, options.env ? { env: options.env } : {});
+  const config: OpenClawConfig = {};
+  const agentId = "main";
+  const record = await readSkillProposalRecord(
+    proposalId,
+    { agentId, config, ...(options.env ? { env: options.env } : {}) },
+    { agentId },
+    { config },
+  );
   if (!record) {
     throw new Error(`expected stored proposal ${proposalId}`);
   }
@@ -203,7 +210,12 @@ describe("skill_workshop tool", () => {
     const workspaceDir = await tempDirs.make("openclaw-skill-workshop-isolated-workspace-");
     const isolatedStateDir = await tempDirs.make("openclaw-skill-workshop-isolated-state-");
     const env = { ...process.env, OPENCLAW_STATE_DIR: isolatedStateDir };
-    const isolatedTool = createSkillWorkshopTool({ workspaceDir, env, proposalOnly: true });
+    const isolatedTool = createSkillWorkshopTool({
+      workspaceDir,
+      agentId: "main",
+      env,
+      proposalOnly: true,
+    });
 
     const created = await isolatedTool.execute("call-isolated-create", {
       action: "create",
@@ -225,9 +237,10 @@ describe("skill_workshop tool", () => {
       isolatedTool.execute("call-isolated-list", { action: "list" }),
     ).resolves.toMatchObject({ details: { proposals: [{ id: proposalId }] } });
     await expect(
-      createSkillWorkshopTool({ workspaceDir, proposalOnly: true }).execute("call-default-list", {
-        action: "list",
-      }),
+      createSkillWorkshopTool({ workspaceDir, agentId: "main", proposalOnly: true }).execute(
+        "call-default-list",
+        { action: "list" },
+      ),
     ).resolves.toMatchObject({ details: { proposals: [] } });
   });
 
@@ -257,6 +270,7 @@ describe("skill_workshop tool", () => {
     };
     const tool = createSkillWorkshopTool({
       workspaceDir,
+      agentId: "main",
       proposalOnly: true,
       proposalMutationBudget,
       proposalReviewCompletion,
@@ -348,6 +362,7 @@ describe("skill_workshop tool", () => {
     const proposalMutationBudget: SkillWorkshopProposalMutationBudget = { remaining: 3 };
     const tool = createSkillWorkshopTool({
       workspaceDir,
+      agentId: "main",
       proposalOnly: true,
       proposalMutationBudget,
     });
@@ -376,6 +391,7 @@ describe("skill_workshop tool", () => {
     const proposalMutationBudget: SkillWorkshopProposalMutationBudget = { remaining: 3 };
     const tool = createSkillWorkshopTool({
       workspaceDir,
+      agentId: "main",
       proposalOnly: true,
       proposalMutationBudget,
     });
@@ -462,7 +478,12 @@ describe("skill_workshop tool", () => {
         .then((buffer) => buffer.at(-1)),
     ).resolves.toBe(0x0a);
     await expect(
-      readSkillProposalRecord((result.details as { id: string }).id),
+      readSkillProposalRecord(
+        (result.details as { id: string }).id,
+        { agentId: "main", config: {} },
+        { agentId: "main" },
+        { config: {} },
+      ),
     ).resolves.toMatchObject({
       origin: {
         agentId: "main",
@@ -520,7 +541,12 @@ describe("skill_workshop tool", () => {
       ),
     ).resolves.toContain('version: "v2"');
     await expect(
-      readSkillProposalRecord((result.details as { id: string }).id),
+      readSkillProposalRecord(
+        (result.details as { id: string }).id,
+        { agentId: "main", config: {} },
+        { agentId: "main" },
+        { config: {} },
+      ),
     ).resolves.toMatchObject({ origin: reviewerOrigin });
 
     const listed = await tool.execute("call-3", {
