@@ -4,7 +4,6 @@ export type HandoffRuntimeBuiltins = {
   fs: typeof import("node:fs");
   path: typeof import("node:path");
   spawnSync: typeof import("node:child_process").spawnSync;
-  DatabaseSync: typeof import("node:sqlite").DatabaseSync;
   process: NodeJS.Process;
 };
 

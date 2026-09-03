@@ -1,5 +1,17 @@
 import type { Stats } from "node:fs";
 import type { DatabaseSync as HandoffDatabase } from "node:sqlite";
+import { sql } from "kysely";
+import {
+  executeSqliteQuerySync,
+  executeSqliteQueryTakeFirstSync,
+  getNodeSqliteKysely,
+} from "./kysely-sync.js";
+import { openNodeSqliteDatabase } from "./node-sqlite.js";
+import { setSqliteBusyTimeout } from "./sqlite-busy-timeout.js";
+import {
+  runSqliteImmediateTransactionSync,
+  type SqliteTransactionOptions,
+} from "./sqlite-transaction.js";
 import { canCleanupLegacyManagedHandoff } from "./update-managed-service-handoff-cleanup.ts";
 import { createHandoffProcessIdentity } from "./update-managed-service-handoff-identity-runtime.ts";
 import {
@@ -13,6 +25,9 @@ import {
 } from "./update-managed-service-handoff-lease-state.ts";
 
 type LeaseRow = { owner: string; payload_json: string; updated_at: number };
+type LeaseTable = LeaseRow & { install_root: string };
+const leaseQueries = (db: HandoffDatabase) =>
+  getNodeSqliteKysely<{ managed_update_handoffs: LeaseTable }>(db);
 type LeaseRead =
   | { kind: "absent" | "unreadable" }
   | { kind: "current"; lease: ManagedHandoffLease };
@@ -20,12 +35,13 @@ type LeaseAcquisition =
   | { kind: "busy"; owner: string }
   | { kind: "acquired"; lease: ManagedHandoffLease };
 
-/** One lease implementation, preloaded normally and copied before package replacement. */
+/** One lease implementation, preloaded normally and sealed before package replacement. */
 export function createManagedHandoffLeaseRuntime(
   builtins: HandoffRuntimeBuiltins,
   options: { databasePath: string; serviceManagerEnv: Record<string, string> },
+  logger?: SqliteTransactionOptions["logger"],
 ) {
-  const { fs, path, spawnSync, DatabaseSync, process } = builtins;
+  const { fs, path, spawnSync, process } = builtins;
   const { databasePath, serviceManagerEnv } = options;
   if (
     !serviceManagerEnv ||
@@ -82,6 +98,12 @@ export function createManagedHandoffLeaseRuntime(
       throw new Error("managed handoff lease " + kind + " is unsafe");
     }
   }
+  function close(db?: HandoffDatabase) {
+    // Canonical rollback may already close a damaged handle; keep its original error.
+    if (db?.isOpen) {
+      db.close();
+    }
+  }
   function open(write: boolean) {
     const dir = path.dirname(databasePath);
     if (write) {
@@ -100,29 +122,36 @@ export function createManagedHandoffLeaseRuntime(
     if (!write || fs.existsSync(databasePath)) {
       assertPath(fs.lstatSync(databasePath), "file");
     }
-    const db = new DatabaseSync(databasePath, { readOnly: !write });
+    const db = openNodeSqliteDatabase(databasePath, { readOnly: !write });
     try {
-      db.exec("PRAGMA busy_timeout = 5000;");
+      setSqliteBusyTimeout(db, 5000);
       if (write) {
-        db.exec(
-          "CREATE TABLE IF NOT EXISTS managed_update_handoffs (install_root TEXT NOT NULL PRIMARY KEY, owner TEXT NOT NULL, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL) STRICT;",
+        executeSqliteQuerySync(
+          db,
+          leaseQueries(db)
+            .schema.createTable("managed_update_handoffs")
+            .ifNotExists()
+            .addColumn("install_root", "text", (column) => column.notNull().primaryKey())
+            .addColumn("owner", "text", (column) => column.notNull())
+            .addColumn("payload_json", "text", (column) => column.notNull())
+            .addColumn("updated_at", "integer", (column) => column.notNull())
+            .modifyEnd(sql`STRICT`),
         );
         fs.chmodSync(databasePath, 0o600);
       }
       return db;
     } catch (error) {
-      db.close();
+      close(db);
       throw error;
     }
   }
-  function row(db: HandoffDatabase, root: string): LeaseRow | undefined {
-    return (
-      db
-        .prepare(
-          "SELECT owner, payload_json, updated_at FROM managed_update_handoffs WHERE install_root = ?",
-        )
-        // SAFETY: STRICT TEXT/TEXT/INTEGER projection; INTEGER reads use Node's default number mode.
-        .get(root) as LeaseRow | undefined
+  function row(db: HandoffDatabase, root: string) {
+    return executeSqliteQueryTakeFirstSync(
+      db,
+      leaseQueries(db)
+        .selectFrom("managed_update_handoffs")
+        .select(["owner", "payload_json", "updated_at"])
+        .where("install_root", "=", root),
     );
   }
   function handle(root: string, value: LeaseRow): ManagedHandoffLease {
@@ -153,11 +182,34 @@ export function createManagedHandoffLeaseRuntime(
   }
   function deleteRow(db: HandoffDatabase, root: string, value: LeaseRow) {
     return (
-      db
-        .prepare(
-          "DELETE FROM managed_update_handoffs WHERE install_root = ? AND owner = ? AND payload_json = ? AND updated_at = ?",
-        )
-        .run(root, value.owner, value.payload_json, value.updated_at).changes === 1
+      executeSqliteQuerySync(
+        db,
+        leaseQueries(db)
+          .deleteFrom("managed_update_handoffs")
+          .where("install_root", "=", root)
+          .where("owner", "=", value.owner)
+          .where("payload_json", "=", value.payload_json)
+          .where("updated_at", "=", value.updated_at),
+      ).numAffectedRows === 1n
+    );
+  }
+  function updateRow(
+    db: HandoffDatabase,
+    lease: ManagedHandoffLease,
+    values: Pick<LeaseTable, "payload_json" | "updated_at"> &
+      Partial<Pick<LeaseTable, "install_root">>,
+  ) {
+    return (
+      executeSqliteQuerySync(
+        db,
+        leaseQueries(db)
+          .updateTable("managed_update_handoffs")
+          .set(values)
+          .where("install_root", "=", lease.key)
+          .where("owner", "=", lease.owner)
+          .where("payload_json", "=", lease.payload)
+          .where("updated_at", "=", lease.updatedAt),
+      ).numAffectedRows === 1n
     );
   }
   function read(root: string): LeaseRead {
@@ -172,7 +224,7 @@ export function createManagedHandoffLeaseRuntime(
     } catch {
       return { kind: "unreadable" };
     } finally {
-      db?.close();
+      close(db);
     }
   }
   const sameRow = (a: LeaseRow | undefined, b: LeaseRow | undefined) =>
@@ -185,15 +237,7 @@ export function createManagedHandoffLeaseRuntime(
       a.updated_at === b.updated_at,
     );
   function transact<T>(db: HandoffDatabase, operation: () => T): T {
-    db.exec("BEGIN IMMEDIATE;");
-    try {
-      const result = operation();
-      db.exec("COMMIT;");
-      return result;
-    } catch (error) {
-      db.exec("ROLLBACK;");
-      throw error;
-    }
+    return runSqliteImmediateTransactionSync(db, operation, { logger });
   }
   function reclaimable(lease: ManagedHandoffLease) {
     const action = lease.action;
@@ -263,16 +307,22 @@ export function createManagedHandoffLeaseRuntime(
           deleteRow(db, root, observed);
         }
         const updatedAt = Date.now();
-        db.prepare(
-          "INSERT INTO managed_update_handoffs (install_root, owner, payload_json, updated_at) VALUES (?, ?, ?, ?)",
-        ).run(root, owner, payload, updatedAt);
+        executeSqliteQuerySync(
+          db,
+          leaseQueries(db).insertInto("managed_update_handoffs").values({
+            install_root: root,
+            owner,
+            payload_json: payload,
+            updated_at: updatedAt,
+          }),
+        );
         return {
           kind: "acquired",
           lease: handle(root, { owner, payload_json: payload, updated_at: updatedAt }),
         };
       });
     } finally {
-      db.close();
+      close(db);
     }
   }
   function current(lease: ManagedHandoffLease) {
@@ -303,16 +353,11 @@ export function createManagedHandoffLeaseRuntime(
     const db = open(true);
     try {
       const updatedAt = Math.max(Date.now(), lease.updatedAt + 1);
-      const result = db
-        .prepare(
-          "UPDATE managed_update_handoffs SET payload_json = ?, updated_at = ? WHERE install_root = ? AND owner = ? AND payload_json = ? AND updated_at = ?",
-        )
-        .run(payload, updatedAt, lease.key, lease.owner, lease.payload, lease.updatedAt);
-      return result.changes === 1
+      return updateRow(db, lease, { payload_json: payload, updated_at: updatedAt })
         ? handle(lease.key, { owner: lease.owner, payload_json: payload, updated_at: updatedAt })
         : null;
     } finally {
-      db.close();
+      close(db);
     }
   }
   function bind(lease: ManagedHandoffLease, pid: number, action = lease.action) {
@@ -416,12 +461,13 @@ export function createManagedHandoffLeaseRuntime(
           deleteRow(db, root, observed);
         }
         const updatedAt = Math.max(Date.now(), lease.updatedAt + 1);
-        const result = db
-          .prepare(
-            "UPDATE managed_update_handoffs SET install_root = ?, payload_json = ?, updated_at = ? WHERE install_root = ? AND owner = ? AND payload_json = ? AND updated_at = ?",
-          )
-          .run(root, payload, updatedAt, lease.key, lease.owner, lease.payload, lease.updatedAt);
-        if (result.changes !== 1) {
+        if (
+          !updateRow(db, lease, {
+            install_root: root,
+            payload_json: payload,
+            updated_at: updatedAt,
+          })
+        ) {
           throw new Error("managed triage source changed during transfer");
         }
         return {
@@ -430,7 +476,7 @@ export function createManagedHandoffLeaseRuntime(
         };
       });
     } finally {
-      db.close();
+      close(db);
     }
   }
   function activate(lease: ManagedHandoffLease) {
@@ -540,7 +586,7 @@ export function createManagedHandoffLeaseRuntime(
         updated_at: lease.updatedAt,
       });
     } finally {
-      db.close();
+      close(db);
     }
   }
   function stopNative(lease: ManagedHandoffLease, ownPlacement = false) {

@@ -58,10 +58,10 @@ function appendLog(line) {
 }
 
 const { createManagedHandoffLeaseRuntime } = require("./runtime/${MANAGED_HANDOFF_RUNTIME_ENTRY}");
-const leaseStore = createManagedHandoffLeaseRuntime({ fs, path, spawnSync, DatabaseSync: require("node:sqlite").DatabaseSync, process }, {
+const leaseStore = createManagedHandoffLeaseRuntime({ fs, path, spawnSync, process }, {
   databasePath: params.updateLeaseDatabasePath,
   serviceManagerEnv: params.serviceManagerEnv,
-});
+}, { warn: (message, metadata) => appendLog(message + " " + JSON.stringify(metadata)) });
 const { isPidAlive, readProcessStartIdentity, properties: parseSystemdProperties, validFailure: validTriageFailure } = leaseStore;
 let managedUpdateLease = null;
 function initialTriageAction() {

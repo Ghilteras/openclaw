@@ -594,16 +594,10 @@ describe("managed service update handoff", () => {
     const write = fsSync.writeFileSync;
     let directory = "";
     const fault = vi.spyOn(fsSync, "writeFileSync").mockImplementation((file, ...args) => {
-      if (String(file).endsWith("update-managed-service-handoff-cleanup.ts")) {
-        directory = path.resolve(String(file), "../../../..");
-        expect(
-          fsSync.existsSync(
-            path.join(
-              directory,
-              "runtime/src/infra/update-managed-service-handoff-lease-runtime.ts",
-            ),
-          ),
-        ).toBe(true);
+      if (typeof file !== "number" && String(file).endsWith("managed-handoff-runtime.mjs")) {
+        directory = path.resolve(String(file), "../..");
+        write(file, ...args);
+        expect(fsSync.existsSync(file)).toBe(true);
         throw Object.assign(new Error("staging failed"), { code: "EIO" });
       }
       return write(file, ...args);

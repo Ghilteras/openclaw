@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Writable } from "node:stream";
+import { vi } from "vitest";
 import { readManagedHandoffProcessStartTime as getFileLockProcessStartTime } from "./update-managed-service-handoff-lease.js";
 
 export type MockManagedUpdateHandoffLeaseFailure =
@@ -100,4 +101,57 @@ export function signalMockManagedUpdateHandoffReady(params: {
     child.once("exit", cleanup);
   }
   child.stdout.write("OPENCLAW_UPDATE_HANDOFF_READY\n");
+}
+
+export async function writeConcurrentManagedHandoffParams(
+  params: {
+    tmpDir: string;
+    baseParams: Record<string, unknown>;
+    name: string;
+    owner: string;
+    commandArgv: string[];
+    stateDatabasePath?: string;
+    leaseDatabasePath?: string;
+  },
+  handoffParents: Map<string, import("node:child_process").ChildProcess>,
+): Promise<string> {
+  const { spawn } =
+    await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  const { getFileLockProcessStartTime: readParentStartTime } =
+    await import("../shared/pid-alive.js");
+  const parent = spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+  const parentPid = parent.pid;
+  const startIdentity = parentPid ? readParentStartTime(parentPid) : null;
+  if (!parentPid || startIdentity === null) {
+    parent.kill("SIGKILL");
+    throw new Error("expected a parent process with a stable start identity");
+  }
+  const paramsPath = path.join(params.tmpDir, `${params.name}.json`);
+  handoffParents.set(paramsPath, parent);
+  await fs.promises.writeFile(
+    paramsPath,
+    `${JSON.stringify(
+      {
+        ...params.baseParams,
+        parentPid,
+        parentStartIdentity: String(startIdentity),
+        parentExitTimeoutMs: 5_000,
+        handoffId: params.owner,
+        updateLeaseOwner: params.owner,
+        stateDatabasePath: params.stateDatabasePath ?? params.baseParams.stateDatabasePath,
+        updateLeaseDatabasePath:
+          params.leaseDatabasePath ?? params.baseParams.updateLeaseDatabasePath,
+        commandArgv: params.commandArgv,
+        triageCommandArgv: [process.execPath, "-e", "process.exit(0)", "--"],
+        triageContextPath: path.join(params.tmpDir, `${params.name}-failure.json`),
+        logPath: path.join(params.tmpDir, `${params.name}.log`),
+        sensitivePaths: [],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return paramsPath;
 }

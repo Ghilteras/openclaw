@@ -7,7 +7,10 @@ import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isPidAlive } from "../shared/pid-alive.js";
-import { signalMockManagedUpdateHandoffReady } from "./update-managed-service-handoff.test-support.js";
+import {
+  signalMockManagedUpdateHandoffReady,
+  writeConcurrentManagedHandoffParams,
+} from "./update-managed-service-handoff.test-support.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 const tempDirs = new Set<string>();
@@ -50,9 +53,18 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  for (const parent of handoffParents.values()) {
-    parent.stdin?.end();
-  }
+  await Promise.all(
+    [...handoffParents.values()].map(async (parent) => {
+      if (parent.exitCode !== null || parent.signalCode !== null) {
+        return;
+      }
+      const closed = new Promise<void>((resolve) => {
+        parent.once("close", () => resolve());
+      });
+      parent.stdin?.end();
+      await closed;
+    }),
+  );
   handoffParents.clear();
   for (const cleanup of mockedHandoffLeaseCleanups) {
     cleanup();
@@ -111,54 +123,9 @@ async function prepareConcurrentHandoffHelper(): Promise<{
   return { tmpDir, helperScriptPath, baseParams };
 }
 
-async function writeConcurrentHandoffParams(params: {
-  tmpDir: string;
-  baseParams: Record<string, unknown>;
-  name: string;
-  owner: string;
-  commandArgv: string[];
-  stateDatabasePath?: string;
-  leaseDatabasePath?: string;
-}): Promise<string> {
-  const { spawn } =
-    await vi.importActual<typeof import("node:child_process")>("node:child_process");
-  const { getFileLockProcessStartTime } = await import("../shared/pid-alive.js");
-  const parent = spawn(process.execPath, ["-e", "process.stdin.resume()"], {
-    stdio: ["pipe", "ignore", "ignore"],
-  });
-  const parentPid = parent.pid;
-  const startIdentity = parentPid ? getFileLockProcessStartTime(parentPid) : null;
-  if (!parentPid || startIdentity === null) {
-    parent.kill("SIGKILL");
-    throw new Error("expected a parent process with a stable start identity");
-  }
-  const paramsPath = path.join(params.tmpDir, `${params.name}.json`);
-  handoffParents.set(paramsPath, parent);
-  await fs.writeFile(
-    paramsPath,
-    `${JSON.stringify(
-      {
-        ...params.baseParams,
-        parentPid,
-        parentStartIdentity: String(startIdentity),
-        parentExitTimeoutMs: 5_000,
-        handoffId: params.owner,
-        updateLeaseOwner: params.owner,
-        stateDatabasePath: params.stateDatabasePath ?? params.baseParams.stateDatabasePath,
-        updateLeaseDatabasePath:
-          params.leaseDatabasePath ?? params.baseParams.updateLeaseDatabasePath,
-        commandArgv: params.commandArgv,
-        triageCommandArgv: [process.execPath, "-e", "process.exit(0)", "--"],
-        triageContextPath: path.join(params.tmpDir, `${params.name}-failure.json`),
-        logPath: path.join(params.tmpDir, `${params.name}.log`),
-        sensitivePaths: [],
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return paramsPath;
-}
+const writeConcurrentHandoffParams = (
+  params: Parameters<typeof writeConcurrentManagedHandoffParams>[0],
+) => writeConcurrentManagedHandoffParams(params, handoffParents);
 
 function driveHandoffProtocol(
   child: import("node:child_process").ChildProcess,
@@ -881,18 +848,28 @@ childProcess.spawnSync = function(command, args, options) {
         cwd: tmpDir,
         stdio: ["pipe", "pipe", "pipe"],
       });
+      const firstClosed = new Promise<void>((resolve) => {
+        first.once("close", () => resolve());
+      });
       driveHandoffProtocol(first, firstParamsPath);
       let firstStdout = "";
       first.stdout.on("data", (chunk) => (firstStdout += chunk));
       let orphanPid = 0;
       try {
-        await vi.waitFor(
-          async () => {
-            expect(firstStdout).toContain("OPENCLAW_UPDATE_HANDOFF_READY");
-            await expect(pathExists(orphanPidPath)).resolves.toBe(true);
-          },
-          { interval: 10, timeout: 5_000 },
-        );
+        await vi
+          .waitFor(
+            async () => {
+              expect(firstStdout).toContain("OPENCLAW_UPDATE_HANDOFF_READY");
+              await expect(pathExists(orphanPidPath)).resolves.toBe(true);
+            },
+            { interval: 10, timeout: 5_000 },
+          )
+          .catch(async (error: unknown) => {
+            const log = await fs
+              .readFile(path.join(tmpDir, "orphan-first.log"), "utf8")
+              .catch(String);
+            throw new Error(`Surviving updater did not become ready: ${log}`, { cause: error });
+          });
         const orphanPidContents = await fs.readFile(orphanPidPath, "utf8");
         orphanPid = Number(orphanPidContents);
         expect(
@@ -900,9 +877,7 @@ childProcess.spawnSync = function(command, args, options) {
           `updater PID bytes: ${JSON.stringify(orphanPidContents)}`,
         ).toBe(true);
         first.kill("SIGKILL");
-        await new Promise<void>((resolve) => {
-          first.once("close", () => resolve());
-        });
+        await firstClosed;
 
         const second = await runHelper({
           execFile,
@@ -934,12 +909,36 @@ childProcess.spawnSync = function(command, args, options) {
         });
         await expect(pathExists(thirdStartedPath)).resolves.toBe(true);
       } finally {
-        await fs.writeFile(releaseOrphanPath, "release").catch(() => undefined);
         if (first.exitCode === null) {
           first.kill("SIGKILL");
         }
+        await firstClosed;
+        // Join the launcher before reading its last child receipt; a failed readiness
+        // assertion can otherwise leave an updater writing into a deleted fixture.
+        orphanPid ||= Number(await fs.readFile(orphanPidPath, "utf8").catch(() => "0"));
+        if (!orphanPid) {
+          const database = new DatabaseSync(String(baseParams.updateLeaseDatabasePath));
+          try {
+            const row = database
+              .prepare(
+                "SELECT payload_json FROM managed_update_handoffs WHERE install_root = ? AND owner = ?",
+              )
+              .get(String(baseParams.updateLeaseKey), "handoff-orphan-first");
+            const executor = row && JSON.parse(String(row.payload_json)).executor;
+            if (executor?.pid !== first.pid) {
+              orphanPid = executor?.pid ?? 0;
+            }
+          } finally {
+            database.close();
+          }
+        }
+        await fs.writeFile(releaseOrphanPath, "release").catch(() => undefined);
         if (orphanPid > 0 && isPidAlive(orphanPid)) {
           process.kill(orphanPid, "SIGKILL");
+          await vi.waitFor(() => expect(isPidAlive(orphanPid)).toBe(false), {
+            interval: 20,
+            timeout: 5_000,
+          });
         }
       }
     },

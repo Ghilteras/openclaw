@@ -6,7 +6,6 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
-import { MANAGED_HANDOFF_RUNTIME_FILES } from "../infra/update-managed-service-handoff-runtime-assets.js";
 
 const dirs = useAutoCleanupTempDirTracker(afterEach);
 it("retains original JSON and closes the shared lease after preloaded owner files and old lazy chunks are removed", async () => {
@@ -23,9 +22,16 @@ it("retains original JSON and closes the shared lease after preloaded owner file
       path.resolve("src/infra/update-managed-service-handoff-lease.ts"),
       path.join(root, "lease.mts"),
     ],
-    ...MANAGED_HANDOFF_RUNTIME_FILES.map(
-      (file) => [path.resolve(file), path.join(root, path.basename(file))] as const,
-    ),
+    ...[
+      "src/infra/update-managed-service-handoff-lease-runtime.ts",
+      "src/infra/update-managed-service-handoff-cleanup.ts",
+      "src/infra/update-managed-service-handoff-identity-runtime.ts",
+      "src/infra/update-managed-service-handoff-lease-state.ts",
+      "src/shared/pid-alive.ts",
+      "src/infra/windows-process-start.ts",
+      "src/infra/process-env.ts",
+      "packages/normalization-core/src/record-coerce.ts",
+    ].map((file) => [path.resolve(file), path.join(root, path.basename(file))] as const),
   ]);
   for (const [original, destination] of relocated) {
     const code = (await fs.readFile(original, "utf8")).replace(

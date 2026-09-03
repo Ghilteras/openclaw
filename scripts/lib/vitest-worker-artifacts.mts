@@ -8,6 +8,10 @@ export const runtimeProcessDeclarationEntries = {
   "extensions/memory-core/manager-search-knn-entrypoint":
     "extensions/memory-core/src/memory/manager-search-knn-entrypoint.ts",
 };
+export const vitestHandoffDeclarationEntries = {
+  "infra/update-managed-service-handoff-runtime-assets":
+    "src/infra/update-managed-service-handoff-runtime-assets.ts",
+};
 export const vitestWorkerDeclarationEntries = {
   ...runtimeProcessDeclarationEntries,
   "extensions/qa-lab/gateway-child-artifacts-runtime.test-support":
@@ -31,6 +35,10 @@ export const vitestWorkerDeclarationEntries = {
 };
 
 export type VitestWorkerDescriptor = { directory: string };
+export type VitestArtifactDemand = "workers" | "handoff";
+export function vitestArtifactDirectory(directory: string, demand: VitestArtifactDemand): string {
+  return demand === "handoff" ? path.join(directory, "handoff") : directory;
+}
 export type VitestWorkerManifest = {
   identity: string;
   inputs: Record<string, string>;
@@ -43,10 +51,16 @@ export const hashVitestWorkerArtifact = (bytes: string | Buffer) =>
 // Compiler/Vite IDs use forward slashes on Windows; filesystem paths use native separators.
 const nativeModulePath = (id: string) => path.normalize(id.replaceAll("\\", "/"));
 const declarations = new Map(
-  Object.entries(vitestWorkerDeclarationEntries).map(([entry, source]) => [
-    nativeModulePath(path.join(root, source)),
-    entry,
-  ]),
+  (
+    [
+      ["workers", vitestWorkerDeclarationEntries],
+      ["handoff", vitestHandoffDeclarationEntries],
+    ] as const
+  ).flatMap(([demand, entries]) =>
+    Object.entries(entries).map(
+      ([entry, source]) => [nativeModulePath(path.join(root, source)), { entry, demand }] as const,
+    ),
+  ),
 );
 export const VITEST_WORKER_PREPARE_REQUEST = "openclaw:prepare-test-subprocesses";
 export const VITEST_WORKER_PREPARE_REPLY = "openclaw:test-subprocesses-prepared";
@@ -93,9 +107,13 @@ export async function verifyVitestWorkerArtifacts(
 }
 
 export function resolveVitestWorkerDeclaration(id: string, directory: string): string | undefined {
-  const entry = declarations.get(nativeModulePath(id));
-  if (entry) {
-    const compiled = path.join(directory, "dist", `${entry}.js`);
+  const declaration = declarations.get(nativeModulePath(id));
+  if (declaration) {
+    const compiled = path.join(
+      vitestArtifactDirectory(directory, declaration.demand),
+      "dist",
+      `${declaration.entry}.js`,
+    );
     fs.accessSync(compiled);
     return compiled.replaceAll("\\", "/");
   }
@@ -105,9 +123,14 @@ export function resolveVitestWorkerDeclaration(id: string, directory: string): s
 export function isVitestWorkerDeclaration(id: string): boolean {
   return declarations.has(nativeModulePath(id));
 }
+export function vitestWorkerDeclarationDemand(id: string): VitestArtifactDemand | undefined {
+  return declarations.get(nativeModulePath(id))?.demand;
+}
 
 /** One finite request over the already-owned Node IPC channel; never a path/build request. */
-export function requestVitestWorkerArtifacts(): Promise<void> {
+export function requestVitestWorkerArtifacts(
+  demand: VitestArtifactDemand = "workers",
+): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!process.send || !process.connected) {
       reject(new Error("Compiled subprocess owner IPC is unavailable"));
@@ -129,7 +152,9 @@ export function requestVitestWorkerArtifacts(): Promise<void> {
         message &&
         typeof message === "object" &&
         "type" in message &&
-        message.type === VITEST_WORKER_PREPARE_REPLY
+        message.type === VITEST_WORKER_PREPARE_REPLY &&
+        "demand" in message &&
+        message.demand === demand
       ) {
         finish("error" in message ? new Error(String(message.error)) : undefined);
       }
@@ -137,7 +162,7 @@ export function requestVitestWorkerArtifacts(): Promise<void> {
     process.on("message", onMessage);
     process.once("disconnect", onDisconnect);
     process.channel?.ref();
-    process.send(VITEST_WORKER_PREPARE_REQUEST, (error) => {
+    process.send({ type: VITEST_WORKER_PREPARE_REQUEST, demand }, (error) => {
       if (error) {
         finish(error);
       }

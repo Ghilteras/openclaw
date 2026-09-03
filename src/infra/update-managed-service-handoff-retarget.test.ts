@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 import { resolveServiceManagerEnv } from "../daemon/service-process-env.js";
 import * as pidIdentity from "../shared/pid-alive.js";
+import * as nodeSqlite from "./node-sqlite.js";
 import { createManagedHandoffLeaseRuntime as createStore } from "./update-managed-service-handoff-lease-runtime.js";
 import type {
   createManagedHandoffLeaseStore,
@@ -15,7 +16,9 @@ import { MANAGED_HANDOFF_RUNTIME_ENTRY } from "./update-managed-service-handoff-
 import { stageManagedHandoffRuntime } from "./update-managed-service-handoff-runtime.js";
 
 const scratch: string[] = [];
+const openDatabase = nodeSqlite.openNodeSqliteDatabase;
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of scratch.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -46,7 +49,7 @@ function fixture() {
     databasePath: path.join(root, "lease", "state.sqlite"),
     serviceManagerEnv: resolveServiceManagerEnv(),
   };
-  const builtins = { fs, path, spawnSync, DatabaseSync, process };
+  const builtins = { fs, path, spawnSync, process };
   const store = createStore(builtins, options);
   const acquired = store.acquire(from, "original-helper", { kind: "update" });
   if (acquired.kind !== "acquired") {
@@ -55,24 +58,27 @@ function fixture() {
   // Exercise the transaction's observation window using real owner operations.
   const racing = (beforeBegin: () => void) => {
     let pending: (() => void) | undefined = beforeBegin;
-    class RacingDatabase extends DatabaseSync {
-      override exec(sql: string) {
-        if (sql === "BEGIN IMMEDIATE;" && pending) {
+    vi.spyOn(nodeSqlite, "openNodeSqliteDatabase").mockImplementation((...args) => {
+      const db = openDatabase(...args);
+      const exec = db.exec.bind(db);
+      db.exec = (sql) => {
+        if (sql === "BEGIN IMMEDIATE" && pending) {
           const operation = pending;
           pending = undefined;
           operation();
         }
-        return super.exec(sql);
-      }
-    }
-    return createStore({ ...builtins, DatabaseSync: RacingDatabase }, options);
+        return exec(sql);
+      };
+      return db;
+    });
+    return createStore(builtins, options);
   };
   const closedDestination = () => {
     // Both independent processes finish through bind/activate/complete, then exit
     // without deleting the closed row. No fabricated lease grants reclamation.
-    const common = `const fs=require('node:fs'),path=require('node:path'),{spawn,spawnSync}=require('node:child_process'),{DatabaseSync}=require('node:sqlite');
+    const common = `const fs=require('node:fs'),path=require('node:path'),{spawn,spawnSync}=require('node:child_process');
 const {createManagedHandoffLeaseRuntime}=require(${JSON.stringify(runtimeEntry)});
-const store=createManagedHandoffLeaseRuntime({fs,path,spawnSync,DatabaseSync,process},${JSON.stringify(options)});`;
+const store=createManagedHandoffLeaseRuntime({fs,path,spawnSync,process},${JSON.stringify(options)});`;
     const executor =
       common +
       `process.once('message',lease=>{const closed=store.complete(lease);if(!closed)throw new Error('complete failed');process.send(closed,()=>process.disconnect());});`;
@@ -131,6 +137,50 @@ unix("keeps same-root transition in the existing binding flow", () => {
   expect(moved.lease.key).toBe(from);
   expect(moved.lease.updatedAt).toBeGreaterThan(source.updatedAt);
   expect(store.current(moved.lease)).toBe(true);
+});
+
+unix("preserves the original error when canonical rollback closes the operation's handle", () => {
+  const { from, to, store, source, options } = fixture();
+  const failure = new Error("fixture commit failed");
+  let damaged: DatabaseSync | undefined;
+  const opener = vi.spyOn(nodeSqlite, "openNodeSqliteDatabase").mockImplementation((...args) => {
+    const db = openDatabase(...args);
+    if (!args[1]?.readOnly) {
+      damaged = db;
+      const exec = db.exec.bind(db);
+      db.exec = (sql) => {
+        if (sql === "COMMIT") {
+          throw failure;
+        }
+        if (sql === "ROLLBACK") {
+          throw new Error("fixture rollback failed");
+        }
+        exec(sql);
+      };
+    }
+    return db;
+  });
+  expect(() => store.retarget(source, to, action)).toThrow(failure);
+  expect(damaged?.isOpen).toBe(false);
+  opener.mockRestore();
+  expect(store.read(from)).toEqual({ kind: "current", lease: source });
+  expect(store.read(to)).toEqual({ kind: "absent" });
+  const independent = openDatabase(options.databasePath);
+  try {
+    expect(() =>
+      store.transact(independent, () =>
+        store.transact(independent, () => {
+          throw failure;
+        }),
+      ),
+    ).toThrow(failure);
+    expect(independent.isOpen).toBe(true);
+    expect(store.transact(independent, () => "sentinel handle remains usable")).toBe(
+      "sentinel handle remains usable",
+    );
+  } finally {
+    independent.close();
+  }
 });
 
 unix("refuses retarget while the update executor is still a child", async () => {
@@ -199,23 +249,33 @@ unix("leaves source and destination unchanged when destination inspection is unr
   const { to, store, source, builtins, options } = fixture();
   expect(store.acquire(to, "winner", { kind: "update" }).kind).toBe("acquired");
   const before = store.read(to);
-  class UnreadableDatabase extends DatabaseSync {
-    override prepare(sql: string) {
-      const statement = super.prepare(sql);
-      if (sql.startsWith("SELECT owner")) {
-        const get = statement.get.bind(statement);
-        statement.get = (...args) => {
-          if (args[0] === to) {
+  const probe = vi.spyOn(nodeSqlite, "openNodeSqliteDatabase").mockImplementation((...args) => {
+    const db = openDatabase(...args);
+    const prepare = db.prepare.bind(db);
+    db.prepare = (sql) => {
+      const statement = prepare(sql);
+      if (sql.startsWith('select "owner"')) {
+        const iterate = statement.iterate.bind(statement);
+        statement.iterate = (root) => {
+          if (typeof root !== "string") {
+            throw new Error("expected one positional installation root");
+          }
+          if (root === to) {
             throw new Error("destination unreadable");
           }
-          return Reflect.apply(get, statement, args);
+          return iterate(root);
         };
       }
       return statement;
-    }
+    };
+    return db;
+  });
+  const other = createStore(builtins, options);
+  try {
+    expect(() => other.retarget(source, to, action)).toThrow("destination unreadable");
+  } finally {
+    probe.mockRestore();
   }
-  const other = createStore({ ...builtins, DatabaseSync: UnreadableDatabase }, options);
-  expect(() => other.retarget(source, to, action)).toThrow("destination unreadable");
   expect(store.current(source)).toBe(true);
   expect(store.read(to)).toEqual(before);
 });
@@ -452,9 +512,9 @@ unix(
       [
         "-e",
         `
-    const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process'),{DatabaseSync}=require('node:sqlite');
+    const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
     const {createManagedHandoffLeaseRuntime}=require(${JSON.stringify(runtimeEntry)});
-    const store=createManagedHandoffLeaseRuntime({fs,path,spawnSync,DatabaseSync,process},${JSON.stringify(options)});
+    const store=createManagedHandoffLeaseRuntime({fs,path,spawnSync,process},${JSON.stringify(options)});
     process.stdin.resume();
     process.once('message',lease=>{const closed=store.complete(lease);if(!closed)throw new Error('completion refused');process.send(closed,()=>process.disconnect());});
   `,

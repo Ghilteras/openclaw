@@ -1,15 +1,14 @@
-// Preloaded adapter for the same normal module copied into the native helper.
+// Preloaded adapter for the same typed owner sealed into the native helper.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { resolveServiceManagerEnv } from "../daemon/service-process-env.js";
 import { resolvePreferredOpenClawTmpDir } from "./tmp-openclaw-dir.js";
 import { createManagedHandoffLeaseRuntime } from "./update-managed-service-handoff-lease-runtime.js";
 import type { ManagedHandoffLease } from "./update-managed-service-handoff-lease-state.js";
 export type { ManagedHandoffLease } from "./update-managed-service-handoff-lease-state.js";
 
-const builtins = { fs, path, spawnSync, DatabaseSync, process };
+const builtins = { fs, path, spawnSync, process };
 
 export function resolveManagedUpdateLeaseDatabasePath(): string {
   return path.join(resolvePreferredOpenClawTmpDir(), "managed-update-handoffs.sqlite");
