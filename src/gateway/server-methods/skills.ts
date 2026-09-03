@@ -450,6 +450,7 @@ export const skillsHandlers: GatewayRequestHandlers = {
       run: async (parsedParams, resolved) =>
         listSkillProposalEvents({
           agentId: resolved.agentId,
+          config: resolved.cfg,
           proposalId: parsedParams.proposalId,
           afterSequence: parsedParams.afterSequence,
           limit: parsedParams.limit,
@@ -466,6 +467,7 @@ export const skillsHandlers: GatewayRequestHandlers = {
       run: async (parsedParams, resolved) => {
         const proposal = await inspectSkillProposal(parsedParams.proposalId, {
           agentId: resolved.agentId,
+          config: resolved.cfg,
         });
         if (!proposal) {
           respond(
@@ -494,6 +496,7 @@ export const skillsHandlers: GatewayRequestHandlers = {
           workspaceDir: resolved.workspaceDir,
           agentId: resolved.agentId,
           eventActor: { type: "gateway" },
+          config: resolved.cfg,
           proposalId: parsedParams.proposalId,
           expectedRevisionHash: parsedParams.expectedRevisionHash,
           correlationId: parsedParams.correlationId,
@@ -583,6 +586,7 @@ export const skillsHandlers: GatewayRequestHandlers = {
         const expectedRevisionHash = parsedParams.expectedRevisionHash;
         const proposal = await inspectSkillProposal(parsedParams.proposalId, {
           agentId: resolved.agentId,
+          config: resolved.cfg,
         });
         if (!proposal) {
           respond(
@@ -656,6 +660,7 @@ export const skillsHandlers: GatewayRequestHandlers = {
           workspaceDir: resolved.workspaceDir,
           agentId: resolved.agentId,
           eventActor: { type: "gateway" },
+          config: resolved.cfg,
           proposalId: parsedParams.proposalId,
           expectedRevisionHash: parsedParams.expectedRevisionHash,
           correlationId: parsedParams.correlationId,
@@ -675,6 +680,7 @@ export const skillsHandlers: GatewayRequestHandlers = {
           workspaceDir: resolved.workspaceDir,
           agentId: resolved.agentId,
           eventActor: { type: "gateway" },
+          config: resolved.cfg,
           proposalId: parsedParams.proposalId,
           expectedRevisionHash: parsedParams.expectedRevisionHash,
           correlationId: parsedParams.correlationId,

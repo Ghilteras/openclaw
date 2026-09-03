@@ -69,12 +69,12 @@ export type SkillExperienceReviewParams = {
   event: ExperienceReviewAgentEndEvent;
   ctx: ExperienceReviewAgentContext;
   usedSkills?: readonly RunSkillUsage[];
-  config?: OpenClawConfig;
+  config: OpenClawConfig;
 };
 
 export type ExperienceReviewCandidate = {
   ctx: ExperienceReviewAgentContext;
-  config?: OpenClawConfig;
+  config: OpenClawConfig;
   usedSkills?: readonly RunSkillUsage[];
   turnAborted?: boolean;
 };
@@ -341,7 +341,7 @@ export function createSkillExperienceReviewScheduler(deps: ExperienceReviewSched
             compacted: params.ctx.compacted,
             foregroundPromptContext: params.ctx.foregroundPromptContext,
           },
-          ...(params.config ? { config: params.config } : {}),
+          config: params.config,
           usedSkills: params.usedSkills ? [...params.usedSkills] : undefined,
           turnAborted: !params.event.success,
         };
@@ -517,6 +517,7 @@ async function runSkillExperienceReviewInner(
       for (const mutatedProposalId of proposalIds) {
         const proposal = await inspectSkillProposal(mutatedProposalId, {
           agentId: foregroundPromptContext.agentId,
+          config: currentConfig,
         });
         if (
           !proposal ||

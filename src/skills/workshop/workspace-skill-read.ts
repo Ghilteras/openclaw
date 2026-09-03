@@ -30,7 +30,7 @@ export type WritableWorkshopSkillSummary = {
 };
 
 export type WorkshopSkillReadOptions = {
-  config?: OpenClawConfig;
+  config: OpenClawConfig;
   agentId?: string;
   env?: NodeJS.ProcessEnv;
 };
@@ -39,11 +39,11 @@ function workshopSkillsDir(options: WorkshopSkillReadOptions): string {
   if (!options.agentId) {
     throw new Error("Skill Workshop requires the active agent id.");
   }
-  return resolveWorkshopSkillsDir(options.config ?? {}, options.agentId, options.env);
+  return resolveWorkshopSkillsDir(options.config, options.agentId, options.env);
 }
 
 export function listWritableWorkshopSkillSummaries(
-  options: WorkshopSkillReadOptions = {},
+  options: WorkshopSkillReadOptions,
 ): WritableWorkshopSkillSummary[] {
   // The inventory is model-visible and reviewer-iterated, so it shares the loader's
   // per-source count, file-size, symlink, and hardlink limits instead of an unbounded read.
@@ -78,7 +78,7 @@ function resolveWritableWorkshopSkillSummary(
 
 export async function readWritableWorkshopSkill(
   skillName: string,
-  options: WorkshopSkillReadOptions = {},
+  options: WorkshopSkillReadOptions,
 ): Promise<{
   skillKey: string;
   skillFile: string;
