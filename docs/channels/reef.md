@@ -60,7 +60,7 @@ On the host Gateway, send this owner command in a channel that supports `/reef`:
 /reef session share @guest agent:main:session-key
 ```
 
-The command returns a mount ID and sends the mount to the guest Gateway. On the guest Gateway, list mounts and submit a prompt:
+The command returns a mount ID and sends the mount to the guest Gateway. Mounts expire after seven days, and each peer may hold at most 32 mounts. On the guest Gateway, list mounts and submit a prompt:
 
 ```text
 /reef session list

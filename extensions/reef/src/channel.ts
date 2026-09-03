@@ -12,6 +12,7 @@ import {
 } from "openclaw/plugin-sdk/core";
 import { createChannelDirectoryAdapter } from "openclaw/plugin-sdk/directory-runtime";
 import { channelReadyPatch } from "openclaw/plugin-sdk/gateway-runtime";
+import type { ReefFederationFrame } from "../protocol/federation.js";
 import { runReefChannelLifecycle } from "./channel-lifecycle.js";
 import {
   ReefChannelConfigSchema,
@@ -22,7 +23,7 @@ import {
   type ReefCoreConfig,
 } from "./config-schema.js";
 import { ReefFederationCoordinator } from "./federation-coordinator.js";
-import { ReefFederationState } from "./federation-state.js";
+import { ReefFederationState, type ReefFederationPromptRequest } from "./federation-state.js";
 import { createConfiguredGuard, ReefMessageFlow } from "./flow.js";
 import { ReefFriendManager } from "./friends.js";
 import { resolveReefInboundDispatchContent } from "./inbound.js";
@@ -53,10 +54,7 @@ import type { ReefAccount, ReefIngressMessage } from "./types.js";
 
 function formatFederationOutcome(
   peer: string,
-  frame: Exclude<
-    import("../protocol/federation.js").ReefFederationFrame,
-    { type: "session.mount.offer" | "session.prompt.propose" }
-  >,
+  frame: Exclude<ReefFederationFrame, { type: "session.mount.offer" | "session.prompt.propose" }>,
 ): string {
   switch (frame.type) {
     case "session.prompt.accepted":
@@ -367,6 +365,43 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
         const friend = trust.get(peer);
         return friend && !friend.safetyNumberChanged ? friend.keyEpoch : undefined;
       });
+      const federationTasks = new Map<string, Promise<void>>();
+      const startFederatedPrompt = (
+        request: ReefFederationPromptRequest,
+        storedOutcome?: Exclude<
+          ReefFederationFrame,
+          { type: "session.mount.offer" | "session.prompt.propose" }
+        >,
+      ) => {
+        const taskKey = `${request.frame.proposalId}:${request.frame.textSha256}`;
+        if (federationTasks.has(taskKey)) {
+          return;
+        }
+        const task = (async () => {
+          const outcome = storedOutcome ?? (await federationCoordinator.handlePrompt(request));
+          await flow.sendFederation(request.peer, outcome);
+          if (!federation.markOutcomeSent(request.frame.proposalId, request.frame.textSha256)) {
+            throw new Error(`Reef proposal ${request.frame.proposalId} lost its durable outcome`);
+          }
+        })();
+        federationTasks.set(taskKey, task);
+        void task
+          .catch(async (error: unknown) => {
+            ctx.log?.error?.(
+              `reef federated prompt ${request.frame.proposalId} failed: ${String(error)}`,
+            );
+            try {
+              await ownerNotice({
+                text: `Reef prompt ${request.frame.proposalId} is pending retry after a local failure.`,
+                peer: request.peer,
+                contextKey: `reef:federation:${request.frame.proposalId}:retry`,
+              });
+            } catch (noticeError) {
+              ctx.log?.error?.(`reef federation retry notice failed: ${String(noticeError)}`);
+            }
+          })
+          .finally(() => federationTasks.delete(taskKey));
+      };
       const flow = new ReefMessageFlow({
         config: ctx.account.config,
         trust,
@@ -385,7 +420,7 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
             if (!friend || friend.safetyNumberChanged) {
               throw new Error(`unapproved Reef sender @${peer}`);
             }
-            federation.createMount({
+            const created = federation.createMount({
               mountId: frame.mountId,
               peer,
               peerKeyEpoch: friend.keyEpoch,
@@ -397,7 +432,9 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
               revoked: false,
             });
             await ownerNotice({
-              text: `Reef session mount ${frame.mountId} from @${peer} is ready.`,
+              text: created
+                ? `Reef session mount ${frame.mountId} from @${peer} is ready.`
+                : `Reef session mount ${frame.mountId} from @${peer} was rejected because its identifier already exists or that peer reached its mount limit.`,
               peer,
               contextKey: `reef:federation:${frame.mountId}`,
             });
@@ -408,14 +445,13 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
             if (!friend || friend.safetyNumberChanged) {
               throw new Error(`unapproved Reef sender @${peer}`);
             }
-            const outcome = await federationCoordinator.handlePrompt({
+            startFederatedPrompt({
               from,
               to,
               peer,
               peerKeyEpoch: friend.keyEpoch,
               frame,
             });
-            await flow.sendFederation(peer, outcome);
             return;
           }
           if (frame.type === "session.grant.revoked") {
@@ -531,6 +567,9 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
           return;
         }
         authority.activate({ flow, friends, reviews, federation, trust });
+        for (const proposal of federation.listUnsentProposals()) {
+          startFederatedPrompt(proposal.request, proposal.outcome);
+        }
         ctx.setStatus({ accountId: "default", running: true, connected: false });
       };
       const inbox = new ReefInboxConnection(

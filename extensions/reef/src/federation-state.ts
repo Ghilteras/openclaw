@@ -1,10 +1,17 @@
 import { createHash } from "node:crypto";
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
+import {
+  REEF_FEDERATION_NAMESPACE,
+  validateReefFederationBody,
+  type ReefFederationFrame,
+} from "../protocol/federation.js";
 
 const REEF_FEDERATION_MOUNTS_NAMESPACE = "federation-mounts";
 const REEF_FEDERATION_PROPOSALS_NAMESPACE = "federation-proposals";
 const REEF_FEDERATION_MOUNTS_MAX_ENTRIES = 1_000;
+const REEF_FEDERATION_MOUNTS_PER_PEER = 32;
+const REEF_FEDERATION_MOUNT_TTL_MS = 7 * 24 * 60 * 60_000;
 const REEF_FEDERATION_PROPOSALS_MAX_ENTRIES = 5_000;
 const REEF_FEDERATION_PROPOSAL_TTL_MS = 30 * 24 * 60 * 60_000;
 
@@ -20,15 +27,32 @@ export type ReefFederationMount = {
   revoked: boolean;
 };
 
+export type ReefFederationPromptRequest = {
+  from: string;
+  to: string;
+  peer: string;
+  peerKeyEpoch: number;
+  frame: Extract<ReefFederationFrame, { type: "session.prompt.propose" }>;
+};
+
 export type ReefFederationProposal = {
   proposalId: string;
   mountId: string;
   digest: string;
   status: "pending" | "accepted" | "denied" | "failed";
+  request: ReefFederationPromptRequest;
+  outcome?: Exclude<
+    ReefFederationFrame,
+    { type: "session.mount.offer" | "session.prompt.propose" }
+  >;
+  outcomeSentAt?: number;
   approvalId?: string;
   runId?: string;
   failureCode?: string;
 };
+
+export type ReefFederationProposalResolution = Pick<ReefFederationProposal, "status"> &
+  Partial<Pick<ReefFederationProposal, "approvalId" | "runId" | "failureCode" | "outcome">>;
 
 /** Durable Reef-owned state for session mounts, standing grants, and proposal replay outcomes. */
 export class ReefFederationState {
@@ -40,6 +64,7 @@ export class ReefFederationState {
       namespace: REEF_FEDERATION_MOUNTS_NAMESPACE,
       maxEntries: REEF_FEDERATION_MOUNTS_MAX_ENTRIES,
       overflowPolicy: "reject-new",
+      defaultTtlMs: REEF_FEDERATION_MOUNT_TTL_MS,
     });
     this.#proposals = runtime.state.openSyncKeyedStore<ReefFederationProposal>({
       namespace: REEF_FEDERATION_PROPOSALS_NAMESPACE,
@@ -52,6 +77,12 @@ export class ReefFederationState {
   /** Persist a host-issued mount without replacing an existing authority binding. */
   createMount(mount: ReefFederationMount): boolean {
     validateMount(mount);
+    const peerMounts = this.#mounts
+      .entries()
+      .filter((entry) => validateMount(entry.value).peer === mount.peer);
+    if (peerMounts.length >= REEF_FEDERATION_MOUNTS_PER_PEER) {
+      return false;
+    }
     return this.#mounts.registerIfAbsent(mountKey(mount.mountId), structuredClone(mount));
   }
 
@@ -133,11 +164,19 @@ export class ReefFederationState {
     return { result, proposal: structuredClone(current) };
   }
 
+  /** List durable prompt work whose terminal outcome has not reached the peer. */
+  listUnsentProposals(): ReefFederationProposal[] {
+    return this.#proposals
+      .entries()
+      .map((entry) => validateProposal(entry.value))
+      .filter((proposal) => proposal.outcomeSentAt === undefined);
+  }
+
   /** Record a proposal outcome only while its exact digest remains authoritative. */
   resolveProposal(
     proposalId: string,
     digest: string,
-    outcome: Omit<ReefFederationProposal, "proposalId" | "mountId" | "digest">,
+    outcome: ReefFederationProposalResolution,
   ): ReefFederationProposal | undefined {
     let resolved: ReefFederationProposal | undefined;
     const update = this.#proposals.update;
@@ -152,6 +191,23 @@ export class ReefFederationState {
       return resolved;
     });
     return resolved;
+  }
+
+  /** Mark one exact terminal outcome as handed to the Reef transport. */
+  markOutcomeSent(proposalId: string, digest: string): boolean {
+    let changed = false;
+    const update = this.#proposals.update;
+    if (!update) {
+      throw new Error("Reef federation proposals require atomic plugin-state updates");
+    }
+    update(proposalKey(proposalId), (existing) => {
+      if (!existing || existing.digest !== digest || !existing.outcome) {
+        return existing;
+      }
+      changed = true;
+      return validateProposal({ ...existing, outcomeSentAt: Date.now() });
+    });
+    return changed;
   }
 
   #updateMount(
@@ -217,9 +273,26 @@ function validateProposal(value: ReefFederationProposal): ReefFederationProposal
     typeof value.proposalId !== "string" ||
     typeof value.mountId !== "string" ||
     !/^[a-f0-9]{64}$/.test(value.digest) ||
-    !["pending", "accepted", "denied", "failed"].includes(value.status)
+    !["pending", "accepted", "denied", "failed"].includes(value.status) ||
+    !value.request ||
+    typeof value.request.from !== "string" ||
+    typeof value.request.to !== "string" ||
+    typeof value.request.peer !== "string" ||
+    !Number.isSafeInteger(value.request.peerKeyEpoch) ||
+    value.request.peerKeyEpoch < 1 ||
+    (value.outcomeSentAt !== undefined && !Number.isFinite(value.outcomeSentAt))
   ) {
     throw new Error("invalid Reef federation proposal");
+  }
+  validateReefFederationBody({
+    namespace: REEF_FEDERATION_NAMESPACE,
+    frame: value.request.frame,
+  });
+  if (value.outcome) {
+    validateReefFederationBody({ namespace: REEF_FEDERATION_NAMESPACE, frame: value.outcome });
+  }
+  if ((value.status === "pending") === Boolean(value.outcome)) {
+    throw new Error("invalid Reef federation proposal outcome");
   }
   return structuredClone(value);
 }

@@ -6,7 +6,11 @@ import {
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ReefFederationState, type ReefFederationMount } from "./federation-state.js";
+import {
+  ReefFederationState,
+  type ReefFederationMount,
+  type ReefFederationProposal,
+} from "./federation-state.js";
 
 function createRuntime(stateDir: string) {
   const runtime = createPluginRuntimeMock();
@@ -29,6 +33,32 @@ const mount: ReefFederationMount = {
   allowAlways: false,
   revoked: false,
 };
+
+function pendingProposal(overrides: Partial<ReefFederationProposal> = {}): ReefFederationProposal {
+  const digest = "a".repeat(64);
+  return {
+    proposalId: "proposal-1",
+    mountId: mount.mountId,
+    digest,
+    status: "pending",
+    request: {
+      from: "guest#1",
+      to: "host#1",
+      peer: "guest",
+      peerKeyEpoch: 1,
+      frame: {
+        type: "session.prompt.propose",
+        mountId: mount.mountId,
+        proposalId: "proposal-1",
+        sessionId: mount.sessionId,
+        grantGeneration: 0,
+        text: "Check the build",
+        textSha256: digest,
+      },
+    },
+    ...overrides,
+  };
+}
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -71,11 +101,13 @@ describe("Reef federation state", () => {
 
   it("deduplicates an exact proposal and rejects ID rebinding", () => {
     const state = new ReefFederationState(createRuntime(stateDir));
-    const proposal = {
-      proposalId: "proposal-1",
+    const proposal = pendingProposal();
+    const outcome = {
+      type: "session.prompt.accepted" as const,
       mountId: mount.mountId,
-      digest: "a".repeat(64),
-      status: "pending" as const,
+      proposalId: proposal.proposalId,
+      sessionId: mount.sessionId,
+      runId: "run-1",
     };
 
     expect(state.claimProposal(proposal).result).toBe("new");
@@ -85,7 +117,24 @@ describe("Reef federation state", () => {
       state.resolveProposal(proposal.proposalId, proposal.digest, {
         status: "accepted",
         runId: "run-1",
+        outcome,
       }),
     ).toMatchObject({ status: "accepted", runId: "run-1" });
+    expect(state.listUnsentProposals()).toEqual([
+      expect.objectContaining({ proposalId: proposal.proposalId, outcome }),
+    ]);
+    expect(state.markOutcomeSent(proposal.proposalId, proposal.digest)).toBe(true);
+    expect(state.listUnsentProposals()).toEqual([]);
+  });
+
+  it("limits live mounts per peer", () => {
+    const state = new ReefFederationState(createRuntime(stateDir));
+    for (let index = 0; index < 32; index += 1) {
+      expect(
+        state.createMount({ ...mount, mountId: `mount-${index}`, sessionId: `session-${index}` }),
+      ).toBe(true);
+    }
+    expect(state.createMount({ ...mount, mountId: "mount-overflow" })).toBe(false);
+    expect(state.createMount({ ...mount, mountId: "other-peer", peer: "other" })).toBe(true);
   });
 });

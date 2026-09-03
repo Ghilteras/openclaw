@@ -4,7 +4,11 @@ import {
   type ReefFederationFrame,
 } from "../protocol/federation.js";
 import { ReefFederationCoordinator } from "./federation-coordinator.js";
-import type { ReefFederationMount, ReefFederationProposal } from "./federation-state.js";
+import type {
+  ReefFederationMount,
+  ReefFederationProposal,
+  ReefFederationProposalResolution,
+} from "./federation-state.js";
 
 const from = "guest#1";
 const to = "host#1";
@@ -74,11 +78,7 @@ function fixture(fixtureOptions?: { allowAlways?: boolean; role?: ReefFederation
       };
     }),
     resolveProposal: vi.fn(
-      (
-        proposalId: string,
-        digest: string,
-        outcome: Omit<ReefFederationProposal, "proposalId" | "mountId" | "digest">,
-      ) => {
+      (proposalId: string, digest: string, outcome: ReefFederationProposalResolution) => {
         const existing = proposals.get(proposalId);
         if (!existing || existing.digest !== digest) {
           return undefined;

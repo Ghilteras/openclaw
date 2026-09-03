@@ -82,6 +82,20 @@ describe("Reef session commands", () => {
     );
   });
 
+  it("reports mount quota rejection without sending an offer", async () => {
+    mocks.federation.createMount.mockReturnValueOnce(false);
+
+    await expect(
+      handleReefCommand({
+        args: "session share @guest agent:main:shared",
+        senderIsOwner: true,
+      }),
+    ).resolves.toEqual({
+      text: "Could not create a Reef session mount for @guest; retry after older mounts expire.",
+    });
+    expect(mocks.flow.sendFederation).not.toHaveBeenCalled();
+  });
+
   it("submits and revokes an existing mount", async () => {
     const mount = {
       mountId: "mount-1",

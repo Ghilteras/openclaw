@@ -80,7 +80,11 @@ export async function handleReefCommand({
       allowAlways: false,
       revoked: false,
     };
-    active.federation.createMount(mount);
+    if (!active.federation.createMount(mount)) {
+      return {
+        text: `Could not create a Reef session mount for @${peer}; retry after older mounts expire.`,
+      };
+    }
     await active.flow.sendFederation(peer, {
       type: "session.mount.offer",
       mountId,

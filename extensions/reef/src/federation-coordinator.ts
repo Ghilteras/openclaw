@@ -3,7 +3,11 @@ import {
   createReefFederatedPromptDigest,
   type ReefFederationFrame,
 } from "../protocol/federation.js";
-import type { ReefFederationMount, ReefFederationProposal } from "./federation-state.js";
+import type {
+  ReefFederationMount,
+  ReefFederationProposal,
+  ReefFederationProposalResolution,
+} from "./federation-state.js";
 
 const REEF_FEDERATION_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 
@@ -17,7 +21,7 @@ type FederationState = {
   resolveProposal(
     proposalId: string,
     digest: string,
-    outcome: Omit<ReefFederationProposal, "proposalId" | "mountId" | "digest">,
+    outcome: ReefFederationProposalResolution,
   ): ReefFederationProposal | undefined;
 };
 
@@ -69,6 +73,7 @@ export class ReefFederationCoordinator {
       mountId: frame.mountId,
       digest,
       status: "pending",
+      request: structuredClone(params),
     });
     if (claim.result === "mismatch") {
       return this.failed(
@@ -77,7 +82,7 @@ export class ReefFederationCoordinator {
         "The proposal ID is already bound to other content.",
       );
     }
-    const prior = priorOutcome(claim.proposal, frame);
+    const prior = priorOutcome(claim.proposal);
     if (prior) {
       return prior;
     }
@@ -87,11 +92,13 @@ export class ReefFederationCoordinator {
       const approval = await this.requestApproval(params.peer, mount!, frame);
       approvalId = approval.id;
       if (approval.decision === "deny") {
+        const denied = this.denied(frame, "host-denied");
         this.state.resolveProposal(frame.proposalId, digest, {
           status: "denied",
+          outcome: denied,
           ...(approvalId ? { approvalId } : {}),
         });
-        return this.denied(frame, "host-denied");
+        return denied;
       }
       if (approval.decision !== "allow-once" && approval.decision !== "allow-always") {
         return this.recordFailure(
@@ -124,11 +131,13 @@ export class ReefFederationCoordinator {
       mount: currentMount,
     });
     if (staleAuthority) {
+      const denied = this.denied(frame, staleAuthority);
       this.state.resolveProposal(frame.proposalId, digest, {
         status: "denied",
+        outcome: denied,
         ...(approvalId ? { approvalId } : {}),
       });
-      return this.denied(frame, staleAuthority);
+      return denied;
     }
 
     try {
@@ -159,6 +168,7 @@ export class ReefFederationCoordinator {
       };
       this.state.resolveProposal(frame.proposalId, digest, {
         status: "accepted",
+        outcome: accepted,
         ...(approvalId ? { approvalId } : {}),
         runId: accepted.runId,
       });
@@ -225,12 +235,14 @@ export class ReefFederationCoordinator {
     message: string,
     approvalId?: string,
   ): Extract<ReefFederationFrame, { type: "session.prompt.failed" }> {
+    const failed = this.failed(frame, code, message);
     this.state.resolveProposal(frame.proposalId, digest, {
       status: "failed",
+      outcome: failed,
       failureCode: code,
       ...(approvalId ? { approvalId } : {}),
     });
-    return this.failed(frame, code, message);
+    return failed;
   }
 
   private denied(
@@ -264,35 +276,8 @@ export class ReefFederationCoordinator {
 
 function priorOutcome(
   proposal: ReefFederationProposal,
-  frame: Extract<ReefFederationFrame, { type: "session.prompt.propose" }>,
-): Exclude<ReefFederationFrame, { type: "session.prompt.propose" }> | undefined {
-  if (proposal.status === "accepted" && proposal.runId) {
-    return {
-      type: "session.prompt.accepted",
-      mountId: frame.mountId,
-      proposalId: frame.proposalId,
-      sessionId: frame.sessionId,
-      runId: proposal.runId,
-    };
-  }
-  if (proposal.status === "denied") {
-    return {
-      type: "session.prompt.denied",
-      mountId: frame.mountId,
-      proposalId: frame.proposalId,
-      sessionId: frame.sessionId,
-      reason: "host-denied",
-    };
-  }
-  if (proposal.status === "failed") {
-    return {
-      type: "session.prompt.failed",
-      mountId: frame.mountId,
-      proposalId: frame.proposalId,
-      sessionId: frame.sessionId,
-      code: proposal.failureCode || "dispatch-failed",
-      message: "The prior prompt attempt failed.",
-    };
-  }
-  return undefined;
+):
+  | Exclude<ReefFederationFrame, { type: "session.mount.offer" | "session.prompt.propose" }>
+  | undefined {
+  return proposal.outcome ? structuredClone(proposal.outcome) : undefined;
 }
