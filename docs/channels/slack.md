@@ -1305,6 +1305,16 @@ Results are sorted by shortcode name. `limit` defaults to and cannot exceed 100:
 
 Use an entry's `identifier` directly as the `react` emoji; surrounding colons are optional. `channels.slack.actions.emojiList` controls discovery separately from the `reactions` gate, and the app needs the `emoji:read` scope.
 
+### Slack canvases
+
+The native Slack `message` tool does not currently create or edit Slack canvases.
+Its `edit` action updates Slack messages, not canvas content. Adding canvas OAuth
+scopes to the Slack app does not add canvas actions to this tool; those actions
+also need implementation in the Slack plugin.
+
+Slack canvases are separate from OpenClaw's [Canvas plugin](/plugins/reference/canvas),
+which presents hosted widget documents on paired macOS panels.
+
 ## Access control and routing
 
 <Tabs>
