@@ -132,9 +132,21 @@ suite.define(() => {
     }
   });
 
-  it("reloads once for a build rejection, then keeps visible recovery guidance", async () => {
-    const context = await suite.browser.newContext({ viewport: { height: 900, width: 1280 } });
+  it("rearms one bounded build recovery after the visible refresh action", async () => {
+    const context = await suite.browser.newContext({
+      serviceWorkers: "block",
+      viewport: { height: 844, width: 390 },
+    });
     const page = await context.newPage();
+    const documentRequests: boolean[] = [];
+    const appOrigin = new URL(suite.server.baseUrl).origin;
+    await page.route(`${appOrigin}/**`, async (route) => {
+      const request = route.request();
+      if (request.resourceType() === "document") {
+        documentRequests.push(new URL(request.url()).searchParams.has("openclaw_mount_recovery"));
+      }
+      await route.continue();
+    });
     await page.addInitScript(() => {
       const key = "openclaw.control-ui-e2e.build-rejection-loads";
       const count = Number.parseInt(sessionStorage.getItem(key) ?? "0", 10);
@@ -173,11 +185,28 @@ suite.define(() => {
         fullPage: true,
       });
       expect(await gateway.getRequests("terminal.open")).toHaveLength(0);
+
+      await page.getByRole("button", { name: /Server updated/u }).click();
+      await expect.poll(() => documentRequests.length).toBe(3);
+      expect(documentRequests).toEqual([false, true, true]);
+
+      await gateway.waitForRequest("connect");
+      await gateway.rejectDeferred("connect", mismatch);
+      await expect.poll(() => documentRequests.length).toBe(4);
+      await gateway.waitForRequest("connect");
+      await gateway.resolveDeferred("connect");
+
+      await page.locator("openclaw-app-shell").waitFor();
+      expect(documentRequests).toEqual([false, true, true, true]);
       expect(
         await page.evaluate(() =>
           sessionStorage.getItem("openclaw.control-ui-e2e.build-rejection-loads"),
         ),
-      ).toBe("2");
+      ).toBe("4");
+      await page.screenshot({
+        path: path.join(RECOVERY_ARTIFACT_DIR, "02-recovered.png"),
+        fullPage: true,
+      });
     } finally {
       await closeContext(context);
     }

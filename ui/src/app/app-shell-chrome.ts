@@ -522,7 +522,9 @@ export class ShellChromeOwner {
   readonly openPalette = (): void =>
     this.handleCommandPaletteOpen(new CustomEvent(COMMAND_PALETTE_OPEN_EVENT), this.openPalette);
 
-  readonly refreshControlUi = (): void => globalThis.location.reload();
+  readonly refreshControlUi = (): void => {
+    void retryStaleChunkReloadWhenReachable({ timeoutMs: 0 });
+  };
   readonly handleShellNavDrawerToggle = (event: Event): void => {
     this.toggleNavigationSurface(shellNavDrawerTriggerFromEvent(event));
   };

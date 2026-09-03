@@ -235,6 +235,8 @@ export async function retryStaleChunkReloadWhenReachable(
       if (deps.canReload?.() === false) {
         return false;
       }
+      const storage = deps.storage === undefined ? getSafeSessionStorage() : deps.storage;
+      persistGuardBuildId(storage, CONTROL_UI_BUILD_INFO.buildId);
       (deps.reload ?? reloadControlUiDocument)();
       return true;
     }

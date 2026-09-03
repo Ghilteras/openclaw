@@ -554,7 +554,8 @@ export function renderApplicationShell(host: ShellViewHost) {
           ? "content--custodian"
           : ""} ${activeRoute === "workboard" ? "content--workboard" : ""}"
         .tabIndex=${-1}
-        ?inert=${pageActionsBlocked || (mobileNavLayout && navDrawerOpen)}
+        ?inert=${(pageActionsBlocked && gatewaySnapshot.phase !== "reload-required") ||
+        (mobileNavLayout && navDrawerOpen)}
       >
         ${pageActionsBlocked && gatewaySnapshot.phase !== "reload-required"
           ? html`<div class="connection-action-block" role="status" aria-live="polite">
@@ -574,7 +575,7 @@ export function renderApplicationShell(host: ShellViewHost) {
           navigationSurfaceHidden,
           mobileNavLayout,
           onboarding,
-          compact: mergedChatChrome,
+          compact: mergedChatChrome && !overlaySnapshot.controlUiRefreshRequired,
           updateAvailable: overlaySnapshot.updateAvailable,
           updateSchedule: overlaySnapshot.updateSchedule,
           heldUpdateCampaignId: overlaySnapshot.heldUpdateCampaignId,

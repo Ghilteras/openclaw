@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CONTROL_UI_BUILD_INFO } from "../build-info.ts";
 import { i18n } from "../i18n/index.ts";
 import {
   installMissingStylesheetRecovery,
@@ -315,10 +316,14 @@ describe("scheduleStaleChunkReload", () => {
 });
 
 describe("retryStaleChunkReloadWhenReachable single-shot", () => {
-  it("reloads without the rate guard when the gateway is reachable", async () => {
+  it("rearms bounded automatic recovery when the gateway is reachable", async () => {
     const reload = vi.fn();
+    const storage = memoryStorage({ [GUARD_KEY]: "replacement-build" });
     stubDocumentFetch(new Response(null, { status: 200 }));
-    await expect(retryStaleChunkReloadWhenReachable({ reload, timeoutMs: 0 })).resolves.toBe(true);
+    await expect(
+      retryStaleChunkReloadWhenReachable({ reload, storage, timeoutMs: 0 }),
+    ).resolves.toBe(true);
+    expect(storage.getItem(GUARD_KEY)).toBe(CONTROL_UI_BUILD_INFO.buildId);
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
