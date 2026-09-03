@@ -24,11 +24,17 @@ docker_e2e_build_or_reuse "$IMAGE_NAME" agent-bundle-mcp-tools
 OPENCLAW_TEST_STATE_SCRIPT_B64="$(docker_e2e_test_state_shell_b64 agent-bundle-mcp-tools empty)"
 CLIENT_PATH="test/e2e/qa-lab/runtime/agent-bundle-mcp-tools-docker-client.ts"
 CLIENT_MOUNT_ARGS=()
+CLIENT_PRELUDE=""
 if [ "$OPENCLAW_FROZEN_TARGET_AGENT_BUNDLE_MCP_MODE" = "legacy" ]; then
-  CLIENT_PATH="scripts/e2e/agent-bundle-mcp-tools-docker-client.ts"
+  # The selected release's client imports sibling E2E helpers and ../../dist.
+  # Mount it outside the trusted read-only harness tree, while preserving that
+  # source layout and linking those package-owned dependencies.
+  LEGACY_CLIENT_ROOT="/tmp/openclaw-frozen-agent-bundle-mcp-tools"
+  CLIENT_PATH="$LEGACY_CLIENT_ROOT/scripts/e2e/agent-bundle-mcp-tools-docker-client.ts"
   CLIENT_MOUNT_ARGS=(
-    -v "$SOURCE_ROOT/scripts/e2e/agent-bundle-mcp-tools-docker-client.ts:/app/$CLIENT_PATH:ro"
+    -v "$SOURCE_ROOT/scripts/e2e:$LEGACY_CLIENT_ROOT/scripts/e2e:ro"
   )
+  CLIENT_PRELUDE="ln -s /app/dist \"$LEGACY_CLIENT_ROOT/dist\"; ln -s /app/node_modules \"$LEGACY_CLIENT_ROOT/node_modules\";"
 fi
 
 echo "Running in-container OpenClaw bundle MCP tool availability smoke..."
@@ -42,6 +48,7 @@ docker_e2e_run_with_harness \
   bash -lc "set -euo pipefail
     source scripts/lib/openclaw-e2e-instance.sh
     openclaw_e2e_eval_test_state_from_b64 \"\${OPENCLAW_TEST_STATE_SCRIPT_B64:?missing OPENCLAW_TEST_STATE_SCRIPT_B64}\"
+    $CLIENT_PRELUDE
     tsx $CLIENT_PATH
   " >"$RUN_LOG" 2>&1
 status=${PIPESTATUS[0]}

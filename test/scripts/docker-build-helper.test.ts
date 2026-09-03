@@ -6233,6 +6233,18 @@ source "$ROOT_DIR/scripts/lib/docker-e2e-logs.sh"
     expect(pluginBinding).not.toContain('readFileSync(logPath, "utf8")');
   });
 
+  it("runs the frozen bundle-MCP client from a writable legacy source root", () => {
+    const runner = readFileSync(AGENT_BUNDLE_MCP_TOOLS_DOCKER_E2E_PATH, "utf8");
+
+    expect(runner).toContain('LEGACY_CLIENT_ROOT="/tmp/openclaw-frozen-agent-bundle-mcp-tools"');
+    expect(runner).toContain('-v "$SOURCE_ROOT/scripts/e2e:$LEGACY_CLIENT_ROOT/scripts/e2e:ro"');
+    expect(runner).toContain("ln -s /app/dist");
+    expect(runner).toContain("ln -s /app/node_modules");
+    expect(runner).not.toContain(
+      '-v "$SOURCE_ROOT/scripts/e2e/agent-bundle-mcp-tools-docker-client.ts:/app/$CLIENT_PATH:ro"',
+    );
+  });
+
   it("keeps Open WebUI Docker E2E resource-guarded", () => {
     const runner = readFileSync(OPENWEBUI_DOCKER_E2E_PATH, "utf8");
     expectTextToIncludeAll(runner, [
