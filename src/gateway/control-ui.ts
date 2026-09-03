@@ -264,6 +264,11 @@ type AssistantMediaAvailability =
     } & MediaProbeResult)
   | { available: false; reason: string; code: string };
 
+type AssistantMediaCapability = AssistantMediaAvailability & {
+  mediaTicket?: string;
+  mediaTicketExpiresAt?: string;
+};
+
 type AssistantMediaTicketPayload = {
   scope: typeof CONTROL_UI_ASSISTANT_MEDIA_TICKET_SCOPE;
   source: string;
@@ -458,7 +463,7 @@ async function resolveAssistantMediaCapability(
   source: string,
   localRoots: readonly string[],
   agentId?: string,
-): Promise<AssistantMediaGetResult> {
+): Promise<AssistantMediaCapability> {
   const availability = await resolveAssistantMediaAvailability(source, localRoots);
   if (!availability.available) {
     return availability;
@@ -485,14 +490,21 @@ export async function resolveControlUiAssistantMedia(
     getAgentScopedMediaLocalRoots(config, agentId),
     agentId,
   );
-  if (capability.available && !capability.mediaTicket) {
+  if (!capability.available) {
+    return capability;
+  }
+  if (!capability.mediaTicket || !capability.mediaTicketExpiresAt) {
     return {
       available: false,
       code: "attachment-unavailable",
       reason: "Attachment unavailable",
     };
   }
-  return capability;
+  return {
+    ...capability,
+    mediaTicket: capability.mediaTicket,
+    mediaTicketExpiresAt: capability.mediaTicketExpiresAt,
+  };
 }
 
 export async function handleControlUiAssistantMediaRequest(
