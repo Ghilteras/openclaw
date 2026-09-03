@@ -1,4 +1,4 @@
-// Compile both runtime roots before the retention child's bounded heap measurement.
+// Compile retention runtime roots before the children's bounded heap measurements.
 const currentModuleUrl = import.meta.url;
 
 export const sessionTitleRetentionEntrypoints = {
@@ -11,5 +11,10 @@ export const sessionTitleRetentionEntrypoints = {
     currentModuleUrl,
     sourceWorkerName: "session-utils-core",
     distWorkerPath: "gateway/session-utils-core.js",
+  },
+  childCache: {
+    currentModuleUrl,
+    sourceWorkerName: "session-utils.child-cache-retention.test-support",
+    distWorkerPath: "gateway/session-utils.child-cache-retention.test-support.js",
   },
 } as const;

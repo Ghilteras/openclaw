@@ -1,17 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { runNodeScript } from "../../test/helpers/run-node-script.js";
+import { resolveRuntimeWorkerArgv, resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";
+import { sessionTitleRetentionEntrypoints } from "./session-title-retention.test-support.js";
 
 it("keeps child links without retaining released session metadata", async ({ signal }) => {
+  const childUrl = resolveRuntimeWorkerUrl(sessionTitleRetentionEntrypoints.childCache);
   const result = await runNodeScript(
-    [
-      "--expose-gc",
-      "--import",
-      "tsx",
-      fileURLToPath(
-        new URL("./session-utils.child-cache-retention.test-support.ts", import.meta.url),
-      ),
-    ],
+    ["--expose-gc", ...resolveRuntimeWorkerArgv(childUrl)],
     { ...process.env, NODE_OPTIONS: "", TSX_DISABLE_CACHE: "1" },
     15_000,
     {
