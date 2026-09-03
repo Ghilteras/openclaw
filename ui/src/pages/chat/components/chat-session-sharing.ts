@@ -172,7 +172,7 @@ export function renderChatSessionSharing(props: ChatSessionSharingProps, inline 
                 ? renderSessionOwnerChip(owner, "header", "owned")
                 : icons.bot}
             </span>
-            <span class="chat-pane__sharing-member-label">${owner.label ?? owner.id}</span>
+            <span class="session-menu__text">${owner.label ?? owner.id}</span>
           </div>
         `
       : nothing}
