@@ -81,6 +81,9 @@ async function bindWorkerGitHubCheckout(
       );
       return;
     }
+    if (signal?.aborted) {
+      return;
+    }
     await requireGit(["reset", "--mixed", "FETCH_HEAD"]);
     const deleted = (await requireGit(["ls-files", "--deleted", "-z"])).split("\0").filter(Boolean);
     if (deleted.length > 0) {

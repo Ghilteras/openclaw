@@ -169,6 +169,35 @@ describe("prepareWorkerGitHubEnvironment", () => {
     await expect(git(cwd, "rev-parse", "--verify", "FETCH_HEAD")).rejects.toThrow();
   });
 
+  it("rejects the fetch when the turn is fenced while it is being spawned", async () => {
+    const remoteHead = await publishEarlierTurn();
+    const controller = new AbortController();
+    const runCommand = exec.runCommandWithTimeout;
+    let fetchAttempts = 0;
+    vi.spyOn(exec, "runCommandWithTimeout").mockImplementation(async (argv, options) => {
+      if (argv.includes("fetch")) {
+        fetchAttempts += 1;
+        // The claim closes after the pre-check and before the process starts.
+        controller.abort(new Error("worker fenced: credential-replaced"));
+      }
+      return await runCommand(argv, options);
+    });
+
+    await prepareWorkerGitHubEnvironment({
+      binding,
+      stateDir: path.join(root, "state"),
+      runId: "turn",
+      cwd,
+      signal: controller.signal,
+    });
+
+    expect(fetchAttempts).toBe(1);
+    expect((await git(cwd, "rev-parse", "HEAD")).trim()).toBe(initialHead);
+    expect(remoteHead).not.toBe(initialHead);
+    await expect(git(cwd, "rev-parse", "--verify", "FETCH_HEAD")).rejects.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("GitHub checkout binding failed"));
+  });
+
   it("disables the binding before any token use when a Windows profile is not owner-only", async () => {
     const remoteHead = await publishEarlierTurn();
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
