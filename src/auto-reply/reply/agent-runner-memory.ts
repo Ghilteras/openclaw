@@ -751,34 +751,43 @@ export async function runSessionCompactionIfNeeded(params: {
     }),
     modelId: params.followupRun.run.model ?? params.defaultModel,
   });
-  const memoryFlushPlan = resolveMemoryFlushPlan({ cfg: params.cfg, contextWindowTokens });
-  const reserveTokensFloor =
-    memoryFlushPlan?.reserveTokensFloor ??
-    resolveEffectiveCompactionReserveTokens({
-      contextTokenBudget: contextWindowTokens,
-      reserveTokens: 20_000,
-    });
   const freshPersistedTokens = resolveFreshSessionTotalTokens(entry);
-  const promptTokenEstimate = estimatePromptTokensForMemoryFlush(
-    params.promptForEstimate ?? params.followupRun.prompt,
-  );
-  const responsesServerCompactionThreshold = resolveResponsesServerCompactionThreshold({
-    cfg: params.cfg,
-    provider: params.followupRun.run.provider,
-    modelId: params.followupRun.run.model ?? params.defaultModel,
-  });
-  const threshold = resolveCompactionThreshold({
-    contextWindowTokens,
-    reserveTokensFloor,
-    minimumThresholdTokens: responsesServerCompactionThreshold,
-  });
-  const freshNeedsOutputRead =
-    typeof freshPersistedTokens === "number" &&
-    typeof promptTokenEstimate === "number" &&
-    threshold > 0 &&
-    freshPersistedTokens + promptTokenEstimate >= threshold - TRANSCRIPT_OUTPUT_READ_BUFFER_TOKENS;
   const maxActiveTranscriptBytes = resolveMaxActiveTranscriptBytes(params.cfg);
   const shouldCheckActiveTranscriptBytes = typeof maxActiveTranscriptBytes === "number";
+  let promptTokenEstimate: number | undefined;
+  let responsesServerCompactionThreshold: number | undefined;
+  let threshold = 0;
+  let freshNeedsOutputRead = false;
+  if (!params.isHeartbeat) {
+    // Heartbeats enforce only the transcript byte fuse. Keep optional memory-plugin
+    // planning out of that path so a resolver failure cannot block the heartbeat.
+    const memoryFlushPlan = resolveMemoryFlushPlan({ cfg: params.cfg, contextWindowTokens });
+    const reserveTokensFloor =
+      memoryFlushPlan?.reserveTokensFloor ??
+      resolveEffectiveCompactionReserveTokens({
+        contextTokenBudget: contextWindowTokens,
+        reserveTokens: 20_000,
+      });
+    promptTokenEstimate = estimatePromptTokensForMemoryFlush(
+      params.promptForEstimate ?? params.followupRun.prompt,
+    );
+    responsesServerCompactionThreshold = resolveResponsesServerCompactionThreshold({
+      cfg: params.cfg,
+      provider: params.followupRun.run.provider,
+      modelId: params.followupRun.run.model ?? params.defaultModel,
+    });
+    threshold = resolveCompactionThreshold({
+      contextWindowTokens,
+      reserveTokensFloor,
+      minimumThresholdTokens: responsesServerCompactionThreshold,
+    });
+    freshNeedsOutputRead =
+      typeof freshPersistedTokens === "number" &&
+      typeof promptTokenEstimate === "number" &&
+      threshold > 0 &&
+      freshPersistedTokens + promptTokenEstimate >=
+        threshold - TRANSCRIPT_OUTPUT_READ_BUFFER_TOKENS;
+  }
   const transcriptUsageTokens =
     params.isHeartbeat ||
     isCodexRuntime ||
