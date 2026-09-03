@@ -21,6 +21,10 @@ import { generateSecureUuid } from "./secure-random.js";
 // delivery acknowledges them or recovery exhausts retry policy.
 export const SESSION_DELIVERY_QUEUE_NAME = "session";
 
+export function sessionDeliveryStateDirArgs(stateDir?: string): [] | [string] {
+  return stateDir === undefined ? [] : [stateDir];
+}
+
 type SessionDeliveryOwnerReference = {
   kind: "subagent_completion";
   runId: string;

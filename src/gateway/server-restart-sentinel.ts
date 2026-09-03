@@ -34,6 +34,7 @@ import {
   enqueueSessionDelivery,
   markSessionDeliveryAttemptStarted,
   markSessionDeliverySettlement,
+  sessionDeliveryStateDirArgs,
   SessionDeliveryDeadLetteredError,
   SessionDeliverySafeRetryError,
   type QueuedSessionDelivery,
@@ -85,10 +86,6 @@ export const settleQueuedSessionDelivery: SettleSessionDeliveryFn = async (entry
 };
 
 type QueuedAgentTurnSessionDelivery = Extract<QueuedSessionDelivery, { kind: "agentTurn" }>;
-
-function sessionDeliveryStateDirArgs(stateDir?: string): [] | [string] {
-  return stateDir === undefined ? [] : [stateDir];
-}
 
 function cloneRestartSentinelPayload(
   payload: RestartSentinelPayload | null,

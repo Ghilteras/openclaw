@@ -29,6 +29,7 @@ import {
   SessionDeliveryDeferredError,
   SessionDeliveryRetryChargedError,
   SessionDeliverySafeRetryError,
+  sessionDeliveryStateDirArgs,
   type QueuedSessionDelivery,
   type SessionDeliveryRoute,
 } from "../infra/session-delivery-queue-storage.js";
@@ -48,10 +49,6 @@ const log = createSubsystemLogger("gateway/restart-sentinel");
 const AGENT_DELIVERY_OWNERSHIP_RETRY_MS = 1_000;
 
 type QueuedAgentTurnSessionDelivery = Extract<QueuedSessionDelivery, { kind: "agentTurn" }>;
-
-function sessionDeliveryStateDirArgs(stateDir?: string): [] | [string] {
-  return stateDir === undefined ? [] : [stateDir];
-}
 
 async function deadLetterSessionDelivery(
   entry: QueuedAgentTurnSessionDelivery,
