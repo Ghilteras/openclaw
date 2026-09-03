@@ -163,6 +163,7 @@ export async function runSkillCollectionReviewForAgent(params: {
             beforeFiles.size === afterFiles.size &&
             [...beforeFiles].every(
               ([relativePath, file]) =>
+                afterFiles.get(relativePath)?.kind === file.kind &&
                 afterFiles.get(relativePath)?.contentHash === file.contentHash,
             );
           if (unchanged) {

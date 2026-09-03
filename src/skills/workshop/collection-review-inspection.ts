@@ -14,6 +14,7 @@ import {
 const MAX_WORKSHOP_REVIEW_ENTRIES = 10_000;
 
 export type WorkshopReviewSkillFile = {
+  kind: "file" | "symlink";
   relativeDir: string;
   relativePath: string;
   filePath: string;
@@ -33,7 +34,6 @@ export async function inspectWorkshopReviewTree(params: {
 }> {
   try {
     const afterFiles = await snapshotWorkshopSkillFiles(params.skillsRoot);
-    const afterLoadedDirs = await params.resolveAfterLoadedDirs();
     const beforeFileDirs = new Set(
       [...params.beforeFiles.values()].map((file) => file.relativeDir),
     );
@@ -43,8 +43,9 @@ export async function inspectWorkshopReviewTree(params: {
     const changedPaths = new Set(
       [...new Set([...params.beforeFiles.keys(), ...afterFiles.keys()])].filter(
         (relativePath) =>
+          params.beforeFiles.get(relativePath)?.kind !== afterFiles.get(relativePath)?.kind ||
           params.beforeFiles.get(relativePath)?.contentHash !==
-          afterFiles.get(relativePath)?.contentHash,
+            afterFiles.get(relativePath)?.contentHash,
       ),
     );
     const changedDirs = new Set(
@@ -59,6 +60,12 @@ export async function inspectWorkshopReviewTree(params: {
     const skillsRootAccess = await root(params.skillsRoot);
     for (const file of changedFiles) {
       params.assertCurrent();
+      if (file.kind === "symlink") {
+        if (!criticalFilesByDir.has(file.relativeDir)) {
+          criticalFilesByDir.set(file.relativeDir, file.relativePath);
+        }
+        continue;
+      }
       const findings = await scanWorkshopReviewFile(file, skillsRootAccess);
       if (findings.some((finding) => finding.severity === "critical")) {
         if (!criticalFilesByDir.has(file.relativeDir)) {
@@ -73,14 +80,20 @@ export async function inspectWorkshopReviewTree(params: {
         backupDir: params.backupDir,
         relativeDir,
         relativePath,
+        removeSymlink: afterFiles.get(relativePath)?.kind === "symlink",
         existedBefore:
           relativeDir === "."
             ? params.beforeFiles.has(relativePath)
             : beforeFileDirs.has(relativeDir),
       });
       revertedDirs.add(relativeDir);
-      reviewErrors.push(`security scan rejected ${relativePath}`);
+      reviewErrors.push(
+        afterFiles.get(relativePath)?.kind === "symlink"
+          ? `review created a symbolic link at ${relativePath}`
+          : `security scan rejected ${relativePath}`,
+      );
     }
+    const afterLoadedDirs = await params.resolveAfterLoadedDirs();
     for (const [relativeDir, relativePath] of beforeFilesByDirectory(params.beforeFiles)) {
       if (
         !changedDirs.has(relativeDir) ||
@@ -179,8 +192,8 @@ export async function snapshotWorkshopSkillFiles(
     // Bound each snapshot to 10,000 entries and six levels so a review cannot exhaust memory.
     maxDepth: 6,
     maxEntries: MAX_WORKSHOP_REVIEW_ENTRIES,
-    symlinks: "skip",
-    include: (entry) => entry.kind === "file",
+    symlinks: "include",
+    include: (entry) => entry.kind === "file" || entry.kind === "symlink",
   });
   if (walked.truncated || walked.failedDirs?.length) {
     throw new Error(
@@ -201,6 +214,17 @@ export async function snapshotWorkshopSkillFiles(
   for (const entry of walked.entries.toSorted((left, right) =>
     left.relativePath.localeCompare(right.relativePath),
   )) {
+    if (entry.kind === "symlink") {
+      const linkTarget = await fs.readlink(entry.path, "utf8");
+      snapshots.push({
+        kind: "symlink",
+        relativeDir: resolveWorkshopSkillDirectory(entry.relativePath, skillDirs),
+        relativePath: entry.relativePath,
+        filePath: entry.path,
+        contentHash: sha256Hex(Buffer.from(linkTarget)),
+      });
+      continue;
+    }
     const read = await skillsRootAccess.read(entry.relativePath, {
       hardlinks: "reject",
       maxBytes: MAX_EVALUATION_FILE_BYTES,
@@ -213,6 +237,7 @@ export async function snapshotWorkshopSkillFiles(
       );
     }
     snapshots.push({
+      kind: "file",
       relativeDir: resolveWorkshopSkillDirectory(entry.relativePath, skillDirs),
       relativePath: entry.relativePath,
       filePath: entry.path,
@@ -275,9 +300,13 @@ async function restoreWorkshopReviewPath(params: {
   backupDir: string;
   relativeDir: string;
   relativePath: string;
+  removeSymlink?: boolean;
   existedBefore: boolean;
 }): Promise<void> {
   if (params.relativeDir !== ".") {
+    if (params.removeSymlink) {
+      await fs.rm(path.join(params.skillsRoot, params.relativePath), { force: true });
+    }
     await restoreSkillCollectionDirectoryFromBackup({
       skillsRoot: params.skillsRoot,
       backupDir: params.backupDir,
@@ -288,7 +317,9 @@ async function restoreWorkshopReviewPath(params: {
   }
   // Root-level files are not skills, but critical stray files still need per-file reversion.
   const livePath = path.join(params.skillsRoot, params.relativePath);
-  if (await pathExists(livePath)) {
+  if (params.removeSymlink) {
+    await fs.rm(livePath, { force: true });
+  } else if (await pathExists(livePath)) {
     await removePathWithinRoot({
       rootDir: params.skillsRoot,
       relativePath: params.relativePath,
