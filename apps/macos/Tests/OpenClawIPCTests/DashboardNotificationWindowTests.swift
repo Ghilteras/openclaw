@@ -22,6 +22,8 @@ private final class DashboardNotificationAlertCapture {
     }
 }
 
+private struct DashboardNotificationEndpointFailure: Error {}
+
 @MainActor
 extension DashboardWindowOwnershipTests {
     @Test func `localized background session failure title`() async throws {
@@ -30,7 +32,7 @@ extension DashboardWindowOwnershipTests {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
             process.arguments = [
-                "test", "--skip-build", "--filter", "localizedBackgroundSessionFailureTitle", "--",
+                "test", "--skip-build", "--filter", "localized background session failure title", "--",
                 "-AppleLanguages", "(fr)", "-AppleLocale", "fr_FR",
                 "-NSDoubleLocalizedStrings", "YES",
             ]
@@ -56,13 +58,13 @@ extension DashboardWindowOwnershipTests {
         let expectedTitle = String(localized: "Could Not Open Background Session")
         #expect(expectedTitle != "Could Not Open Background Session")
         let manager = DashboardManager._testMake(
-            primaryEndpointProvider: { _ in throw DashboardWindowOwnershipEndpointFailure() })
+            primaryEndpointProvider: { _ in throw DashboardNotificationEndpointFailure() })
         defer { manager.close() }
         let capture = DashboardNotificationAlertCapture()
         DispatchQueue.main.async { capture.captureAndAbortModal() }
 
         let sourceURL = try #require(URL(string: "https://gateway.example"))
-        await manager.openBackgroundSession(
+        try await manager.openBackgroundSession(
             self.completion(), target: .primary, sourceURL: sourceURL)
 
         #expect(capture.textValues.contains(expectedTitle))
