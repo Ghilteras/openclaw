@@ -17,7 +17,7 @@ import {
   DESKTOP_PANEL_TOGGLE_EVENT,
   type DesktopPanelToggleDetail,
 } from "../panel-toggle-contract.ts";
-import { DesktopClient } from "./desktop-client.ts";
+import { DesktopClient, type DesktopDisconnectDetail } from "./desktop-client.ts";
 import { renderDesktopDocumentView } from "./desktop-document-view.ts";
 import { openDesktopFocus } from "./desktop-focus-window.ts";
 import { DesktopMobileKeyboard } from "./desktop-mobile-keyboard.ts";
@@ -94,11 +94,10 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
     this,
     () => this.environmentId,
     (target) => {
-      if (this.sourceSelection === "picker") {
-        return;
+      if (this.usesAutomaticSource) {
+        this.returnToPicker("pending");
+        void this.refreshEnvironments(undefined, target);
       }
-      this.returnToPicker("pending");
-      void this.refreshEnvironments(undefined, target);
     },
     () => {
       // Inventory refresh advances operationId; active viewers and credential prompts keep their owner.
@@ -165,12 +164,13 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
       }
     }
     const gatewayAvailabilityChanged = changed.has("client") || changed.has("available");
+    // Embedded source props track placement without replacing a picker's explicit choice.
     const presentationChanged =
       gatewayAvailabilityChanged ||
       changed.has("embedded") ||
       changed.has("presented") ||
       changed.has("documentMode") ||
-      changed.has("requestedSource") ||
+      (changed.has("requestedSource") && (!this.embedded || this.usesAutomaticSource)) ||
       changed.has("sessionKey") ||
       changed.has("documentControl");
     if ((this.documentMode || this.embedded) && presentationChanged) {
@@ -251,6 +251,10 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
   private closePanel(): void {
     this.returnToPicker();
     this.dockLayout.setOpen(false);
+  }
+
+  private get usesAutomaticSource(): boolean {
+    return this.sourceSelection === "pending" || this.sourceSelection === "resolved";
   }
 
   private returnToPicker(sourceSelection: typeof this.sourceSelection = "picker"): void {
@@ -453,9 +457,8 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
         throw new Error("Desktop render target is unavailable");
       }
       const desktopClient = this.desktopClientFactory();
-      const background = getComputedStyle(target).backgroundColor;
       const connection = await desktopClient.connect({
-        background,
+        background: getComputedStyle(target).backgroundColor,
         isCurrent: () => pending.operationId === this.operationId,
         wsUrl: pending.observed.wsPath,
         gatewayUrl: client.gatewayUrl,
@@ -471,7 +474,7 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
         },
         onDisconnect: (detail) => {
           if (pending.operationId === this.operationId) {
-            this.handleDesktopDisconnect(pending.environmentId, detail.code, detail.reason);
+            this.handleDesktopDisconnect(pending.environmentId, detail);
           }
         },
         onSecurityFailure: (detail) => {
@@ -533,7 +536,10 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
     }
   }
 
-  private handleDesktopDisconnect(environmentId: string, code?: number, reason?: string): void {
+  private handleDesktopDisconnect(
+    environmentId: string,
+    { code, reason, clean }: DesktopDisconnectDetail,
+  ): void {
     this.disconnectConnection();
     this.clearLaunchState();
     if (code === 1008 && this.credentialAuth === "ard-account") {
@@ -567,7 +573,7 @@ class OpenClawDesktopPanel extends OpenClawLitElement {
     this.state = "disconnected";
     this.disconnectedReason =
       formatUiExternalText(reason, code ? t("desktop.closeCode", { code: String(code) }) : "") ||
-      null;
+      (!clean ? t("desktop.errors.connectionFailed") : null);
   }
 
   private async launchApp(app: DesktopAppId): Promise<void> {

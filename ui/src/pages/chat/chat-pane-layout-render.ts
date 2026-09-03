@@ -157,7 +157,7 @@ export abstract class ChatPaneLayoutRender extends ChatPaneBrowserAnnotationRend
       this.connectionGeneration,
       desktopAvailable,
       desktopPresented,
-      desktopSource,
+      state.basePath,
     ]);
     if (this.desktopFocus?.key !== desktopFocusKey || this.desktopFocus.client !== state.client) {
       this.desktopFocus = {

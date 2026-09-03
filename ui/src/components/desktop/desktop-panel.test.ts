@@ -12,20 +12,7 @@ import { waitForFast } from "../../test-helpers/wait-for.ts";
 import type { DesktopClient, DesktopConnectionHandle } from "./desktop-client.ts";
 import "./desktop-panel.ts";
 
-type DesktopPanelElement = HTMLElement & {
-  available: boolean;
-  documentMode: boolean;
-  documentControl: boolean;
-  client: GatewayBrowserClient | null;
-  desktopClientFactory: () => Pick<DesktopClient, "connect">;
-  embedded: boolean;
-  handleToggleRequest(event: Event): void;
-  presented: boolean;
-  requestedSource: string | null;
-  sessionKey: string | null;
-  renderRoot: DocumentFragment;
-  updateComplete: Promise<unknown>;
-};
+type DesktopPanelElement = HTMLElementTagNameMap["openclaw-desktop-panel"];
 
 const desktopEnvironment = {
   id: "worker-desktop-1",
@@ -43,13 +30,16 @@ const desktopEnvironment = {
 } as const;
 
 function createPanel() {
-  return document.createElement("openclaw-desktop-panel") as unknown as DesktopPanelElement;
+  return document.createElement("openclaw-desktop-panel");
 }
 
-function clickConnect(panel: DesktopPanelElement): void {
-  const button = panel.renderRoot.querySelector<HTMLButtonElement>(".desktop-environment button");
+function clickPanelButton(
+  panel: DesktopPanelElement,
+  selector = ".desktop-environment button",
+): void {
+  const button = panel.renderRoot.querySelector<HTMLButtonElement>(selector);
   if (!button) {
-    throw new Error("expected Desktop picker connect button");
+    throw new Error(`expected Desktop button: ${selector}`);
   }
   button.click();
 }
@@ -228,7 +218,7 @@ describe("embedded desktop panel presentation", () => {
         await waitForFast(() =>
           expect(panel.renderRoot.querySelector(".desktop-environment")).not.toBeNull(),
         );
-        clickConnect(panel);
+        clickPanelButton(panel);
       }
       const credentialForm = (stage: "initial" | "reconnected") => {
         const form = panel.renderRoot.querySelector<HTMLFormElement>("form");
@@ -276,7 +266,7 @@ describe("embedded desktop panel presentation", () => {
           ).toContain(node.id),
         );
         expect(observations()).toHaveLength(2);
-        clickConnect(panel);
+        clickPanelButton(panel);
       }
       const reconnected = await waitForFast(() => credentialForm("reconnected"));
       expect(observations().at(-1)?.[1]).toEqual({
@@ -452,12 +442,17 @@ describe("embedded desktop panel presentation", () => {
     },
   );
 
-  it("keeps an explicit picker selection across presence and session updates", async () => {
-    let environments = [desktopEnvironment];
-    const request = vi.fn(async (method: string) =>
+  it("keeps an explicit picker selection and control across presence and placement updates", async () => {
+    const selected = { ...desktopEnvironment, id: "worker-manual" };
+    let environments = [desktopEnvironment, selected];
+    const request = vi.fn(async (method: string, params?: { control?: boolean }) =>
       method === "environments.list"
         ? { environments }
-        : { transport: "rfb", wsPath: "/desktop/observe?token=synthetic", control: false },
+        : {
+            transport: "rfb",
+            wsPath: "/desktop/observe?token=synthetic",
+            control: params?.control ?? false,
+          },
     );
     const gateway = createGatewayClient(request);
     const disconnect = vi.fn();
@@ -472,16 +467,12 @@ describe("embedded desktop panel presentation", () => {
     panel.presented = true;
     panel.sessionKey = "agent:main:desktop";
     panel.requestedSource = desktopEnvironment.id;
+    const onFocusTargetChange = vi.fn();
+    panel.onFocusTargetChange = onFocusTargetChange;
     panel.desktopClientFactory = () => ({ connect });
     document.body.append(panel);
     await waitForFast(() => expect(connect).toHaveBeenCalledOnce());
-    const button = panel.renderRoot.querySelector<HTMLButtonElement>(
-      'button[aria-label="Disconnect"]',
-    );
-    if (!button) {
-      throw new Error("expected Desktop Disconnect button");
-    }
-    button.click();
+    clickPanelButton(panel, 'button[aria-label="Disconnect"]');
     await panel.updateComplete;
     environments = [];
     gateway.emit("presence", { presence: [] });
@@ -493,93 +484,172 @@ describe("embedded desktop panel presentation", () => {
     expect(connect).toHaveBeenCalledOnce();
     expect(disconnect).toHaveBeenCalledOnce();
     expect(request.mock.calls.some(([method]) => method === "sessions.describe")).toBe(false);
-  });
 
-  it("keeps focused session updates current across control changes and overlapping lookups", async () => {
-    const sessionKey = "agent:main:focused";
-    const active = {
-      key: sessionKey,
-      kind: "direct",
-      placement: { state: "active", environmentId: desktopEnvironment.id },
-    };
-    const reclaimed = { ...active, placement: { state: "reclaimed" } };
-    let sessionRead: Promise<unknown> | undefined;
-    const request = vi.fn(async (method: string, params?: { control?: boolean }) => {
-      if (method === "environments.list") {
-        return { environments: [desktopEnvironment] };
-      }
-      if (method === "sessions.describe") {
-        return sessionRead ?? { session: active };
-      }
-      return {
-        transport: "rfb",
-        wsPath: "/desktop/observe?token=focused",
-        expiresAtMs: 60_000,
-        control: params?.control ?? false,
-      };
-    });
-    const disconnect = vi.fn();
-    const connect = vi.fn(async (options: Parameters<DesktopClient["connect"]>[0]) => {
-      options.onConnect?.();
-      return { disconnect, disableInput: vi.fn() };
-    });
-    const gateway = createGatewayClient(request);
-    const panel = createPanel();
-    panel.client = gateway.client;
-    panel.available = true;
-    panel.documentMode = true;
-    panel.sessionKey = sessionKey;
-    panel.desktopClientFactory = () => ({ connect });
-    document.body.append(panel);
-    await waitForFast(() => expect(connect).toHaveBeenCalledOnce());
-    const descriptions = () =>
-      request.mock.calls.filter(([method]) => method === "sessions.describe");
-    const changed = (key = sessionKey) => gateway.emit("sessions.changed", { sessionKey: key });
-
-    changed("agent:main:unrelated");
-    await settleTasks();
-    expect(descriptions()).toHaveLength(1);
-    changed();
-    await waitForFast(() => expect(descriptions()).toHaveLength(2));
-    await settleTasks();
-    expect(disconnect).not.toHaveBeenCalled();
-
-    const pending = createDeferred<unknown>();
-    sessionRead = pending.promise;
-    changed();
-    await waitForFast(() => expect(descriptions()).toHaveLength(3));
-    const control = panel.renderRoot.querySelector<HTMLButtonElement>(
-      'button[aria-label="Take control"]',
+    environments = [selected, desktopEnvironment];
+    gateway.emit("presence", { presence: [] });
+    await waitForFast(() =>
+      expect(panel.renderRoot.querySelectorAll(".desktop-environment")).toHaveLength(2),
     );
-    if (!control) {
-      throw new Error("expected focused Desktop control button");
-    }
-    control.click();
+    clickPanelButton(panel);
     await waitForFast(() => expect(connect).toHaveBeenCalledTimes(2));
-    pending.resolve({ session: reclaimed });
-    await waitForFast(() =>
-      expect(panel.renderRoot.querySelector(".desktop-picker")).not.toBeNull(),
-    );
-    expect(disconnect).toHaveBeenCalledTimes(2);
-
-    sessionRead = undefined;
-    changed();
+    clickPanelButton(panel, 'button[aria-label="Take control"]');
     await waitForFast(() => expect(connect).toHaveBeenCalledTimes(3));
-    const stale = createDeferred<unknown>();
-    sessionRead = stale.promise;
-    changed();
-    await waitForFast(() => expect(descriptions()).toHaveLength(5));
-    sessionRead = Promise.resolve({ session: reclaimed });
-    changed();
-    await waitForFast(() =>
-      expect(panel.renderRoot.querySelector(".desktop-picker")).not.toBeNull(),
-    );
-    stale.resolve({ session: active });
+    const selectedConnection = connect.mock.calls.at(-1)?.[0];
+    expect(selectedConnection?.viewOnly).toBe(false);
+    expect(request).toHaveBeenLastCalledWith("desktop.observe", {
+      source: { kind: "environment", environmentId: selected.id },
+      control: true,
+    });
     await settleTasks();
-    expect(connect).toHaveBeenCalledTimes(3);
-    panel.remove();
-    expect(gateway.unsubscribe).toHaveBeenCalledOnce();
+    const selectedFocus = { kind: "desktop", source: selected.id, control: true };
+    expect(onFocusTargetChange).toHaveBeenLastCalledWith(selectedFocus);
+
+    // The chat owner reports a stopped placement, then a ready placement, in the same session.
+    for (const target of [null, desktopEnvironment.id]) {
+      panel.requestedSource = target;
+      await panel.updateComplete;
+      await settleTasks();
+    }
+    expect({
+      connected: selectedConnection?.isCurrent(),
+      connections: connect.mock.calls.length,
+      disconnects: disconnect.mock.calls.length,
+      focus: onFocusTargetChange.mock.calls.at(-1)?.[0],
+    }).toEqual({ connected: true, connections: 3, disconnects: 2, focus: selectedFocus });
   });
+
+  it.each(["before", "after"] as const)(
+    "keeps focused session updates current and retains a choice across a lookup started %s selection",
+    async (lookupTiming) => {
+      const sessionKey = "agent:main:focused";
+      const selected = { ...desktopEnvironment, id: "worker-manual" };
+      const active = {
+        key: sessionKey,
+        kind: "direct",
+        placement: { state: "active", environmentId: desktopEnvironment.id },
+      };
+      const reclaimed = { ...active, placement: { state: "reclaimed" } };
+      let sessionRead: Promise<unknown> | undefined;
+      const request = vi.fn(async (method: string, params?: { control?: boolean }) => {
+        if (method === "environments.list") {
+          return { environments: [selected, desktopEnvironment] };
+        }
+        if (method === "sessions.describe") {
+          return sessionRead ?? { session: active };
+        }
+        return {
+          transport: "rfb",
+          wsPath: "/desktop/observe?token=focused",
+          expiresAtMs: 60_000,
+          control: params?.control ?? false,
+        };
+      });
+      const disconnect = vi.fn();
+      const connect = vi.fn(async (options: Parameters<DesktopClient["connect"]>[0]) => {
+        options.onConnect?.();
+        return { disconnect, disableInput: vi.fn() };
+      });
+      const gateway = createGatewayClient(request);
+      const panel = createPanel();
+      panel.client = gateway.client;
+      panel.available = true;
+      panel.documentMode = true;
+      panel.sessionKey = sessionKey;
+      const onFocusTargetChange = vi.fn();
+      panel.onFocusTargetChange = onFocusTargetChange;
+      panel.desktopClientFactory = () => ({ connect });
+      document.body.append(panel);
+      await waitForFast(() => expect(connect).toHaveBeenCalledOnce());
+      const descriptions = () =>
+        request.mock.calls.filter(([method]) => method === "sessions.describe");
+      const changed = (key = sessionKey) => gateway.emit("sessions.changed", { sessionKey: key });
+
+      changed("agent:main:unrelated");
+      await settleTasks();
+      expect(descriptions()).toHaveLength(1);
+      changed();
+      await waitForFast(() => expect(descriptions()).toHaveLength(2));
+      await settleTasks();
+      expect(disconnect).not.toHaveBeenCalled();
+
+      const pending = createDeferred<unknown>();
+      sessionRead = pending.promise;
+      changed();
+      await waitForFast(() => expect(descriptions()).toHaveLength(3));
+      clickPanelButton(panel, 'button[aria-label="Take control"]');
+      await waitForFast(() => expect(connect).toHaveBeenCalledTimes(2));
+      pending.resolve({ session: reclaimed });
+      await waitForFast(() =>
+        expect(panel.renderRoot.querySelector(".desktop-picker")).not.toBeNull(),
+      );
+      expect(disconnect).toHaveBeenCalledTimes(2);
+
+      sessionRead = undefined;
+      changed();
+      await waitForFast(() => expect(connect).toHaveBeenCalledTimes(3));
+      const stale = createDeferred<unknown>();
+      sessionRead = stale.promise;
+      changed();
+      await waitForFast(() => expect(descriptions()).toHaveLength(5));
+      sessionRead = Promise.resolve({ session: reclaimed });
+      changed();
+      await waitForFast(() =>
+        expect(panel.renderRoot.querySelector(".desktop-picker")).not.toBeNull(),
+      );
+      stale.resolve({ session: active });
+      await settleTasks();
+      expect(connect).toHaveBeenCalledTimes(3);
+      const lookup = createDeferred<unknown>();
+      sessionRead = lookup.promise;
+      const startLookup = async () => {
+        const count = descriptions().length;
+        changed();
+        await waitForFast(() => expect(descriptions()).toHaveLength(count + 1));
+      };
+      if (lookupTiming === "before") {
+        await startLookup();
+      }
+      clickPanelButton(panel);
+      await waitForFast(() => expect(connect).toHaveBeenCalledTimes(4));
+      clickPanelButton(panel, 'button[aria-label="Take control"]');
+      await waitForFast(() => expect(connect).toHaveBeenCalledTimes(5));
+      const chosenConnection = connect.mock.calls.at(-1)?.[0];
+      expect(chosenConnection?.viewOnly).toBe(false);
+      if (lookupTiming === "after") {
+        await startLookup();
+      }
+      lookup.resolve({ session: active });
+      await settleTasks();
+      expect
+        .soft({
+          current: chosenConnection?.isCurrent(),
+          focus: onFocusTargetChange.mock.calls.at(-1)?.[0],
+        })
+        .toEqual({
+          current: true,
+          focus: { kind: "desktop", source: selected.id, control: true },
+        });
+
+      // A document URL selects its own source even after the user chose another viewer.
+      const connections = connect.mock.calls.length;
+      panel.sessionKey = null;
+      panel.requestedSource = desktopEnvironment.id;
+      await waitForFast(() => expect(connect).toHaveBeenCalledTimes(connections + 1));
+      panel.requestedSource = selected.id;
+      await waitForFast(() => expect(connect).toHaveBeenCalledTimes(connections + 2));
+      expect(request).toHaveBeenLastCalledWith("desktop.observe", {
+        source: { kind: "environment", environmentId: selected.id },
+        control: false,
+      });
+      expect(onFocusTargetChange).toHaveBeenLastCalledWith({
+        kind: "desktop",
+        source: selected.id,
+        control: false,
+      });
+      panel.remove();
+      expect(gateway.unsubscribe).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each([
     { initialControl: false, handleTiming: "before" },
@@ -696,6 +766,9 @@ describe("embedded desktop panel presentation", () => {
     "credentials",
     "security failure",
     "transport failure",
+    "transport close code",
+    "unclean disconnect",
+    "clean disconnect",
     "hide",
     "source change",
     "unmount",
@@ -752,9 +825,13 @@ describe("embedded desktop panel presentation", () => {
         expect(pending?.isCurrent()).toBe(true);
         if (outcome === "security failure") {
           pending?.onSecurityFailure?.({ reason: "authentication rejected" });
-          pending?.onDisconnect?.({ code: 1008, reason: "authentication rejected" });
+          pending?.onDisconnect?.({ clean: false, code: 1008, reason: "authentication rejected" });
         } else if (outcome === "transport failure") {
-          pending?.onDisconnect?.({ code: 1000, reason: "desktop stream closed" });
+          pending?.onDisconnect?.({ clean: true, code: 1000, reason: "desktop stream closed" });
+        } else if (outcome === "transport close code") {
+          pending?.onDisconnect?.({ clean: false, code: 1006, reason: "" });
+        } else if (outcome === "unclean disconnect" || outcome === "clean disconnect") {
+          pending?.onDisconnect?.({ clean: outcome === "clean disconnect" });
         } else if (outcome === "hide") {
           panel.presented = false;
         } else if (outcome === "source change") {
@@ -764,6 +841,20 @@ describe("embedded desktop panel presentation", () => {
         }
       }
       await settleTasks();
+      const disconnectReasons: Record<string, string> = {
+        "transport failure": "desktop stream closed",
+        "transport close code": "connection closed with code 1006",
+        "unclean disconnect":
+          "The desktop connection failed. Reconnect to try again. If it fails again, check the browser console and desktop service logs.",
+        "clean disconnect": "unknown reason",
+      };
+      const disconnectReason = disconnectReasons[outcome];
+      if (disconnectReason) {
+        expect(panel.renderRoot.textContent).toContain(`Desktop disconnected: ${disconnectReason}`);
+        expect(panel.renderRoot.querySelector(".desktop-status button")?.textContent).toContain(
+          "Reconnect",
+        );
+      }
       expect(previous.disconnect).toHaveBeenCalledOnce();
       if (pending) {
         expect(pending.isCurrent()).toBe(false);
@@ -838,7 +929,7 @@ describe("embedded desktop panel presentation", () => {
         1,
       );
     });
-    clickConnect(panel);
+    clickPanelButton(panel);
     await waitForFast(() => expect(connect).toHaveBeenCalledOnce());
 
     panel.presented = false;
@@ -886,7 +977,7 @@ describe("embedded desktop panel presentation", () => {
         1,
       );
     });
-    clickConnect(panel);
+    clickPanelButton(panel);
     await waitForFast(() => {
       expect(request.mock.calls.filter(([method]) => method === "desktop.observe")).toHaveLength(1);
     });

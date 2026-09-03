@@ -2296,6 +2296,8 @@ export const en: TranslationMap & {
       listFailed: "Could not load desktop sources: {error}",
       fullscreenFailed: "Could not change fullscreen mode: {error}",
       securityFailed: "Desktop security negotiation failed: {reason}",
+      connectionFailed:
+        "The desktop connection failed. Reconnect to try again. If it fails again, check the browser console and desktop service logs.",
     },
   },
   routeTitles: {

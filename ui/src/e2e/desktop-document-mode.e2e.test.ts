@@ -201,10 +201,10 @@ suite.define(() => {
           "environments.list",
           initialState === "active" ? inventory : { environments: [gatewayEnvironment] },
         );
+        await gateway.setMethodResponse("environments.list", inventory);
         if (initialState !== "active") {
           await panel.getByText("Desktop sources", { exact: true }).waitFor();
           expect(await gateway.getRequests("desktop.observe")).toHaveLength(0);
-          await gateway.setMethodResponse("environments.list", inventory);
           await gateway.setSessionsListResponse(
             chatSessionListResponse([
               {
@@ -268,6 +268,52 @@ suite.define(() => {
         });
         const focusPath = "/focus/desktop/control/source/node%3Amaintenance";
         await expect.poll(() => popout.getAttribute("href")).toBe(focusPath);
+
+        const selectedDesktop = await panel
+          .locator("[data-test-remote-desktop='true']")
+          .elementHandle();
+        // Placement changes must not even briefly rewrite an explicit pop-out link.
+        const hrefChanges = await popout.evaluateHandle((link) => {
+          const previousHrefs: Array<string | null> = [];
+          const observer = new MutationObserver((changes) => {
+            previousHrefs.push(...changes.map((change) => change.oldValue));
+          });
+          observer.observe(link, {
+            attributes: true,
+            attributeFilter: ["href"],
+            attributeOldValue: true,
+          });
+          return { observer, previousHrefs };
+        });
+        await gateway.setSessionsListResponse(
+          chatSessionListResponse([
+            {
+              ...session,
+              placement: { state: "active", environmentId: "worker-replacement" },
+            },
+          ]),
+        );
+        await gateway.emitGatewayEvent("sessions.changed", { sessionKey, reason: "placement" });
+        await expect
+          .poll(() =>
+            panel.evaluate(
+              (element) => (element as HTMLElement & { requestedSource: string }).requestedSource,
+            ),
+          )
+          .toBe("worker-replacement");
+        await page.screenshot({
+          path: path.join(artifactDirectory, `chat-session-${initialState}-placement-update.png`),
+        });
+        expect(await selectedDesktop?.evaluate((element) => element.isConnected)).toBe(true);
+        expect(await gateway.getRequests("desktop.observe")).toHaveLength(3);
+        expect(await panel.getAttribute("data-view-only")).toBe("false");
+        expect(await popout.getAttribute("href")).toBe(focusPath);
+        const observedHrefs = await hrefChanges.evaluate(({ observer, previousHrefs }) => {
+          previousHrefs.push(...observer.takeRecords().map((change) => change.oldValue));
+          observer.disconnect();
+          return previousHrefs;
+        });
+        expect(observedHrefs.filter((href) => href !== focusPath)).toEqual([]);
 
         const popupScenario = {
           sessionKey,
