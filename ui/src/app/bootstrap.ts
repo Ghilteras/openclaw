@@ -284,6 +284,7 @@ export function bootstrapApplication(): ApplicationRuntime {
     agents,
     overlays,
     scopeUpgrade,
+    connectionBootstrap,
   });
   // App-updater interlock: writing config (or restarting the gateway) while
   // the updater runs can corrupt the install; pause config writes until the

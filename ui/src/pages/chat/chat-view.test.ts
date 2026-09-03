@@ -2357,7 +2357,7 @@ describe("chat goal status", () => {
 
     container.querySelector<HTMLButtonElement>('button[aria-label="Edit goal"]')?.click();
 
-    expect(onDraftChange).toHaveBeenCalledWith("Land the web goal UI");
+    expect(onDraftChange).toHaveBeenCalledWith("Land the web goal UI", undefined);
     expect(container.querySelector(".agent-chat__goal-mode")?.textContent).toContain("Edit goal");
     container.querySelector<HTMLButtonElement>('button[aria-label="Cancel goal entry"]')?.click();
     expect(draft).toBe("Keep my conversation draft");
@@ -4085,7 +4085,7 @@ describe("chat composer IME composition", () => {
     textarea.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
 
     expect(onDraftChange).toHaveBeenCalledTimes(1);
-    expect(onDraftChange).toHaveBeenLastCalledWith("当前");
+    expect(onDraftChange).toHaveBeenLastCalledWith("当前", undefined);
   });
 
   it("preserves composing text across host rerenders with stale draft props", () => {
@@ -4113,7 +4113,7 @@ describe("chat composer IME composition", () => {
     rerenderedTextarea.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
 
     expect(onDraftChange).toHaveBeenCalledTimes(1);
-    expect(onDraftChange).toHaveBeenLastCalledWith("当前");
+    expect(onDraftChange).toHaveBeenLastCalledWith("当前", undefined);
   });
 
   it("leaves keyboard events to the browser while IME composition is active", () => {
@@ -5324,7 +5324,7 @@ describe("chat slash menu accessibility", () => {
     inputDraft(container, "submitted message");
     container.querySelector<HTMLButtonElement>(".chat-send-btn")!.click();
 
-    expect(onDraftChange).toHaveBeenCalledWith("submitted message");
+    expect(onDraftChange).toHaveBeenCalledWith("submitted message", undefined);
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("");
   });
@@ -5410,7 +5410,7 @@ describe("chat slash menu accessibility", () => {
     inputDraft(container, "send from enter");
     keydownComposer(container, "Enter");
 
-    expect(onDraftChange).toHaveBeenCalledWith("send from enter");
+    expect(onDraftChange).toHaveBeenCalledWith("send from enter", undefined);
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(container.querySelector("textarea")?.getAttribute("aria-keyshortcuts")).toBe("Enter");
   });
@@ -5439,7 +5439,7 @@ describe("chat slash menu accessibility", () => {
     inputDraft(container, "compose across lines");
     keydownComposer(container, "Enter", { metaKey: true });
 
-    expect(onDraftChange).toHaveBeenCalledWith("compose across lines");
+    expect(onDraftChange).toHaveBeenCalledWith("compose across lines", undefined);
     expect(onSend).toHaveBeenCalledTimes(2);
     expect(container.querySelector("textarea")?.getAttribute("aria-keyshortcuts")).toBe(
       "Control+Enter Meta+Enter",
@@ -5467,7 +5467,7 @@ describe("chat slash menu accessibility", () => {
       .querySelector<HTMLTextAreaElement>("textarea")!
       .dispatchEvent(new FocusEvent("blur", { bubbles: false }));
 
-    expect(onDraftChange).toHaveBeenCalledWith("persist before leaving composer");
+    expect(onDraftChange).toHaveBeenCalledWith("persist before leaving composer", undefined);
   });
 
   it("commits plain draft input while a send is active", () => {
@@ -5476,7 +5476,10 @@ describe("chat slash menu accessibility", () => {
 
     inputDraft(container, "do not let failed send restore over this");
 
-    expect(onDraftChange).toHaveBeenCalledWith("do not let failed send restore over this");
+    expect(onDraftChange).toHaveBeenCalledWith(
+      "do not let failed send restore over this",
+      undefined,
+    );
   });
 
   it("preserves local draft input across unrelated rerenders", () => {
