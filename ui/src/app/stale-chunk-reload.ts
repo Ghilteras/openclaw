@@ -44,6 +44,9 @@ const recoveryByStorage = new WeakMap<
   { attemptsByBuild: Map<string, number>; latestBuildId: string }
 >();
 const unavailableStorage = {};
+// A successful probe can release several click handlers in the same microtask.
+// Admit one navigation per displayed build before any handler calls reload.
+const initiatedManualReloads = new WeakSet<() => void>();
 let inFlightDocumentProbe: { buildId?: string; promise: Promise<boolean> } | null = null;
 
 export function isStaleChunkImportError(error: unknown): boolean {
@@ -236,8 +239,14 @@ export async function retryStaleChunkReloadWhenReachable(
         return false;
       }
       const storage = deps.storage === undefined ? getSafeSessionStorage() : deps.storage;
-      persistGuardBuildId(storage, CONTROL_UI_BUILD_INFO.buildId);
-      (deps.reload ?? reloadControlUiDocument)();
+      const buildId = CONTROL_UI_BUILD_INFO.buildId;
+      const reload = deps.reload ?? reloadControlUiDocument;
+      if (initiatedManualReloads.has(reload)) {
+        return false;
+      }
+      initiatedManualReloads.add(reload);
+      persistGuardBuildId(storage, buildId);
+      reload();
       return true;
     }
     if (now() >= deadline) {

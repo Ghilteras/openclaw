@@ -370,6 +370,23 @@ describe("retryStaleChunkReloadWhenReachable", () => {
     expect(probe).toHaveBeenCalledTimes(1);
   });
 
+  it("admits one reload when retries complete together", async () => {
+    const reachable = deferred<boolean>();
+    const reload = vi.fn();
+    const storage = memoryStorage({ [GUARD_KEY]: "replacement-build" });
+    const probe = vi.fn(() => reachable.promise);
+    const retries = [
+      retryStaleChunkReloadWhenReachable({ reload, storage, probe }),
+      retryStaleChunkReloadWhenReachable({ reload, storage, probe }),
+    ];
+
+    reachable.resolve(true);
+
+    await expect(Promise.all(retries)).resolves.toEqual([true, false]);
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(storage.getItem(GUARD_KEY)).toBe(CONTROL_UI_BUILD_INFO.buildId);
+  });
+
   it("waits out a restarting gateway and then reloads", async () => {
     // The stale chunk exists because the gateway just restarted, so the first
     // probes legitimately fail; declining here is what stranded the user.

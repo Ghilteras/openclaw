@@ -307,6 +307,7 @@ suite.define(() => {
         await actions.tap();
         const assignment = page.getByRole("menuitem", { name: "Assign to…", exact: true });
         await assignment.waitFor();
+        expect(await gateway.getRequests("chat.send")).toHaveLength(0);
         await writeFile(
           path.join(RECOVERY_ARTIFACT_DIR, `03-${serviceWorker}-assignment-menu.png`),
           await takeControlUiViewportScreenshot(page, page.locator(".shell"), [assignment]),
