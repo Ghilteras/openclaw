@@ -12,7 +12,7 @@ import { setupGatewaySessionsTestHarness } from "./test/server-sessions.test-hel
 
 const { openClient } = setupGatewaySessionsTestHarness();
 
-test("models.authOrderSet requires admin scope before updating the shared order", async () => {
+test("models.authOrderSet requires admin scope before updating the selected agent order", async () => {
   const cfg = getRuntimeConfig();
   const agentDir = resolveAgentDir(cfg, "main");
   const previousStore = loadAuthProfileStoreWithoutExternalProfiles(agentDir);
@@ -30,7 +30,6 @@ test("models.authOrderSet requires admin scope before updating the shared order"
       order: { ...previousStore.order, [provider]: initialOrder },
     },
     agentDir,
-    { sharedStoreWrite: true },
   );
   await refreshPreparedModelRuntimeSnapshots(cfg, { gatewayLifecycle: true });
 
@@ -75,7 +74,7 @@ test("models.authOrderSet requires admin scope before updating the shared order"
     for (const client of clients) {
       client.close();
     }
-    saveAuthProfileStore(previousStore, agentDir, { sharedStoreWrite: true });
+    saveAuthProfileStore(previousStore, agentDir);
     await refreshPreparedModelRuntimeSnapshots(cfg, { gatewayLifecycle: true });
   }
 });

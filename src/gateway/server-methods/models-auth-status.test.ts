@@ -2238,7 +2238,6 @@ describe("models.authOrderSet", () => {
       agentDir: "/tmp/agent",
       provider: "openai",
       order: ["openai:two", "openai:one"],
-      sharedStoreWrite: true,
     });
     expect(firstRespondCall(opts)?.slice(0, 2)).toEqual([
       true,
@@ -2246,7 +2245,7 @@ describe("models.authOrderSet", () => {
     ]);
   });
 
-  it("acknowledges the durable order before background refresh finishes", async () => {
+  it("publishes the durable order before acknowledging it", async () => {
     let finishPublication: (() => void) | undefined;
     mocks.refreshPreparedModelRuntimeSnapshots.mockImplementationOnce(
       () =>
@@ -2260,9 +2259,9 @@ describe("models.authOrderSet", () => {
     });
 
     const pending = orderHandler(opts);
-    await pending;
+    await vi.waitFor(() => expect(mocks.refreshPreparedModelRuntimeSnapshots).toHaveBeenCalled());
 
-    expect(firstRespondCall(opts)?.[0]).toBe(true);
+    expect(opts.respond).not.toHaveBeenCalled();
     expect(mocks.refreshPreparedModelRuntimeSnapshots).toHaveBeenCalledWith(
       {},
       expect.objectContaining({
@@ -2273,6 +2272,8 @@ describe("models.authOrderSet", () => {
     );
 
     finishPublication?.();
+    await pending;
+    expect(firstRespondCall(opts)?.[0]).toBe(true);
   });
 
   it.each([
@@ -2308,7 +2309,6 @@ describe("models.authOrderSet", () => {
       agentDir: "/tmp/agent",
       provider: "openai",
       order: null,
-      sharedStoreWrite: true,
     });
   });
 

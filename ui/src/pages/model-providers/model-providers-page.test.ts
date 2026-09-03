@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelsProbeResult } from "../../api/types.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
 import type { DefaultModelSelection } from "./data.ts";
-import { EMPTY_MODEL_PROVIDERS_DATA } from "./load.ts";
+import { EMPTY_MODEL_PROVIDERS_DATA, type ModelProvidersData } from "./load.ts";
 import {
   appendPage,
   createEmptyModelProvidersRouteData,
@@ -254,6 +254,52 @@ describe("ModelProvidersPage agent scope", () => {
     expect(action?.querySelector("svg")).not.toBeNull();
     action?.click();
     expect(context.navigate).toHaveBeenCalledWith("model-setup");
+  });
+
+  it.each([
+    {
+      access: "read-only",
+      hello: { auth: { role: "operator", scopes: ["operator.read"] } },
+    },
+    { access: "missing-auth", hello: null },
+    { access: "missing-scopes", hello: { auth: { role: "operator" } } },
+  ])("keeps saved account identities out of the $access page", async ({ hello }) => {
+    const { context, request, snapshot } = createHarness("main");
+    snapshot.hello = hello as typeof snapshot.hello;
+    const originalRequest = request.getMockImplementation()!;
+    request.mockImplementation(async (method: string) => {
+      if (method === "models.authStatus") {
+        return {
+          ts: 1,
+          providers: [
+            {
+              provider: "openai",
+              displayName: "OpenAI",
+              status: "ok",
+              profiles: [
+                {
+                  profileId: "openai:owner@example.com",
+                  type: "oauth",
+                  status: "ok",
+                },
+              ],
+            },
+          ],
+          providerCapabilities: [],
+        };
+      }
+      return originalRequest(method);
+    });
+
+    const page = appendPage(context);
+    await waitForFast(() => expect(page.data?.authStatus?.providers).toHaveLength(1));
+    await page.updateComplete;
+
+    expect(page.querySelector(".model-providers__profiles")).toBeNull();
+    expect(page.textContent).not.toContain("owner@example.com");
+    expect(page.querySelector(".model-providers__credentials")?.textContent).toContain(
+      "OAuth profiles: 1",
+    );
   });
 
   it("autosaves model behavior changes", async () => {
@@ -585,6 +631,172 @@ describe("ModelProvidersPage agent scope", () => {
     expect(request.mock.calls.filter(([method]) => method === "models.authLogout")).toHaveLength(1);
   });
 
+  it("re-resolves a configured profile order after Reset", async () => {
+    const { context, request } = createHarness("main");
+    const page = appendPage(context);
+    await waitForFast(() => expect(page.data?.config).toEqual({}));
+    const originalRequest = request.getMockImplementation()!;
+    request.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "models.authStatus") {
+        return {
+          ts: 2,
+          providers: [
+            {
+              provider: "openai",
+              displayName: "OpenAI",
+              status: "ok",
+              profiles: [
+                { profileId: "openai:one", type: "oauth", status: "ok" },
+                { profileId: "openai:two", type: "oauth", status: "ok" },
+              ],
+              profileOrder: ["openai:two", "openai:one"],
+            },
+          ],
+        };
+      }
+      void params;
+      return originalRequest(method);
+    });
+    page.data = {
+      ...EMPTY_MODEL_PROVIDERS_DATA,
+      config: {},
+      authStatus: await request("models.authStatus"),
+      updatedAt: 1,
+    } as ModelProvidersData;
+
+    page.setProfileOrder("openai", "openai", null);
+
+    await vi.waitFor(() =>
+      expect(page.data?.authStatus?.providers[0]?.profileOrder).toEqual([
+        "openai:two",
+        "openai:one",
+      ]),
+    );
+    await vi.waitFor(() => expect(page.profileOrders.openai).toBeUndefined());
+  });
+
+  it("drains a queued profile order after switching agents during an active save", async () => {
+    const { agentSelection, context, notifySelection, request } = createHarness("main");
+    const page = appendPage(context);
+    await waitForFast(() => expect(page.data?.config).toEqual({}));
+    const originalRequest = request.getMockImplementation()!;
+    const firstSave = deferred<unknown>();
+    request.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "models.authOrderSet" && requestCount(request, method) === 1) {
+        return firstSave.promise;
+      }
+      void params;
+      return originalRequest(method);
+    });
+
+    page.setProfileOrder("openai", "openai", ["openai:two", "openai:one"]);
+    await vi.waitFor(() => expect(requestCount(request, "models.authOrderSet")).toBe(1));
+    agentSelection.state.selectedId = "writer";
+    agentSelection.state.scopeId = "writer";
+    notifySelection();
+    await vi.waitFor(() => expect(page.selectedAgentId).toBe("writer"));
+    await waitForFast(() => expect(page.data?.config).toEqual({}));
+    page.setProfileOrder("openai", "openai", ["openai:one", "openai:two"]);
+
+    firstSave.resolve({});
+    await vi.waitFor(() => expect(requestCount(request, "models.authOrderSet")).toBe(2));
+    const orderCalls = request.mock.calls.filter(([method]) => method === "models.authOrderSet");
+    expect(orderCalls.at(-1)).toEqual([
+      "models.authOrderSet",
+      {
+        provider: "openai",
+        profileIds: ["openai:one", "openai:two"],
+        agentId: "writer",
+      },
+    ]);
+  });
+
+  it("keeps ordering available when a same-version gateway rejects the core method", async () => {
+    const { context, request, snapshot } = createHarness("main");
+    snapshot.hello = {
+      auth: { role: "operator", scopes: ["operator.admin"] },
+    } as typeof snapshot.hello;
+    const page = appendPage(context);
+    await waitForFast(() => expect(page.data?.config).toEqual({}));
+    page.data = {
+      ...EMPTY_MODEL_PROVIDERS_DATA,
+      config: {},
+      authStatus: {
+        ts: 1,
+        providers: [
+          {
+            provider: "openai",
+            displayName: "OpenAI",
+            status: "ok",
+            profiles: [
+              { profileId: "openai:one", type: "oauth", status: "ok" },
+              { profileId: "openai:two", type: "oauth", status: "ok" },
+            ],
+          },
+        ],
+      },
+      updatedAt: 1,
+    };
+    page.requestUpdate();
+    await page.updateComplete;
+    request.mockRejectedValueOnce(new Error("method not found"));
+    const secondGrip = page.querySelectorAll<HTMLButtonElement>(
+      ".model-providers__profile-grip",
+    )[1];
+
+    secondGrip?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+    await vi.waitFor(() => expect(page.messages.openai?.text).toContain("method not found"));
+    await page.updateComplete;
+
+    expect(
+      page.querySelectorAll<HTMLButtonElement>(".model-providers__profile-grip")[1]?.disabled,
+    ).toBe(false);
+  });
+
+  it("confirms an account logout before removing its saved credential", async () => {
+    const { context, request, snapshot } = createHarness("main");
+    snapshot.hello = {
+      auth: { role: "operator", scopes: ["operator.admin"] },
+    } as typeof snapshot.hello;
+    const page = appendPage(context);
+    await waitForFast(() => expect(page.data?.config).toEqual({}));
+    page.data = {
+      ...EMPTY_MODEL_PROVIDERS_DATA,
+      config: {},
+      authStatus: {
+        ts: 1,
+        providers: [
+          {
+            provider: "openai",
+            displayName: "OpenAI",
+            status: "ok",
+            profiles: [
+              {
+                profileId: "openai:one",
+                type: "oauth",
+                status: "ok",
+                email: "owner@example.com",
+                logoutSupported: true,
+              },
+            ],
+          },
+        ],
+      },
+      updatedAt: 1,
+    };
+    page.requestUpdate();
+    await page.updateComplete;
+    request.mockClear();
+
+    page.querySelector<HTMLButtonElement>('[aria-label="Log out owner@example.com"]')?.click();
+    await page.updateComplete;
+
+    expect(requestCount(request, "models.authLogout")).toBe(0);
+    expect(page.querySelector(".model-providers__confirm")?.textContent).toContain(
+      "owner@example.com",
+    );
+  });
+
   it("stops queued agent-scoped logouts when route data changes the selected agent", async () => {
     const { agentSelection, context, request, snapshot } = createHarness("main");
     const page = appendPage(context);
@@ -609,7 +821,11 @@ describe("ModelProvidersPage agent scope", () => {
     page.addProviderId = "anthropic";
     page.addProviderKey = "synthetic-route-provider-key";
     page.defaultsDraft = defaultsDraft;
-    page.pendingLogoutProvider = "openai";
+    page.pendingLogout = {
+      cardId: "openai",
+      label: "OpenAI",
+      targets: [{ provider: "openai", profileIds: ["openai:first"] }],
+    };
     page.messages = { openai: { kind: "error", text: "Previous agent failure" } };
     page.probeResults = {
       openai: { provider: "openai", status: "ok", results: [] },
@@ -626,7 +842,7 @@ describe("ModelProvidersPage agent scope", () => {
     await page.updateComplete;
     expect(page.selectedAgentId).toBe("writer");
     expect(page.busy).toEqual({});
-    expect(page.pendingLogoutProvider).toBeNull();
+    expect(page.pendingLogout).toBeNull();
     expect(page.messages).toEqual({});
     expect(page.probeResults).toEqual({});
     expect(page.keyEditorProvider).toBeNull();
