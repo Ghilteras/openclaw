@@ -13,10 +13,12 @@ openclaw_resolve_frozen_core_harness_capabilities "$SOURCE_ROOT"
 IMAGE_NAME="$(docker_e2e_resolve_image "openclaw-agent-bundle-mcp-tools-e2e" OPENCLAW_IMAGE)"
 CONTAINER_NAME="openclaw-agent-bundle-mcp-tools-e2e-$$"
 RUN_LOG="$(mktemp -t openclaw-agent-bundle-mcp-tools-log.XXXXXX)"
+LEGACY_CLIENT_SOURCE_ROOT=""
 
 cleanup() {
   docker_e2e_docker_cmd rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   rm -f "$RUN_LOG"
+  [ -z "$LEGACY_CLIENT_SOURCE_ROOT" ] || rm -rf "$LEGACY_CLIENT_SOURCE_ROOT"
 }
 trap cleanup EXIT
 
@@ -27,12 +29,15 @@ CLIENT_MOUNT_ARGS=()
 CLIENT_PRELUDE=""
 if [ "$OPENCLAW_FROZEN_TARGET_AGENT_BUNDLE_MCP_MODE" = "legacy" ]; then
   # The selected release's client imports sibling E2E helpers and ../../dist.
-  # Mount it outside the trusted read-only harness tree, while preserving that
-  # source layout and linking those package-owned dependencies.
+  # Materialize its committed source tree outside the trusted read-only harness
+  # and link the package-owned dependencies.
+  LEGACY_CLIENT_SOURCE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/openclaw-frozen-agent-bundle-mcp-tools.XXXXXX")"
+  git -C "$SOURCE_ROOT" archive "$OPENCLAW_SELECTED_SHA" -- scripts/e2e |
+    tar -x -C "$LEGACY_CLIENT_SOURCE_ROOT"
   LEGACY_CLIENT_ROOT="/tmp/openclaw-frozen-agent-bundle-mcp-tools"
   CLIENT_PATH="$LEGACY_CLIENT_ROOT/scripts/e2e/agent-bundle-mcp-tools-docker-client.ts"
   CLIENT_MOUNT_ARGS=(
-    -v "$SOURCE_ROOT/scripts/e2e:$LEGACY_CLIENT_ROOT/scripts/e2e:ro"
+    -v "$LEGACY_CLIENT_SOURCE_ROOT/scripts/e2e:$LEGACY_CLIENT_ROOT/scripts/e2e:ro"
   )
   CLIENT_PRELUDE="ln -s /app/dist \"$LEGACY_CLIENT_ROOT/dist\"; ln -s /app/node_modules \"$LEGACY_CLIENT_ROOT/node_modules\";"
 fi
