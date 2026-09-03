@@ -10,7 +10,7 @@ import type { BrowserTabTarget } from "../../components/browser/browser-target.t
 import type { toolIcons } from "../../components/icons-tools.ts";
 import type { SenderIdentity } from "./sender-label.ts";
 
-export type BrowserAnnotationAttachment = {
+type BrowserAnnotationAttachment = {
   modelContext: string;
   title: string;
   displayUrl: string;

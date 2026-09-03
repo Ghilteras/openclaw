@@ -23,7 +23,7 @@ const INSPECT_TIMEOUT_MS = 1_500;
 
 type Rect = { x: number; y: number; width: number; height: number };
 
-export type CanvasInspectedNode = BrowserInspectedNode & {
+type CanvasInspectedNode = BrowserInspectedNode & {
   viewportRect: Rect;
   documentSize: { width: number; height: number };
 };
@@ -101,7 +101,7 @@ function normalizeNode(value: unknown): CanvasInspectedNode | null {
   };
 }
 
-export function requestWidgetInspection(
+function requestWidgetInspection(
   frame: HTMLIFrameElement,
   point: { x: number; y: number },
 ): Promise<CanvasInspectedNode | null> {
@@ -151,7 +151,7 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   });
 }
 
-export async function buildCanvasElementAnnotation(params: {
+async function buildCanvasElementAnnotation(params: {
   frame: HTMLIFrameElement;
   node: CanvasInspectedNode;
   title: string;

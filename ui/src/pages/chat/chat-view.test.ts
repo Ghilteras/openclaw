@@ -6428,7 +6428,7 @@ describe("chat attachment picker", () => {
     expect(onAttachmentsChange).toHaveBeenCalledWith([]);
   });
 
-  it("renders multiple browser annotations as bounded, accessible cards", () => {
+  it("renders multiple browser annotations as one bounded, accessible preview", () => {
     const annotations: ChatAttachment[] = [
       {
         id: "annotation-title",
@@ -6440,6 +6440,9 @@ describe("chat attachment picker", () => {
           displayUrl: "shop.example.test/checkout",
           markedRegionCount: 2,
           inspectedElement: true,
+          comment: "Keep the checkout action visible.",
+          selector: "#checkout",
+          elementTag: "button",
         },
       },
       {
@@ -6457,41 +6460,29 @@ describe("chat attachment picker", () => {
     ];
 
     const container = renderChatView({ attachments: annotations });
-    const cards = container.querySelectorAll<HTMLElement>(
-      ".chat-attachment-thumb--browser-annotation",
+    const group = requireElement(
+      container,
+      '.chat-browser-annotation-group[aria-label="2 annotations"]',
+      "browser annotation group",
     );
+    const items = group.querySelectorAll<HTMLElement>(".chat-browser-annotation-group__item");
 
-    expect(cards).toHaveLength(2);
-    expect(cards[0]?.dataset.attachmentId).toBe("annotation-title");
-    expect(cards[0]?.getAttribute("role")).toBe("group");
-    expect(cards[0]?.getAttribute("aria-label")).toBe(
-      "Browser annotation: Checkout page with a deliberately long title",
+    expect(items).toHaveLength(2);
+    expect(group.querySelector(".chat-browser-annotation-group__summary")?.textContent).toContain(
+      "2 annotations",
     );
-    expect(cards[0]?.querySelector("img")?.getAttribute("alt")).toBe("Browser annotation preview");
-    expect(cards[0]?.querySelector(".chat-browser-annotation-card__identity")?.textContent).toBe(
-      "Checkout page with a deliberately long title",
+    expect(group.querySelector('[aria-label="Annotation details"]')).not.toBeNull();
+    expect(items[0]?.querySelector("img")?.getAttribute("alt")).toBe("Browser annotation preview");
+    expect(items[0]?.querySelector("code")?.textContent).toBe("button");
+    expect(items[0]?.textContent).toContain("#checkout");
+    expect(items[0]?.textContent).toContain("Keep the checkout action visible.");
+    expect(items[1]?.textContent).toContain("docs.example.test/narrow-layout");
+    expect(group.querySelector('[aria-label="Remove annotations"]')).toBeInstanceOf(
+      HTMLButtonElement,
     );
-    expect(cards[0]?.querySelector(".chat-browser-annotation-card__meta")?.textContent).toContain(
-      "2 marked regions",
-    );
-    expect(cards[0]?.textContent).not.toContain("Element inspected");
-    expect(cards[1]?.querySelector(".chat-browser-annotation-card__identity")?.textContent).toBe(
-      "docs.example.test/narrow-layout",
-    );
-    expect(cards[1]?.textContent).toContain("1 marked region");
-    expect(cards[1]?.textContent).not.toContain("Element inspected");
-    expect(
-      cards[0]?.querySelector(
-        '[aria-label="Remove browser annotation: Checkout page with a deliberately long title"]',
-      ),
-    ).toBeInstanceOf(HTMLButtonElement);
-    for (const card of cards) {
-      expect(card.querySelector(".chat-browser-annotation-card__preview")).not.toBeNull();
-      expect(card.querySelector(".chat-browser-annotation-card__body")).not.toBeNull();
-    }
   });
 
-  it("delegates browser annotation removal without releasing its payload", () => {
+  it("delegates grouped annotation removal without releasing its payload", () => {
     const attachment = registerChatAttachmentPayload({
       attachment: {
         id: "annotation-remove",
@@ -6518,7 +6509,7 @@ describe("chat attachment picker", () => {
 
     requireElement(
       container,
-      '[aria-label="Remove browser annotation: Account settings"]',
+      '[aria-label="Remove annotations"]',
       "browser annotation remove button",
     ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
 

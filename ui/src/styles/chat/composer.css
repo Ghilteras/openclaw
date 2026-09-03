@@ -2452,7 +2452,7 @@
   gap: 10px;
   padding: 8px;
   border-radius: 12px;
-  background: var(--surface);
+  background: var(--bg-elevated);
 }
 
 .chat-browser-annotation-group__item img {
