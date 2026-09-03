@@ -31,8 +31,6 @@ export type TranscriptsLogger = {
 
 export type TranscriptsRuntimeContext = {
   agentId?: string;
-  agentChannel?: string;
-  agentAccountId?: string;
   caller?: TranscriptToolCaller;
   assertCallerActive?: () => void;
   config?: OpenClawConfig;
