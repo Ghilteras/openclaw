@@ -34,6 +34,22 @@ import {
   resolveCompactionHarnessRuntime,
   resolveEmbeddedCompactionTarget,
 } from "./compaction-runtime-context.js";
+import type { CompactEmbeddedAgentSessionParams } from "./compact.types.js";
+
+export function isCodexHostTranscriptBytePreflight(
+  params: Pick<
+    CompactEmbeddedAgentSessionParams,
+    "preflightCompactionTrigger" | "preflightRequired" | "trigger"
+  >,
+  harnessRuntime?: string,
+): boolean {
+  return (
+    normalizeOptionalAgentRuntimeId(harnessRuntime) === "codex" &&
+    params.trigger === "budget" &&
+    params.preflightRequired === true &&
+    params.preflightCompactionTrigger === "transcript_bytes"
+  );
+}
 
 /** Resolves the shared policy, target, and harness ownership for either compaction entry point. */
 export function resolveCompactionRuntimeSelection(params: {

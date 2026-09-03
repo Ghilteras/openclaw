@@ -47,7 +47,10 @@ import {
   runPostCompactionSideEffects,
 } from "./compaction-hooks.js";
 import { resolveEmbeddedCompactionTarget } from "./compaction-runtime-context.js";
-import { resolveCompactionRuntimeSelection } from "./compaction-runtime-preparation.js";
+import {
+  isCodexHostTranscriptBytePreflight,
+  resolveCompactionRuntimeSelection,
+} from "./compaction-runtime-preparation.js";
 import { resolveCompactionTimeoutMs } from "./compaction-safety-timeout.js";
 import { prepareCompactionSessionAgent } from "./compaction-session-agent.js";
 import type { PreparedCompactEmbeddedAgentSessionParams } from "./direct-compaction-preparation.js";
@@ -242,6 +245,12 @@ export async function compactEmbeddedAgentSessionDirect(
 ): Promise<EmbeddedAgentCompactResult> {
   const paramsBase = applyAgentRunSessionTargetIdentity(paramsInput);
   const lockedHarnessRuntime = normalizeOptionalAgentRuntimeId(paramsBase.agentHarnessId);
+  // Codex owns its token window, but OpenClaw owns the persisted transcript byte cap.
+  // Keep that host compaction on the selected runtime without weakening other model locks.
+  const requiresNativeHarnessCompaction =
+    paramsBase.modelSelectionLocked === true &&
+    lockedHarnessRuntime !== "openclaw" &&
+    !isCodexHostTranscriptBytePreflight(paramsBase, lockedHarnessRuntime);
   const lockedCliBackend =
     paramsBase.trigger === "manual" && lockedHarnessRuntime
       ? resolveCliBackendConfig(lockedHarnessRuntime, paramsBase.config, {
@@ -251,11 +260,7 @@ export async function compactEmbeddedAgentSessionDirect(
   // An owning CLI backend must report its capability or binding failure before
   // the generic model-lock guard; otherwise the operator gets the wrong remedy.
   const deferLockedHarnessFailure = lockedCliBackend?.ownsNativeCompaction === true;
-  if (
-    paramsBase.modelSelectionLocked === true &&
-    lockedHarnessRuntime !== "openclaw" &&
-    !deferLockedHarnessFailure
-  ) {
+  if (requiresNativeHarnessCompaction && !deferLockedHarnessFailure) {
     return lockedHarnessCompactionFailure(lockedHarnessRuntime);
   }
   const memoryTranscript = readCompactionAccountingRecorder(
@@ -317,7 +322,7 @@ export async function compactEmbeddedAgentSessionDirect(
   if (nativeCliResult) {
     return nativeCliResult;
   }
-  if (requestedParams.modelSelectionLocked === true && lockedHarnessRuntime !== "openclaw") {
+  if (requiresNativeHarnessCompaction) {
     return lockedHarnessCompactionFailure(lockedHarnessRuntime);
   }
   const pluginPlanCompactionTarget = resolveEmbeddedCompactionTarget({

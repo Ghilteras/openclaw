@@ -52,6 +52,7 @@ import {
   resolveCompactionContextTokenBudget,
 } from "./compaction-runtime-context.js";
 import {
+  isCodexHostTranscriptBytePreflight,
   prepareCompactionHarnessAuth,
   resolveCompactionRuntimeSelection,
 } from "./compaction-runtime-preparation.js";
@@ -606,9 +607,15 @@ async function compactResolvedContextEngine(
   }
   host.assertActive?.();
   const contextEngineOwnsCompaction = contextEngine.info.ownsCompaction === true;
+  const hostOwnsTranscriptBytePreflight = isCodexHostTranscriptBytePreflight(
+    preparedParams,
+    preparedHarnessRuntime,
+  );
   let requiredPreflightNativeCapabilityUsed = false;
   const harnessResult =
-    attemptNativeHarnessCompaction && (!contextEngineOwnsCompaction || lockedNativeHarness)
+    attemptNativeHarnessCompaction &&
+    !hostOwnsTranscriptBytePreflight &&
+    (!contextEngineOwnsCompaction || lockedNativeHarness)
       ? await runPrimaryNativeCompactionInLanes(preparedParams, expectedEntry, host, async () => {
           if (params.abortSignal?.aborted) {
             return createCompactionAbortedResult();
@@ -639,6 +646,7 @@ async function compactResolvedContextEngine(
   // fallback for a locked harness; public result fields cannot escape the lock.
   if (
     lockedNativeHarness &&
+    !hostOwnsTranscriptBytePreflight &&
     !(
       preparedParams.preflightRequired === true &&
       requiredPreflightNativeCapabilityUsed &&
