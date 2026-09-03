@@ -90,13 +90,12 @@ async function importTranscripts(params: {
   if (!provider?.importTranscript) {
     throw new Error(`transcripts provider ${requestedSource.providerId} cannot import transcripts`);
   }
-  const resolvedSource = resolveTranscriptSourceOwnership({
+  const providerSource = resolveTranscriptSourceOwnership({
     ctx: params.ctx,
     operation: "import",
     provider,
     source: requestedSource,
   });
-  const providerSource = resolvedSource.source;
   await authorizeTranscriptSource({
     action: "import",
     ctx: params.ctx,

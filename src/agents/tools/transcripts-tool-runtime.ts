@@ -225,15 +225,13 @@ function bindSourceToTurnAccount(params: {
   operation: "import" | "start";
   provider: TranscriptSourceProvider;
   source: TranscriptSourceLocator;
-}): {
-  source: TranscriptSourceLocator;
-} {
+}): TranscriptSourceLocator {
   const ownership = params.provider.accessControl;
   if (!ownership) {
-    return { source: params.source };
+    return params.source;
   }
   if (params.ctx.caller?.kind === "operator") {
-    return { source: params.source };
+    return params.source;
   }
   const ownerChannel = ownership.channelId.trim().toLowerCase();
   if (!ownerChannel) {
@@ -244,7 +242,7 @@ function bindSourceToTurnAccount(params: {
   const channel = params.ctx.caller?.channel?.trim().toLowerCase();
   const accountId = params.ctx.caller?.accountId?.trim();
   if (!channel) {
-    return { source: params.source };
+    return params.source;
   }
   if (channel !== ownerChannel) {
     throw new Error(
@@ -258,9 +256,7 @@ function bindSourceToTurnAccount(params: {
   }
   // Same-channel capture stays on the trusted inbound account; model input
   // cannot redirect or later control another configured channel account.
-  return {
-    source: { ...params.source, accountId },
-  };
+  return { ...params.source, accountId };
 }
 
 export async function authorizeTranscriptSource(params: {
@@ -296,9 +292,7 @@ export function resolveTranscriptSourceOwnership(params: {
   provider: TranscriptSourceProvider;
   source: TranscriptSourceLocator;
   configuredLifecycle?: boolean;
-}): {
-  source: TranscriptSourceLocator;
-} {
+}): TranscriptSourceLocator {
   const boundSource = bindSourceToTurnAccount(params);
   const ownership = params.provider.accessControl;
   const trustedAccountId =
@@ -306,8 +300,8 @@ export function resolveTranscriptSourceOwnership(params: {
       ? params.ctx.caller.accountId?.trim()
       : undefined;
   const sourceForResolution = trustedAccountId
-    ? { ...boundSource.source, accountId: trustedAccountId }
-    : boundSource.source;
+    ? { ...boundSource, accountId: trustedAccountId }
+    : boundSource;
   const accountResolution = ownership?.resolveAccountId({
     cfg: params.ctx.config,
     source: sourceForResolution,
@@ -331,7 +325,7 @@ export function resolveTranscriptSourceOwnership(params: {
       `transcripts provider ${params.provider.id} could not resolve an account for configured auto-start`,
     );
   }
-  return { source: providerSource };
+  return providerSource;
 }
 
 export function toolText(text: string, details?: Record<string, unknown> & { selector?: string }) {
@@ -390,14 +384,13 @@ export async function startTranscripts(params: {
   if (!provider?.start) {
     throw new Error(`transcripts provider ${requestedSource.providerId} cannot start live capture`);
   }
-  const resolvedSource = resolveTranscriptSourceOwnership({
+  const providerSource = resolveTranscriptSourceOwnership({
     ctx: params.ctx,
     operation: "start",
     provider,
     source: requestedSource,
     configuredLifecycle: params.configuredLifecycle,
   });
-  const providerSource = resolvedSource.source;
   if (!params.configuredLifecycle) {
     await authorizeTranscriptSource({
       action: "start",

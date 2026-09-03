@@ -358,7 +358,7 @@ export function createTranscriptsAutoStartService(ctx: TranscriptsRuntimeContext
             provider,
             source: { ...sourceFromParams(entry), providerId: provider.id },
             configuredLifecycle: true,
-          }).source;
+          });
           // Guild voice transports own one connection per account. Claim before
           // awaiting readiness so later entries cannot displace the first room.
           if (source.guildId) {
