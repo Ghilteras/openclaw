@@ -95,7 +95,9 @@ export function readWindowsProcessStartTimeSync(
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      `$process = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction Stop; [Console]::Out.Write($process.CreationDate.ToUniversalTime().ToString("o"))`,
+      // Read the kernel timestamp without CIM module discovery consuming the
+      // caller's short ownership-query budget. Dispose the opened process handle.
+      `$process = [System.Diagnostics.Process]::GetProcessById(${pid}); try { [Console]::Out.Write($process.StartTime.ToUniversalTime().ToString("o")) } finally { $process.Dispose() }`,
     ],
     {
       encoding: "utf8",
