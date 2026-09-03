@@ -180,6 +180,7 @@ describe("models.list completed catalog facts", () => {
             },
           ],
           routeVariants: [],
+          catalogComplete: false,
         } satisfies PreparedGatewayModelCatalogSnapshot;
         const context = {
           getRuntimeConfig: () => config,

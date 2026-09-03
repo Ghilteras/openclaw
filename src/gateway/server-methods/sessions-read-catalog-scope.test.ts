@@ -131,7 +131,6 @@ function preparedOwner(params: {
     agentDir: resolveAgentDir(params.config, params.agentId),
     workspaceDir,
     config: params.config,
-    isCurrent: () => true,
     activeProjectKeys: [],
     providerAuth: {},
     oauthRefreshProviderIds: [],

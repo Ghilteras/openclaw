@@ -214,7 +214,6 @@ function setup(
     allowGatewaySubagentBinding: true,
     workspaceDir: WORKSPACE,
     config,
-    isCurrent: () => true,
     providerAuth: {},
     oauthRefreshProviderIds: [],
     metadataSnapshot: createEmptyPluginMetadataSnapshot(WORKSPACE),
