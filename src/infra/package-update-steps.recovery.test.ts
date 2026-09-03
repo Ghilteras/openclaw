@@ -640,6 +640,75 @@ describe("package update recovery safety", () => {
     });
   });
 
+  it("rejects a restored launcher replaced after its fingerprint lstat", async () => {
+    await withTestDir({ prefix: "openclaw-package-recovery-launcher-race-" }, async (base) => {
+      const prefix = path.join(base, "prefix");
+      const globalRoot = path.join(prefix, "lib", "node_modules");
+      const packageRoot = path.join(globalRoot, "openclaw");
+      const launcher = path.join(prefix, "bin", "openclaw");
+      const movedLauncher = `${launcher}.moved`;
+      await writePackageRoot(packageRoot, "1.0.0");
+      await fs.mkdir(path.dirname(launcher), { recursive: true });
+      await fs.writeFile(launcher, "original launcher\n");
+      let doctorRejected = false;
+      let launcherReplaced = false;
+      const open = fs.open.bind(fs);
+      const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+        const handle = await open(...args);
+        if (doctorRejected && String(args[0]) === launcher) {
+          const stat = handle.stat.bind(handle);
+          let statCalls = 0;
+          vi.spyOn(handle, "stat").mockImplementation(async () => {
+            const openedStat = await stat({ bigint: true });
+            statCalls += 1;
+            if (statCalls === 2 && !launcherReplaced) {
+              launcherReplaced = true;
+              await fs.rename(launcher, movedLauncher);
+              await fs.symlink(path.basename(movedLauncher), launcher);
+            }
+            return openedStat;
+          });
+        }
+        return handle;
+      });
+
+      try {
+        const result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: stageCandidatePackageWithLauncher,
+          postVerifyStep: async (candidateRoot) => {
+            doctorRejected = true;
+            return {
+              name: "openclaw doctor",
+              command: "openclaw doctor --non-interactive --fix",
+              cwd: candidateRoot,
+              durationMs: 0,
+              exitCode: 1,
+              stderrTail: "doctor rejected candidate",
+            };
+          },
+          timeoutMs: 1000,
+        });
+
+        expect(launcherReplaced).toBe(true);
+        expect(result.recovery).toEqual({
+          serviceRestartSafe: false,
+          reason: "runtime-verification-failed",
+          packageRollbackVerified: false,
+        });
+        expect(result.failedStep?.stderrTail).toContain(`launcher ${launcher} was not restored`);
+        expect((await fs.lstat(launcher)).isSymbolicLink()).toBe(true);
+        await expect(fs.readFile(launcher, "utf8")).resolves.toBe("original launcher\n");
+      } finally {
+        openSpy.mockRestore();
+      }
+    });
+  });
+
   it("uses nanosecond precision when checking parked package-root metadata", async () => {
     await withTestDir({ prefix: "openclaw-package-recovery-root-ctime-" }, async (base) => {
       const globalRoot = path.join(base, "prefix", "lib", "node_modules");

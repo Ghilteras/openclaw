@@ -800,6 +800,10 @@ async function fingerprintLauncherEntry(entryPath: string): Promise<string | nul
       if (!packageFingerprintStatsMatch(openedStat, await handle.stat({ bigint: true }))) {
         return null;
       }
+      const finalPathStat = await fs.lstat(entryPath, { bigint: true });
+      if (!finalPathStat.isFile() || !packageFingerprintStatsMatch(stat, finalPathStat)) {
+        return null;
+      }
       return fingerprint.digest("hex");
     } finally {
       await handle.close();
