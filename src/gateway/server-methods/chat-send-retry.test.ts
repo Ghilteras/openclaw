@@ -35,6 +35,24 @@ describe("accepted chat-send retry classification", () => {
       params: { error: new Error("dispatch failed"), phase: "post-ack" as const },
       expected: "terminal",
     },
+    {
+      name: "an unclassified failure after model start",
+      params: {
+        error: new Error("dispatch failed"),
+        phase: "post-ack" as const,
+        executionStarted: true,
+      },
+      expected: "reconcile",
+    },
+    {
+      name: "an unclassified failure after observable side effects",
+      params: {
+        error: new Error("dispatch failed"),
+        phase: "post-ack" as const,
+        sideEffectsObserved: true,
+      },
+      expected: "reconcile",
+    },
   ])("classifies $name as $expected", ({ params, expected }) => {
     expect(classifyAcceptedChatSendFailure(params)).toBe(expected);
   });

@@ -17,11 +17,11 @@ export function classifyAcceptedChatSendFailure(params: {
   executionStarted?: boolean;
   sideEffectsObserved?: boolean;
 }): AcceptedChatSendFailureDisposition {
-  if (!isSessionTranscriptProjectionUnavailableError(params.error)) {
-    return "terminal";
-  }
   if (params.executionStarted || params.sideEffectsObserved) {
     return "reconcile";
+  }
+  if (!isSessionTranscriptProjectionUnavailableError(params.error)) {
+    return "terminal";
   }
   return params.phase === "post-ack" ? "retry" : "client-retry";
 }
