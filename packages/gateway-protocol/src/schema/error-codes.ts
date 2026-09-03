@@ -22,6 +22,7 @@ export {
   type SkillProposalRevisionChangedErrorDetails,
   type UserPrefsLimitExceededErrorDetails,
   type ProjectCloneErrorDetails,
+  type GitHubPreviewErrorDetails,
   type ProjectCloneFailureCause,
   type UnknownAgentIdErrorDetails,
   type WizardNotFoundErrorDetails,
@@ -80,6 +81,11 @@ export const ProjectCloneErrorDetailsSchema = closedObject({
   }),
 });
 
+export const GitHubPreviewErrorDetailsSchema = closedObject({
+  code: Type.Literal(GatewayErrorDetailCodes.GITHUB_PREVIEW_UNAVAILABLE),
+  reason: Type.String({ enum: ["rate_limited", "credential_unavailable", "unavailable"] }),
+});
+
 const RevisionHashSchema = Type.String({ pattern: "^[a-fA-F0-9]{64}$" });
 
 export const SkillProposalRevisionChangedErrorDetailsSchema = closedObject({
@@ -97,6 +103,7 @@ export const GatewayErrorDetailsSchema = Type.Union([
   UserPrefsLimitExceededErrorDetailsSchema,
   SkillProposalRevisionChangedErrorDetailsSchema,
   ProjectCloneErrorDetailsSchema,
+  GitHubPreviewErrorDetailsSchema,
   UnknownAgentIdErrorDetailsSchema,
   WizardNotFoundErrorDetailsSchema,
   SetupAdmissionBusyErrorDetailsSchema,

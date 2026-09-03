@@ -1,5 +1,10 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
+import {
+  ErrorCodes,
+  errorShape,
+  GatewayErrorDetailCodes,
+  type GitHubPreviewErrorDetails,
+} from "../../../packages/gateway-protocol/src/index.js";
 import { redactToolPayloadText } from "../../logging/redact.js";
 import { isTrustedSecretSurfaceUnavailableError } from "../../secrets/runtime-degraded-state.js";
 import { truncateUtf16Safe } from "../../utils.js";
@@ -155,10 +160,19 @@ export function createControlUiHandlers(
         const message = credentialUnavailable
           ? CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE
           : "GitHub preview unavailable";
+        const details: GitHubPreviewErrorDetails = {
+          code: GatewayErrorDetailCodes.GITHUB_PREVIEW_UNAVAILABLE,
+          reason: credentialUnavailable
+            ? "credential_unavailable"
+            : statusCode === 429
+              ? "rate_limited"
+              : "unavailable",
+        };
         respond(
           false,
           undefined,
           errorShape(ErrorCodes.UNAVAILABLE, message, {
+            details,
             retryable: !credentialUnavailable && (statusCode === 429 || statusCode === 502),
           }),
         );

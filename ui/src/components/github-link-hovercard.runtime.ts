@@ -3,6 +3,10 @@ import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { readNonBlankString } from "@openclaw/normalization-core/string-coerce";
 import { ReactiveElement } from "lit";
+import {
+  GatewayErrorDetailCodes,
+  type GitHubPreviewErrorDetails,
+} from "../../../packages/gateway-protocol/src/gateway-error-details.js";
 import type { ControlUiGitHubPreview } from "../../../src/gateway/control-ui-contract.js";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
 import { i18n, t } from "../i18n/index.ts";
@@ -233,13 +237,29 @@ function renderLoading(card: HTMLDivElement): void {
   }
 }
 
-function renderUnavailable(card: HTMLDivElement): void {
+function renderUnavailable(
+  card: HTMLDivElement,
+  target: GitHubLinkTarget,
+  reason: GitHubPreviewErrorDetails["reason"],
+): void {
   card.replaceChildren();
   card.dataset.loading = "false";
   card.dataset.state = "unavailable";
-  const label = t("githubPreview.unavailable");
+  const key = {
+    rate_limited: "rateLimited",
+    credential_unavailable: "credentialUnavailable",
+    unavailable: "unavailable",
+  }[reason];
+  const label = t(`githubPreview.${key}`);
   card.setAttribute("aria-label", label);
-  appendTextElement(card, "div", "github-link-hovercard__unavailable", label);
+  appendTextElement(card, "div", "github-link-hovercard__title", label);
+  appendTextElement(
+    card,
+    "div",
+    "github-link-hovercard__unavailable",
+    t(`githubPreview.${key}NextStep`),
+  );
+  appendCardLink(card, "github-link-hovercard__repo", target.href, t("githubPreview.openOnGitHub"));
 }
 
 function renderPreview(card: HTMLDivElement, preview: GitHubPreview): void {
@@ -331,7 +351,7 @@ export class GitHubLinkHovercardProvider extends ReactiveElement {
   private activeTrigger: "focus" | "pointer" | null = null;
   private readonly hovercard = new PortaledHovercardController(() => this.close());
   private renderedPreview: GitHubPreview | null = null;
-  private renderedUnavailable = false;
+  private renderedUnavailable: GitHubPreviewErrorDetails["reason"] | null = null;
   private stopI18n: (() => void) | null = null;
   // Spans the synchronous focus() that hands focus back to the trigger, so the
   // card the user just dismissed cannot reopen under them (handleCardKeyDown).
@@ -351,13 +371,19 @@ export class GitHubLinkHovercardProvider extends ReactiveElement {
       renderPreview(card, preview);
       this.hovercard.position();
     },
-    onError: () => {
+    onError: (error) => {
       const card = this.hovercard.card;
-      if (!card) {
+      if (!card || !this.activeTarget) {
         return;
       }
-      this.renderedUnavailable = true;
-      renderUnavailable(card);
+      const details = isRecord(error) && isRecord(error.details) ? error.details : undefined;
+      // Only closed reasons select copy; upstream prose and URLs never reach the card.
+      this.renderedUnavailable =
+        details?.code === GatewayErrorDetailCodes.GITHUB_PREVIEW_UNAVAILABLE &&
+        (details.reason === "rate_limited" || details.reason === "credential_unavailable")
+          ? details.reason
+          : "unavailable";
+      renderUnavailable(card, this.activeTarget, this.renderedUnavailable);
       this.hovercard.position();
     },
   });
@@ -406,8 +432,8 @@ export class GitHubLinkHovercardProvider extends ReactiveElement {
     }
     if (this.renderedPreview) {
       renderPreview(card, this.renderedPreview);
-    } else if (this.renderedUnavailable) {
-      renderUnavailable(card);
+    } else if (this.renderedUnavailable && this.activeTarget) {
+      renderUnavailable(card, this.activeTarget, this.renderedUnavailable);
     } else {
       renderLoading(card);
     }
@@ -582,7 +608,7 @@ export class GitHubLinkHovercardProvider extends ReactiveElement {
     // A tooltip may not own controls: its content is flattened and unreachable.
     // The card is a non-modal dialog instead, named by the render functions.
     this.renderedPreview = null;
-    this.renderedUnavailable = false;
+    this.renderedUnavailable = null;
     renderLoading(card);
     // The card is portaled to document.body, so the provider's delegated pointer
     // listeners never see it; it reports its own hover to keep intent shared.
@@ -653,7 +679,7 @@ export class GitHubLinkHovercardProvider extends ReactiveElement {
     this.activeAnchorObserver.disconnect();
     void this.previewTask.run([null]);
     this.renderedPreview = null;
-    this.renderedUnavailable = false;
+    this.renderedUnavailable = null;
     this.activeAnchor = null;
     this.activeTarget = null;
     this.activeTrigger = null;

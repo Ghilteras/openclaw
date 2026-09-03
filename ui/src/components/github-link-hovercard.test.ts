@@ -378,24 +378,121 @@ describe("openclaw-github-link-hovercard-provider", () => {
   it("keeps genuine request failures cached for 30 seconds before retrying on hover", async () => {
     const request = vi
       .fn()
-      .mockRejectedValueOnce(new Error("GitHub preview unavailable"))
+      .mockRejectedValueOnce({
+        details: { code: "GITHUB_PREVIEW_UNAVAILABLE", reason: "rate_limited" },
+      })
       .mockResolvedValue(issuePreviewResponse());
     const { anchor, provider } = createLink(ISSUE_HREF);
     provider.client = { request } as unknown as GatewayBrowserClient;
 
     await hover(anchor);
     expect(hovercard()?.dataset.state).toBe("unavailable");
+    expect(hovercard()?.textContent).toContain("GitHub API rate limit reached");
     leave(anchor);
     await vi.advanceTimersByTimeAsync(29_000);
     await hover(anchor);
     expect(request).toHaveBeenCalledTimes(1);
     expect(hovercard()?.dataset.state).toBe("unavailable");
+    expect(hovercard()?.textContent).toContain("GitHub API rate limit reached");
 
     leave(anchor);
     await vi.advanceTimersByTimeAsync(1_000);
     await hover(anchor);
     expect(request).toHaveBeenCalledTimes(2);
     expect(hovercard()?.textContent).toContain("Keep hover previews reachable");
+  });
+
+  it.each([
+    {
+      reason: "rate_limited",
+      heading: "GitHub API rate limit reached",
+      guidance: "Wait and try again later.",
+      headingKey: "rateLimited",
+      guidanceKey: "rateLimitedNextStep",
+    },
+    {
+      reason: "credential_unavailable",
+      heading: "GitHub preview credential unavailable",
+      guidance: "Ask the Gateway administrator to resolve",
+      headingKey: "credentialUnavailable",
+      guidanceKey: "credentialUnavailableNextStep",
+    },
+  ])(
+    "renders safe $reason guidance across locale changes with a keyboard action",
+    async (scenario) => {
+      const raw = '<img src=x onerror="alert(1)">synthetic-private-error';
+      const request = vi.fn().mockRejectedValue(
+        Object.assign(new Error(raw), {
+          details: {
+            code: "GITHUB_PREVIEW_UNAVAILABLE",
+            reason: scenario.reason,
+            nextStep: raw,
+            url: "https://example.com/private",
+          },
+        }),
+      );
+      const { anchor, provider } = createLink(ISSUE_HREF);
+      provider.client = { request } as unknown as GatewayBrowserClient;
+
+      anchor.focus();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(hovercard()?.getAttribute("aria-label")).toBe(scenario.heading);
+      expect(hovercard()?.textContent).toContain(scenario.guidance);
+      expect(hovercard()?.textContent).toContain("gateway.controlUi.github.token");
+      expect(hovercard()?.textContent).not.toContain(raw);
+      expect(hovercard()?.querySelector("img")).toBeNull();
+      expect(cardLinks()).toHaveLength(1);
+      expect(cardLinks()[0]?.textContent).toBe("Open on GitHub");
+      expect(cardLinks()[0]?.href).toBe(ISSUE_HREF);
+      expect(cardLinks()[0]?.target).toBe("_blank");
+      expect(cardLinks()[0]?.rel.split(/\s+/)).toEqual(
+        expect.arrayContaining(["noopener", "noreferrer"]),
+      );
+
+      i18n.registerTranslation("pt-BR", {
+        githubPreview: {
+          [scenario.headingKey]: "Aviso do GitHub",
+          [scenario.guidanceKey]: "Próxima etapa segura.",
+          openOnGitHub: "Abrir no GitHub",
+        },
+      });
+      await i18n.setLocale("pt-BR");
+      expect(hovercard()?.getAttribute("aria-label")).toBe("Aviso do GitHub");
+      expect(hovercard()?.textContent).toContain("Próxima etapa segura.");
+      expect(cardLinks()[0]?.textContent).toBe("Abrir no GitHub");
+      expect(cardLinks()[0]?.href).toBe(ISSUE_HREF);
+      expect(request).toHaveBeenCalledTimes(1);
+
+      anchor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Tab" }));
+      expect(document.activeElement).toBe(cardLinks()[0]);
+      cardLinks()[0]?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+      expect(hovercard()).toBeNull();
+      expect(document.activeElement).toBe(anchor);
+    },
+  );
+
+  it.each([
+    undefined,
+    "rate_limited",
+    { code: "OTHER_ERROR", reason: "rate_limited" },
+    { code: "GITHUB_PREVIEW_UNAVAILABLE" },
+    { code: "GITHUB_PREVIEW_UNAVAILABLE", reason: ["rate_limited"] },
+    { code: "GITHUB_PREVIEW_UNAVAILABLE", reason: "__proto__" },
+    { code: "GITHUB_PREVIEW_UNAVAILABLE", reason: "unavailable" },
+  ])("keeps unrecognized or generic details non-disclosing: %j", async (details) => {
+    const raw = '<img src=x onerror="alert(1)">synthetic-private-error';
+    const request = vi.fn().mockRejectedValue(Object.assign(new Error(raw), { details }));
+    const { anchor, provider } = createLink(ISSUE_HREF);
+    provider.client = { request } as unknown as GatewayBrowserClient;
+
+    await hover(anchor);
+    expect(hovercard()?.getAttribute("aria-label")).toBe("GitHub preview unavailable");
+    expect(hovercard()?.textContent).toContain(
+      "Previews are available for public repositories only.",
+    );
+    expect(hovercard()?.textContent).not.toContain("synthetic-private-error");
+    expect(hovercard()?.querySelector("img")).toBeNull();
+    expect(cardLinks().map((link) => link.href)).toEqual([ISSUE_HREF]);
   });
 
   it("stays open while the pointer travels from the link onto the card", async () => {

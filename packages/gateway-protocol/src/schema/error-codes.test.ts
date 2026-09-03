@@ -99,6 +99,19 @@ describe("gateway error details", () => {
     );
   });
 
+  it.each(["rate_limited", "credential_unavailable", "unavailable"])(
+    "validates closed GitHub preview details for %s",
+    (reason) => {
+      const details = { code: "GITHUB_PREVIEW_UNAVAILABLE", reason };
+      expect(Value.Check(GatewayErrorDetailsSchema, details)).toBe(true);
+      expect(Value.Check(GatewayErrorDetailsSchema, { ...details, reason: "private" })).toBe(false);
+      expect(
+        Value.Check(GatewayErrorDetailsSchema, { ...details, url: "https://example.com" }),
+      ).toBe(false);
+      expect(Value.Check(GatewayErrorDetailsSchema, { code: details.code })).toBe(false);
+    },
+  );
+
   it("validates and reads changed skill proposal revisions", () => {
     const details = {
       code: GatewayErrorDetailCodes.SKILL_PROPOSAL_REVISION_CHANGED,

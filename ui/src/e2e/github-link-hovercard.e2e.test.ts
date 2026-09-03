@@ -238,6 +238,59 @@ describeControlUiE2e("GitHub link hover cards", () => {
     expect((await gateway.getRequests("controlUi.githubPreview")).length).toBe(2);
   });
 
+  it.each([1180, 390])(
+    "offers safe quota guidance and original-link keyboard navigation at %ipx",
+    async (width) => {
+      const { card, gateway, page, pullLink } = await openPullPreviewPage(true);
+      await page.setViewportSize({ width, height: 800 });
+      await pullLink.focus();
+      await gateway.waitForRequest("controlUi.githubPreview");
+      await gateway.rejectDeferred("controlUi.githubPreview", {
+        code: "UNAVAILABLE",
+        message: "synthetic-private-error <img src=x onerror=alert(1)>",
+        retryable: true,
+        details: {
+          code: "GITHUB_PREVIEW_UNAVAILABLE",
+          reason: "rate_limited",
+          nextStep: "synthetic-private-error",
+          url: "https://example.com/private",
+        },
+      });
+
+      await expectText(card, "GitHub API rate limit reached");
+      await expectText(card, "Wait and try again later.");
+      await expectText(card, "gateway.controlUi.github.token");
+      expect(await card.textContent()).not.toContain("synthetic-private-error");
+      expect(await card.locator("img, button").count()).toBe(0);
+      const action = card.getByRole("link", { name: "Open on GitHub" });
+      expect(await action.getAttribute("href")).toBe(
+        "https://github.com/openclaw/openclaw/pull/99816",
+      );
+      const bounds = await card.boundingBox();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+      expect(await card.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true,
+      );
+      await page.keyboard.press("Tab");
+      await expect
+        .poll(() => action.evaluate((element) => document.activeElement === element))
+        .toBe(true);
+      const popupPromise = page.waitForEvent("popup");
+      await page.keyboard.press("Enter");
+      const popup = await popupPromise;
+      await popup.waitForLoadState("domcontentloaded");
+      expect(popup.url()).toBe("https://github.com/openclaw/openclaw/pull/99816");
+      await popup.close();
+      await page.keyboard.press("Escape");
+      await expect.poll(() => card.count()).toBe(0);
+      await expect
+        .poll(() => pullLink.evaluate((element) => document.activeElement === element))
+        .toBe(true);
+      expect((await gateway.getRequests("controlUi.githubPreview")).length).toBe(1);
+    },
+  );
+
   it("previews issue and pull request links while preserving navigation", async () => {
     const context = await newBrowserContext();
     await context.route("https://github.com/**", (route) =>

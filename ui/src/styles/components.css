@@ -1328,8 +1328,8 @@ openclaw-session-progress-hovercard-provider {
   text-decoration: none;
 }
 
-.github-link-hovercard__title:hover,
-.github-link-hovercard__title:focus-visible {
+a.github-link-hovercard__title:hover,
+a.github-link-hovercard__title:focus-visible {
   text-decoration: underline;
 }
 
@@ -1419,12 +1419,11 @@ openclaw-session-progress-hovercard-provider {
 }
 
 .github-link-hovercard__unavailable {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 80px;
+  margin-bottom: 12px;
   color: var(--muted);
   font-size: var(--control-ui-text-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .github-link-hovercard__skeleton .skeleton {

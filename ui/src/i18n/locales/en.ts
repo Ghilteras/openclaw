@@ -202,6 +202,15 @@ export const en: TranslationMap & {
     coAuthors: "Co-authored by {logins}",
     loading: "Loading GitHub details…",
     unavailable: "GitHub preview unavailable",
+    unavailableNextStep:
+      "Previews are available for public repositories only. Open this link on GitHub.",
+    rateLimited: "GitHub API rate limit reached",
+    rateLimitedNextStep:
+      "Wait and try again later. If limits keep recurring, ask the Gateway administrator to check gateway.controlUi.github.token.",
+    credentialUnavailable: "GitHub preview credential unavailable",
+    credentialUnavailableNextStep:
+      "Ask the Gateway administrator to resolve gateway.controlUi.github.token, then try again.",
+    openOnGitHub: "Open on GitHub",
     states: {
       merged: "Merged",
       draft: "Draft",

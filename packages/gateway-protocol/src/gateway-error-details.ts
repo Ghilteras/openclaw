@@ -31,6 +31,7 @@ export const GatewayErrorDetailCodes = {
   SESSION_COMPANION_BUSY: "SESSION_COMPANION_BUSY",
   SKILL_PROPOSAL_REVISION_CHANGED: "SKILL_PROPOSAL_REVISION_CHANGED",
   PROJECT_CLONE_FAILED: "PROJECT_CLONE_FAILED",
+  GITHUB_PREVIEW_UNAVAILABLE: "GITHUB_PREVIEW_UNAVAILABLE",
   UNKNOWN_AGENT_ID: "UNKNOWN_AGENT_ID",
   WIZARD_NOT_FOUND: "WIZARD_NOT_FOUND",
   SETUP_ADMISSION_BUSY: "SETUP_ADMISSION_BUSY",
@@ -93,6 +94,12 @@ export type ProjectCloneErrorDetails = {
   cause: ProjectCloneFailureCause;
 };
 
+/** Preview guidance never distinguishes private, missing, or denied repositories. */
+export type GitHubPreviewErrorDetails = {
+  code: typeof GatewayErrorDetailCodes.GITHUB_PREVIEW_UNAVAILABLE;
+  reason: "rate_limited" | "credential_unavailable" | "unavailable";
+};
+
 /** Optimistic-concurrency mismatch for an operator-reviewed Skill Workshop draft. */
 export type SkillProposalRevisionChangedErrorDetails = {
   code: typeof GatewayErrorDetailCodes.SKILL_PROPOSAL_REVISION_CHANGED;
@@ -109,6 +116,7 @@ export type GatewayErrorDetails =
   | UserPrefsLimitExceededErrorDetails
   | SkillProposalRevisionChangedErrorDetails
   | ProjectCloneErrorDetails
+  | GitHubPreviewErrorDetails
   | UnknownAgentIdErrorDetails
   | WizardNotFoundErrorDetails
   | SetupAdmissionBusyErrorDetails;

@@ -1,8 +1,11 @@
 import { expectDefined } from "@openclaw/normalization-core";
-import { describe, expect, it, vi } from "vitest";
-import { SecretSurfaceUnavailableError } from "../../secrets/runtime-degraded-state.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  clearRuntimeConfigSnapshot,
+  setRuntimeConfigSnapshot,
+} from "../../config/runtime-snapshot.js";
+import { setActiveDegradedSecretOwners } from "../../secrets/runtime-degraded-state.js";
 import type { ControlUiGitHubPreview, ControlUiSessionPreview } from "../control-ui-contract.js";
-import { ControlUiGitHubError } from "../control-ui-github-api.js";
 import { createControlUiHandlers } from "./control-ui.js";
 import type { RespondFn } from "./types.js";
 
@@ -22,41 +25,76 @@ function requestOptions(
 }
 
 describe("controlUi.githubPreview", () => {
-  it("returns bounded public GitHub metadata", async () => {
-    const preview: ControlUiGitHubPreview = {
-      comments: 4,
-      createdAt: "2026-07-05T08:00:00Z",
-      kind: "issue",
-      login: "octocat",
-      number: 99815,
-      owner: "openclaw",
-      repo: "openclaw",
-      state: "open",
-      title: "Keep hover previews compact",
-      updatedAt: "2026-07-05T09:55:00Z",
-    };
-    const loadPreview = vi.fn().mockResolvedValue(preview);
-    const handlers = createControlUiHandlers(loadPreview);
-    const respond = vi.fn<RespondFn>();
-
-    await expectDefined(
-      handlers["controlUi.githubPreview"],
-      'handlers["controlUi.githubPreview"] test invariant',
-    )(
-      requestOptions(
-        { kind: "issue", number: 99815, owner: "openclaw", repo: "openclaw" },
-        respond,
-      ),
-    );
-
-    expect(loadPreview).toHaveBeenCalledWith({
-      kind: "issue",
-      number: 99815,
-      owner: "openclaw",
-      repo: "openclaw",
-    });
-    expect(respond).toHaveBeenCalledWith(true, preview, undefined);
+  beforeEach(() => {
+    clearRuntimeConfigSnapshot();
+    setActiveDegradedSecretOwners([]);
+    vi.stubEnv("GH_TOKEN", "");
+    vi.stubEnv("GITHUB_TOKEN", "");
   });
+
+  afterEach(() => {
+    clearRuntimeConfigSnapshot();
+    setActiveDegradedSecretOwners([]);
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each(["anonymous", "authenticated"])(
+    "returns public GitHub metadata when %s",
+    async (mode) => {
+      const preview: ControlUiGitHubPreview = {
+        comments: 4,
+        createdAt: "2026-07-05T08:00:00Z",
+        kind: "issue",
+        login: "octocat",
+        number: 99815,
+        owner: "openclaw",
+        repo: "openclaw",
+        state: "open",
+        title: "Keep hover previews compact",
+        updatedAt: "2026-07-05T09:55:00Z",
+      };
+      if (mode === "authenticated") {
+        setRuntimeConfigSnapshot({
+          gateway: { controlUi: { github: { token: "synthetic-preview-service-token" } } },
+        });
+      }
+      const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        return Response.json(
+          url.endsWith("/issues/99815")
+            ? {
+                comments: preview.comments,
+                created_at: preview.createdAt,
+                updated_at: preview.updatedAt,
+                state: preview.state,
+                title: preview.title,
+                user: { login: preview.login },
+                repository_url: "https://api.github.com/repos/openclaw/openclaw",
+              }
+            : { private: false },
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const handlers = createControlUiHandlers();
+      const respond = vi.fn<RespondFn>();
+
+      await expectDefined(
+        handlers["controlUi.githubPreview"],
+        'handlers["controlUi.githubPreview"] test invariant',
+      )(
+        requestOptions(
+          { kind: "issue", number: 99815, owner: "openclaw", repo: "openclaw" },
+          respond,
+        ),
+      );
+
+      expect(respond).toHaveBeenCalledWith(true, expect.objectContaining(preview), undefined);
+      expect(fetchMock).toHaveBeenCalledTimes(mode === "authenticated" ? 3 : 1);
+    },
+  );
 
   it("rejects malformed targets before loading GitHub", async () => {
     const loadPreview = vi.fn();
@@ -80,36 +118,55 @@ describe("controlUi.githubPreview", () => {
     });
   });
 
-  it("returns a retryable unavailable error for GitHub quota failures", async () => {
-    const handlers = createControlUiHandlers(
-      vi.fn().mockRejectedValue(new ControlUiGitHubError(429, "rate limited")),
-    );
+  it.each([
+    { name: "primary quota 403", status: 403, headers: { "x-ratelimit-remaining": "0" } },
+    { name: "secondary quota 403", status: 403, headers: { "retry-after": "60" } },
+    { name: "quota 429", status: 429, headers: {} },
+  ])("preserves safe quota guidance through fetch for $name", async ({ name, status, headers }) => {
+    const response = new Response("synthetic upstream body must stay private", {
+      status,
+    });
+    for (const [key, value] of Object.entries(headers)) {
+      response.headers.set(key, value);
+    }
+    response.headers.set("x-github-request-id", "synthetic-private-request-id");
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+    const handlers = createControlUiHandlers();
     const respond = vi.fn<RespondFn>();
 
     await expectDefined(
       handlers["controlUi.githubPreview"],
       'handlers["controlUi.githubPreview"] test invariant',
     )(
-      requestOptions({ kind: "pull", number: 99816, owner: "openclaw", repo: "openclaw" }, respond),
+      requestOptions(
+        { kind: "pull", number: 99816, owner: "openclaw", repo: name.replaceAll(" ", "-") },
+        respond,
+      ),
     );
 
     expect(respond).toHaveBeenCalledWith(false, undefined, {
       code: "UNAVAILABLE",
       message: "GitHub preview unavailable",
       retryable: true,
+      details: { code: "GITHUB_PREVIEW_UNAVAILABLE", reason: "rate_limited" },
     });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(response.bodyUsed).toBe(true);
   });
 
-  it("preserves a configured-unavailable preview credential diagnostic", async () => {
-    const error = new SecretSurfaceUnavailableError({
-      ownerKind: "capability",
-      ownerId: "control-ui-github",
-      state: "unavailable",
-      paths: ["gateway.controlUi.github.token"],
-      refKeys: [],
-      reason: "secret reference was not found",
+  it("preserves safe configured-unavailable guidance without fetching or borrowing ambient auth", async () => {
+    setRuntimeConfigSnapshot({
+      gateway: {
+        controlUi: {
+          github: { token: { source: "store", provider: "default", id: "SYNTHETIC_PREVIEW" } },
+        },
+      },
     });
-    const handlers = createControlUiHandlers(vi.fn().mockRejectedValue(error));
+    vi.stubEnv("GH_TOKEN", "synthetic-unrelated-ambient-token");
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    const handlers = createControlUiHandlers();
     const respond = vi.fn<RespondFn>();
 
     await expectDefined(
@@ -124,7 +181,74 @@ describe("controlUi.githubPreview", () => {
       message:
         "The configured Control UI GitHub credential is unavailable. Resolve gateway.controlUi.github.token and retry.",
       retryable: false,
+      details: { code: "GITHUB_PREVIEW_UNAVAILABLE", reason: "credential_unavailable" },
     });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "token-authorized private repository", status: 200, body: { private: true } },
+    { name: "missing repository", status: 404, body: { message: "synthetic missing detail" } },
+    { name: "denied repository", status: 403, body: { message: "synthetic permission detail" } },
+    { name: "rejected credential", status: 401, body: { message: "synthetic credential detail" } },
+  ])("keeps $name indistinguishable at the handler boundary", async ({ name, status, body }) => {
+    setRuntimeConfigSnapshot({
+      gateway: { controlUi: { github: { token: "synthetic-preview-service-token" } } },
+    });
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => Response.json(body, { status }));
+    vi.stubGlobal("fetch", fetchMock);
+    const handlers = createControlUiHandlers();
+    const respond = vi.fn<RespondFn>();
+
+    await expectDefined(
+      handlers["controlUi.githubPreview"],
+      "preview handler",
+    )(
+      requestOptions(
+        { kind: "issue", number: 99816, owner: "openclaw", repo: name.replaceAll(" ", "-") },
+        respond,
+      ),
+    );
+
+    expect(respond).toHaveBeenCalledExactlyOnceWith(false, undefined, {
+      code: "UNAVAILABLE",
+      message: "GitHub preview unavailable",
+      retryable: false,
+      details: { code: "GITHUB_PREVIEW_UNAVAILABLE", reason: "unavailable" },
+    });
+    // Preserve the existing optional-auth behavior, including its anonymous retry.
+    expect(fetchMock).toHaveBeenCalledTimes(status === 401 || status === 403 ? 2 : 1);
+  });
+
+  it("does not expose or trust details on an unknown fetch failure", async () => {
+    const error = Object.assign(new Error("synthetic private network detail"), {
+      statusCode: 429,
+      details: { code: "GITHUB_PREVIEW_UNAVAILABLE", reason: "rate_limited" },
+    });
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(error);
+    vi.stubGlobal("fetch", fetchMock);
+    const handlers = createControlUiHandlers();
+    const respond = vi.fn<RespondFn>();
+
+    await expectDefined(
+      handlers["controlUi.githubPreview"],
+      "preview handler",
+    )(
+      requestOptions(
+        { kind: "issue", number: 99816, owner: "openclaw", repo: "unknown-fetch-error" },
+        respond,
+      ),
+    );
+
+    expect(respond).toHaveBeenCalledExactlyOnceWith(false, undefined, {
+      code: "UNAVAILABLE",
+      message: "GitHub preview unavailable",
+      retryable: false,
+      details: { code: "GITHUB_PREVIEW_UNAVAILABLE", reason: "unavailable" },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
