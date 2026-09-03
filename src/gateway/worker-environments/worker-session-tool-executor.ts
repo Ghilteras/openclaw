@@ -477,25 +477,29 @@ export function createWorkerSessionToolExecutor(params: {
       return await executePortal(request);
     }
     if (request.toolName === "github_publish") {
-      const assertPublicationAuthority = () => {
-        const current = exactSource({ identity: request.identity, placements: params.placements });
-        if (!params.placements.isWorkerTurnToolAuthorized(current.turnClaim, request.toolName)) {
-          throw new Error("Worker session tool authority changed");
-        }
-      };
-      assertPublicationAuthority();
-      request.signal?.throwIfAborted();
-      const publication = await params.githubPublication.requestForClaim({
-        claim: source.turnClaim,
-        sessionKey: source.sessionKey,
-        agentId: source.agentId,
-        idempotencyKey: request.request.toolCallId,
-        ...(request.request.title ? { title: request.request.title } : {}),
-        ...(request.request.body ? { body: request.request.body } : {}),
-        assertCurrent: assertPublicationAuthority,
-      });
-      assertPublicationAuthority();
-      return { resultJson: serializeResult(jsonResult(publication)) };
+      return await runWithSource(
+        { source, identity: request.identity, signal: request.signal },
+        async ({ assertSource }) => {
+          const assertPublicationAuthority = () => {
+            assertSource();
+            if (!params.placements.isWorkerTurnToolAuthorized(source.turnClaim, request.toolName)) {
+              throw new Error("Worker session tool authority changed");
+            }
+          };
+          assertPublicationAuthority();
+          const publication = await params.githubPublication.requestForClaim({
+            claim: source.turnClaim,
+            sessionKey: source.sessionKey,
+            agentId: source.agentId,
+            idempotencyKey: request.request.toolCallId,
+            ...(request.request.title ? { title: request.request.title } : {}),
+            ...(request.request.body ? { body: request.request.body } : {}),
+            assertCurrent: assertPublicationAuthority,
+          });
+          assertPublicationAuthority();
+          return { resultJson: serializeResult(jsonResult(publication)) };
+        },
+      );
     }
     const requestDigest = computeRequestDigest(
       request.toolName === "sessions_spawn"

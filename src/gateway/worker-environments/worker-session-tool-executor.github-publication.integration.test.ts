@@ -19,6 +19,7 @@ import {
   resetGatewayWorkAdmission,
   tryBeginGatewayRootWorkAdmission,
 } from "../../process/gateway-work-admission.js";
+import { createDeferredCore } from "../../shared/deferred.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import {
   closeOpenClawStateDatabaseForTest,
@@ -575,6 +576,7 @@ async function expectRemoteUnchanged(fixture: PublicationFixture): Promise<void>
   await expect(
     requireActual(["git", "--git-dir", fixture.bareRemote, "rev-parse", "refs/heads/main"]),
   ).resolves.toBe(fixture.baseHead);
+  expect(fixture.commandObservation.pushArgs).toEqual([]);
   expect(fixture.commandObservation.postInputs).toEqual([]);
 }
 
@@ -798,6 +800,46 @@ describe("worker GitHub publication integration", () => {
       expect(publicationRowCount()).toBe(0);
       await expectRemoteUnchanged(fixture);
     } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it("rejects replaced operational authority with a live claim and zero publication effects", async () => {
+    const fixture = await createFixture();
+    const preparationStarted = createDeferredCore();
+    const finishPreparation = createDeferredCore<PreparedGitHubPublicationIdentity>();
+    identityHarness.prepare.mockImplementation(async () => {
+      preparationStarted.resolve();
+      return await finishPreparation.promise;
+    });
+    try {
+      const publication = requestPublication(fixture);
+      await preparationStarted.promise;
+      expect(fixture.placements.validateTurnClaim(fixture.claim)).toBe(true);
+      expect(fixture.placements.isWorkerTurnToolAuthorized(fixture.claim, "github_publish")).toBe(
+        true,
+      );
+
+      const originalAuthority = fixture.delegatedAuthorities[0]!;
+      expect(releaseAgentRunDelegatedAuthority(originalAuthority)).toBe(true);
+      fixture.delegatedAuthorities.push(
+        claimAgentRunDelegatedAuthority(originalAuthority.operationalRunInstance),
+      );
+      expect(fixture.placements.validateTurnClaim(fixture.claim)).toBe(true);
+      expect(fixture.placements.isWorkerTurnToolAuthorized(fixture.claim, "github_publish")).toBe(
+        true,
+      );
+
+      finishPreparation.resolve(PREPARED_IDENTITY);
+      await expect(publication).rejects.toThrow("worker turn authority changed");
+      expect(fixture.placements.validateTurnClaim(fixture.claim)).toBe(true);
+      expect(fixture.placements.isWorkerTurnToolAuthorized(fixture.claim, "github_publish")).toBe(
+        true,
+      );
+      expect(publicationRowCount()).toBe(0);
+      await expectRemoteUnchanged(fixture);
+    } finally {
+      finishPreparation.resolve(PREPARED_IDENTITY);
       await fixture.dispose();
     }
   });
