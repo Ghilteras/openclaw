@@ -25,7 +25,6 @@ import {
 } from "../plugins/provider-discovery.js";
 import { matchesProviderPluginRef } from "../plugins/provider-registry-shared.js";
 import { resolveOwningPluginIdsForProviderRef } from "../plugins/providers.js";
-import { isTrustedSecretSurfaceUnavailableError } from "../secrets/runtime-degraded-state.js";
 import { ensureAuthProfileStore } from "./auth-profiles/store.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import {
@@ -38,6 +37,7 @@ import {
   buildPluginCatalogConfig,
   createProviderCatalogAuthIdResolver,
   prepareProviderCatalogRun,
+  reportProviderCatalogSecretFailure,
 } from "./models-config.providers.catalog-context.js";
 import type {
   ProviderApiKeyResolver,
@@ -552,8 +552,7 @@ async function runProviderCatalogWithTimeout(
       }),
     ]);
   } catch (error) {
-    if (isTrustedSecretSurfaceUnavailableError(error)) {
-      params.reportCatalogOutcome?.({ provider: params.provider.id, status: "unavailable" });
+    if (await reportProviderCatalogSecretFailure(error, params)) {
       return undefined;
     }
     if (error === timeoutError) {

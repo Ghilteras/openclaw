@@ -1,7 +1,9 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
+import type { ProviderCatalogOutcome } from "../plugins/provider-catalog.types.js";
 import type { runProviderCatalog } from "../plugins/provider-discovery.js";
 import { matchesProviderPluginRef } from "../plugins/provider-registry-shared.js";
+import { isTrustedSecretSurfaceUnavailableError } from "../secrets/runtime-degraded-state.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import type { ProviderConfig } from "./models-config.providers.secret-helpers.js";
 import { resolveProviderIdForAuth } from "./provider-auth-aliases.js";
@@ -83,4 +85,25 @@ export async function prepareProviderCatalogRun(
       params.config,
     ),
   };
+}
+
+export async function reportProviderCatalogSecretFailure(
+  error: unknown,
+  params: {
+    provider: { id: string };
+    reportCatalogOutcome?: (outcome: ProviderCatalogOutcome) => void;
+  },
+): Promise<boolean> {
+  if (!isTrustedSecretSurfaceUnavailableError(error)) {
+    return false;
+  }
+  const { resolveUnavailableDiscoveryAuthProfileId } =
+    await import("./models-config.providers.discovery-auth.runtime.js");
+  const profileId = resolveUnavailableDiscoveryAuthProfileId(error);
+  params.reportCatalogOutcome?.({
+    provider: params.provider.id,
+    ...(profileId ? { profileId } : {}),
+    status: "unavailable",
+  });
+  return true;
 }
