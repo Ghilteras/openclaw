@@ -11,6 +11,7 @@ import {
   exerciseTerminalOutputSafety,
   objectFieldEquals,
   readFixtureLog,
+  selectFixtureSession,
   startTuiFixture,
   waitForSynchronizedFrameRows,
   type FixtureLogEntry,
@@ -132,24 +133,14 @@ describe("TUI PTY harness", { concurrent: false }, () => {
       });
       try {
         await modeFixture.run.waitForOutput("deliver:on", STARTUP_TIMEOUT_MS);
-        await modeFixture.run.write("/session agent:main:mode-source\r", { delay: false });
-        await modeFixture.waitForLogEntry(
-          (entry) =>
-            entry.method === "loadHistory" &&
-            objectFieldEquals(entry, "sessionKey", "agent:main:mode-source"),
-        );
+        await selectFixtureSession(modeFixture, "agent:main:mode-source");
         await modeFixture.run.waitForOutput(
           "trace:raw | reasoning:stream | deliver:on",
           STARTUP_TIMEOUT_MS,
         );
 
         const targetOutputOffset = modeFixture.run.visibleOutput().length;
-        await modeFixture.run.write("/session agent:main:mode-target\r", { delay: false });
-        await modeFixture.waitForLogEntry(
-          (entry) =>
-            entry.method === "loadHistory" &&
-            objectFieldEquals(entry, "sessionKey", "agent:main:mode-target"),
-        );
+        await selectFixtureSession(modeFixture, "agent:main:mode-target");
         await modeFixture.run.waitForOutput("session mode-target", STARTUP_TIMEOUT_MS);
         const targetOutput = modeFixture.run.visibleOutput().slice(targetOutputOffset);
         expect(targetOutput).toContain("deliver:on");
@@ -862,12 +853,7 @@ describe("TUI PTY harness", { concurrent: false }, () => {
 
       try {
         await isolationFixture.run.waitForOutput("local ready", STARTUP_TIMEOUT_MS);
-        await isolationFixture.run.write(`/session ${sourceSessionKey}\r`, { delay: false });
-        await isolationFixture.waitForLogEntry(
-          (entry) =>
-            entry.method === "loadHistory" &&
-            objectFieldEquals(entry, "sessionKey", sourceSessionKey),
-        );
+        await selectFixtureSession(isolationFixture, sourceSessionKey);
         await isolationFixture.run.write("cross-session abort source proof\r", { delay: false });
         await isolationFixture.waitForLogEntry(
           (entry) =>
@@ -882,12 +868,7 @@ describe("TUI PTY harness", { concurrent: false }, () => {
             objectFieldEquals(entry, "sessionKey", sourceSessionKey),
         );
         const outputOffset = isolationFixture.run.visibleOutput().length;
-        await isolationFixture.run.write(`/session ${targetSessionKey}\r`, { delay: false });
-        await isolationFixture.waitForLogEntry(
-          (entry) =>
-            entry.method === "loadHistory" &&
-            objectFieldEquals(entry, "sessionKey", targetSessionKey),
-        );
+        await selectFixtureSession(isolationFixture, targetSessionKey);
         await isolationFixture.waitForLogEntry(
           (entry) =>
             entry.method === "abortResolved" &&
@@ -995,11 +976,7 @@ describe("TUI PTY harness", { concurrent: false }, () => {
   ])(
     "keeps case-distinct $provider conversations out of the visible terminal",
     async ({ sessionKey, message }) => {
-      await fixture.run.write(`/session ${sessionKey}\r`, { delay: false });
-      await fixture.waitForLogEntry(
-        (entry) =>
-          entry.method === "loadHistory" && objectFieldEquals(entry, "sessionKey", sessionKey),
-      );
+      await selectFixtureSession(fixture, sessionKey);
 
       const outputOffset = fixture.run.visibleOutput().length;
       await fixture.run.write(`${message}\r`, { delay: false });
@@ -1025,11 +1002,7 @@ describe("TUI PTY harness", { concurrent: false }, () => {
   ])(
     "preserves provider-owned identity when selecting $sessionKey in the terminal",
     async ({ sessionKey, message }) => {
-      await fixture.run.write(`/session ${sessionKey}\r`, { delay: false });
-      await fixture.waitForLogEntry(
-        (entry) =>
-          entry.method === "loadHistory" && objectFieldEquals(entry, "sessionKey", sessionKey),
-      );
+      await selectFixtureSession(fixture, sessionKey);
 
       await fixture.run.write(`${message}\r`, { delay: false });
       const sent = await fixture.waitForLogEntry(

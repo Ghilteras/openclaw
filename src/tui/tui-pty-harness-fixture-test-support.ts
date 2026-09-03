@@ -7,6 +7,7 @@ import { resolveRuntimeWorkerArgv, resolveRuntimeWorkerUrl } from "../infra/runt
 import { TUI_PTY_ASSISTANT_FIXTURE_SCRIPT } from "./tui-pty-assistant-fixture-test-support.js";
 import { TUI_PTY_GAP_HISTORY_FIXTURE_SCRIPT } from "./tui-pty-gap-fixture-test-support.js";
 import {
+  objectFieldEquals,
   waitForFixtureLogEntry,
   type FixtureLogEntry,
 } from "./tui-pty-harness-assertion-test-support.js";
@@ -59,6 +60,17 @@ export async function startTuiFixture(opts: { env?: NodeJS.ProcessEnv; execPath?
       await rm(tempDir, { recursive: true, force: true });
     },
   };
+}
+
+export async function selectFixtureSession(
+  fixture: Awaited<ReturnType<typeof startTuiFixture>>,
+  sessionKey: string,
+): Promise<void> {
+  await fixture.run.write(`/session ${sessionKey}\r`, { delay: false });
+  // loadHistory is recorded before resolution; readiness and rendering remain scenario assertions.
+  await fixture.waitForLogEntry(
+    (entry) => entry.method === "loadHistory" && objectFieldEquals(entry, "sessionKey", sessionKey),
+  );
 }
 
 export async function writeTuiPtyFixtureScript(dir: string) {
