@@ -878,9 +878,8 @@ jobs:
               --candidate-version "$package_version"
               --versions-json "$versions_json"
             )
-            if [[ -n "$TARGET_CONTEXT_REF" ]]; then
-              resolver_args+=(--target-context-ref "$TARGET_CONTEXT_REF")
-            fi
+            # An explicit package override is independent of the selected release target.
+            # Do not apply that target's frozen-line baseline contract to it.
             package_baseline="$(
               node workflow/scripts/lib/release-upgrade-baseline.mjs "${resolver_args[@]}"
             )"

@@ -218,6 +218,11 @@ describe("cross-OS release checks workflow", () => {
     expect(baseline.run).toContain(
       'echo "package_acceptance_baseline=${package_baseline#openclaw@}"',
     );
+    const packageOverrideResolver = baseline.run.match(
+      /if \[\[ "\$PACKAGE_ACCEPTANCE_SCHEDULED" == "true" &&\s+-n "\$PACKAGE_ACCEPTANCE_PACKAGE_SPEC" \]\]; then(?<body>[\s\S]*?)\n {10}fi/,
+    )?.groups?.body;
+    expect(packageOverrideResolver).toBeDefined();
+    expect(packageOverrideResolver).not.toContain('--target-context-ref "$TARGET_CONTEXT_REF"');
     expect(installSmoke.with?.update_baseline_version).toBe(
       "${{ needs.resolve_target.outputs.upgrade_baseline }}",
     );
