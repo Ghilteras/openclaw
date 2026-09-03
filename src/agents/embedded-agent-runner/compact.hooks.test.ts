@@ -3712,9 +3712,12 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
       if (expectedOrder.at(-1) === "native") {
         expect(maybeCompactAgentHarnessSessionMock).toHaveBeenCalledWith(
           expect.objectContaining({ preflightCompactionTrigger }),
-          expectedNativeCompactionOptions(
-            expectedOrder[0] === "host" ? "after_context_engine" : "required_preflight",
-          ),
+          expectedOrder[0] === "host"
+            ? expectedNativeCompactionOptions("after_context_engine")
+            : {
+                ...expectedNativeCompactionOptions("required_preflight"),
+                onNativeCompactionCapabilityUsed: expect.any(Function),
+              },
         );
       }
     },
