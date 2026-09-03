@@ -38,6 +38,10 @@ async function retryPendingCodexNativeCompaction(
       ...connection.params,
       model: connection.params.modelId,
       runtimeModel: connection.params.model,
+      trigger:
+        connection.params.trigger === "manual" || connection.params.trigger === "overflow"
+          ? connection.params.trigger
+          : undefined,
       senderId: connection.params.senderId ?? undefined,
       senderName: connection.params.senderName ?? undefined,
       senderUsername: connection.params.senderUsername ?? undefined,
