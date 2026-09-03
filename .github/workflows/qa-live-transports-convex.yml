@@ -961,6 +961,23 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=12288
         run: pnpm build
 
+      - name: Project Slack dependencies for the built QA runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r dependency; do
+            source_path="$PWD/extensions/slack/node_modules/$dependency"
+            target_path="$PWD/node_modules/$dependency"
+            test -e "$source_path"
+            if [[ ! -e "$target_path" ]]; then
+              mkdir -p "$(dirname "$target_path")"
+              ln -s "$source_path" "$target_path"
+            fi
+          done < <(
+            node -e 'for (const name of Object.keys(require("./extensions/slack/package.json").dependencies)) console.log(name)'
+          )
+
       - name: Run Slack live lane
         id: run_lane
         shell: bash
