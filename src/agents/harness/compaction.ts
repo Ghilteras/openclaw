@@ -233,7 +233,6 @@ async function resolveHarnessCompactApiKey(params: {
   }
   const runtimeAuthProfileStore = isOpenAIProvider(provider)
     ? ensureAuthProfileStore(agentDir, {
-        externalCliProviderIds: ["openai"],
         allowKeychainPrompt: false,
       })
     : ensureAuthProfileStoreWithoutExternalProfiles(agentDir, {

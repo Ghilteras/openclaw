@@ -5,6 +5,7 @@ import { parseModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveProviderSyntheticAuthWithPlugin } from "../plugins/provider-runtime.js";
 import { resolveAgentDir } from "./agent-scope-config.js";
 import { resolveExplicitAuthOrderSelection } from "./auth-profiles/order.js";
 import { getPreparedRuntimeAuthProfileStoreSnapshotCore } from "./auth-profiles/runtime-snapshots.js";
@@ -22,7 +23,7 @@ import {
   type ProviderAuthAliasLookupParams,
 } from "./provider-auth-aliases.js";
 
-const RETIRED_MODEL_PICKER_PROVIDERS = new Set(["codex", "codex-cli"]);
+const RETIRED_MODEL_PICKER_PROVIDERS = new Set(["codex", "codex-cli", "openai-codex"]);
 
 /** True for retired provider ids that should stay out of model selection surfaces. */
 export function isRetiredModelPickerProvider(provider: string): boolean {
@@ -281,17 +282,49 @@ function resolveCliRuntimeFromAuthProfile(
       return resolveRuntimeAuthProvider(profile.provider, params) === providerAuthKey;
     })
     .map(([profileId]) => profileId);
-  if (compatibleProfileIds.length !== 1) {
-    return undefined;
-  }
   const [profileId] = compatibleProfileIds;
-  return profileId
-    ? resolveProfileRuntimeAlias({
-        ...params,
-        provider,
-        profileProvider: configuredProfiles[profileId]?.provider,
-      })
-    : undefined;
+  if (profileId && compatibleProfileIds.length === 1) {
+    return resolveProfileRuntimeAlias({
+      ...params,
+      provider,
+      profileProvider: configuredProfiles[profileId]?.provider,
+    });
+  }
+  return resolveNativeLoginCliRuntime({ provider, cfg: params.cfg });
+}
+
+/**
+ * A provider with no stored credential still runs when an owning native runtime holds a login
+ * (for example Claude CLI or Codex app-server). The synthetic auth marker is the recorded fact;
+ * without this, anthropic/<model> rows are listed as available but every run would demand an
+ * API key.
+ */
+function resolveNativeLoginCliRuntime(params: {
+  provider: string;
+  cfg?: OpenClawConfig;
+}): string | undefined {
+  for (const binding of listCliRuntimeModelBackendBindings()) {
+    if (binding.provider !== params.provider) {
+      continue;
+    }
+    const synthetic = resolveProviderSyntheticAuthWithPlugin({
+      provider: binding.runtime,
+      config: params.cfg,
+      context: { config: params.cfg ?? {}, provider: binding.runtime, providerConfig: undefined },
+    });
+    if (synthetic?.apiKey) {
+      return binding.runtime;
+    }
+  }
+  const synthetic = resolveProviderSyntheticAuthWithPlugin({
+    provider: params.provider,
+    config: params.cfg,
+    context: { config: params.cfg ?? {}, provider: params.provider, providerConfig: undefined },
+  });
+  if (synthetic?.apiKey && synthetic.runtime) {
+    return synthetic.runtime;
+  }
+  return undefined;
 }
 
 export function resolveCliRuntimeExecutionProvider(

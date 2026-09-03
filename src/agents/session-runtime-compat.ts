@@ -15,6 +15,14 @@ type SessionRuntimeCompatEntry = Pick<
   SessionEntry,
   "agentHarnessId" | "agentRuntimeOverride" | "modelSelectionLocked" | "pluginOwnerId"
 >;
+type SessionRuntimeOverrideEntry = Pick<
+  SessionEntry,
+  | "agentHarnessId"
+  | "agentRuntimeOverride"
+  | "modelSelectionLocked"
+  | "pluginOwnerId"
+  | "providerOverride"
+>;
 type ManualCompactionRuntimeEntry = Pick<
   SessionEntry,
   | "agentHarnessId"
@@ -135,7 +143,6 @@ export function resolveManualCompactionCliTarget(params: {
   const boundRuntimeIds = new Set([
     ...Object.keys(params.entry?.cliSessionBindings ?? {}),
     ...Object.keys(params.entry?.cliSessionIds ?? {}),
-    ...(params.entry?.claudeCliSessionId ? ["claude-cli"] : []),
   ]);
   const compatibleBindings = [...boundRuntimeIds].flatMap((runtime) => {
     const compatibleRuntime = resolveCompatibleAgentRuntimeForProvider({

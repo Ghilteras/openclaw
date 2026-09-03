@@ -1,5 +1,5 @@
 // Verifies CLI runtime alias resolution and runtime model-ref equivalence.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
@@ -14,6 +14,13 @@ import {
   isCliRuntimeProvider,
   resolveCliRuntimeExecutionProvider as resolveCliRuntimeExecutionProviderBase,
 } from "./model-runtime-aliases.js";
+
+const resolveProviderSyntheticAuthWithPlugin = vi.hoisted(() => vi.fn());
+
+vi.mock("../plugins/provider-runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../plugins/provider-runtime.js")>()),
+  resolveProviderSyntheticAuthWithPlugin,
+}));
 
 const anthropicAuthAliasMetadata = {
   plugins: [
@@ -93,6 +100,7 @@ describe("resolveCliRuntimeExecutionProvider", () => {
   afterEach(() => {
     cliBackendsTesting.resetDepsForTest();
     clearRuntimeAuthProfileStoreSnapshots();
+    resolveProviderSyntheticAuthWithPlugin.mockReset();
   });
 
   function seedStoredAuthOrder(
@@ -143,6 +151,48 @@ describe("resolveCliRuntimeExecutionProvider", () => {
       ).toBe("claude-cli");
     },
   );
+
+  it("uses native CLI auth when no stored credential exists", () => {
+    resolveProviderSyntheticAuthWithPlugin.mockReturnValue({
+      apiKey: "native-login",
+      source: "native login",
+      mode: "api-key",
+    });
+
+    expect(
+      resolveCliRuntimeExecutionProvider({
+        cfg: {},
+        provider: "anthropic",
+        modelId: "opus-4.7",
+      }),
+    ).toBe("claude-cli");
+    expect(resolveProviderSyntheticAuthWithPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "claude-cli" }),
+    );
+  });
+
+  it("passes through a stored API-key profile instead of native CLI auth", () => {
+    resolveProviderSyntheticAuthWithPlugin.mockReturnValue({
+      apiKey: "native-login",
+      source: "native login",
+      mode: "api-key",
+    });
+
+    expect(
+      resolveCliRuntimeExecutionProvider({
+        cfg: {
+          auth: {
+            profiles: {
+              "anthropic:api": { provider: "anthropic", mode: "api_key" },
+            },
+          },
+        } as OpenClawConfig,
+        provider: "anthropic",
+        modelId: "opus-4.7",
+      }),
+    ).toBeUndefined();
+    expect(resolveProviderSyntheticAuthWithPlugin).not.toHaveBeenCalled();
+  });
 
   it("matches a stored order key that is not already canonically normalized", () => {
     // Persisted state only lowercases provider keys, and the canonical resolver
@@ -215,6 +265,22 @@ describe("resolveCliRuntimeExecutionProvider", () => {
         modelId: "opus-4.7",
       }),
     ).toBe("claude-cli");
+  });
+
+  it("routes a provider to the runtime named by manifest native auth", () => {
+    resolveProviderSyntheticAuthWithPlugin.mockReturnValue({
+      apiKey: "codex-app-server",
+      source: "Codex CLI native auth",
+      mode: "oauth",
+      runtime: "codex",
+    });
+
+    expect(resolveCliRuntimeExecutionProvider({ provider: "openai", modelId: "gpt-test" })).toBe(
+      "codex",
+    );
+    expect(resolveProviderSyntheticAuthWithPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai" }),
+    );
   });
 
   it("matches a config order key through the same normalized lookup as profile selection", () => {
@@ -401,6 +467,7 @@ describe("resolveCliRuntimeExecutionProvider", () => {
     });
 
     expect(isRetiredModelPickerProvider("CODEX-CLI")).toBe(true);
+    expect(isRetiredModelPickerProvider("openai-codex")).toBe(true);
     expect(isRetiredModelPickerProvider("anthropic")).toBe(false);
   });
 });

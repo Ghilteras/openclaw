@@ -20,7 +20,7 @@ function createOwner(params: {
     agentId: params.agentId,
     agentDir: params.agentDir,
     config: {},
-    authModes: {},
+    providerAuth: {},
     activeProjectKeys: [],
     allowGatewaySubagentBinding: true,
     metadataSnapshot: { index: { plugins: [] }, plugins: [] },
@@ -37,7 +37,6 @@ function createOwner(params: {
     provenance: "configured",
     generation: 1,
     needsRefresh: params.needsRefresh === true,
-    catalogStale: false,
     snapshot,
   };
 }

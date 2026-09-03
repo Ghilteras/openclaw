@@ -3,7 +3,7 @@ import type {
   ProviderModelRouteCandidate,
   ProviderModelRouteResolution,
 } from "../plugin-sdk/provider-model-types.js";
-import type { PreparedAgentCredentialModes } from "./agent-auth-credential-modes.js";
+import type { PreparedProviderAuth } from "./agent-auth-credential-modes.js";
 import type { RuntimeAuthMaterialization } from "./auth-profiles/runtime-materializations.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import {
@@ -57,7 +57,7 @@ export function evaluate(params: {
   store?: AuthProfileStore;
   preparedRuntimeAuthStore?: AuthProfileStore;
   syntheticAuthProviderRefs?: readonly string[];
-  preparedRuntimeAuthModes?: PreparedAgentCredentialModes;
+  preparedProviderAuth?: PreparedProviderAuth;
   preparedRuntimeAuthMaterializations?: readonly RuntimeAuthMaterialization[];
 }) {
   return createModelAuthAvailabilityResolver({
@@ -66,7 +66,7 @@ export function evaluate(params: {
     env: params.env ?? {},
     routeResolverFactory: routeResolverFactory(params.resolution ?? dualRoutes),
     syntheticAuthProviderRefs: params.syntheticAuthProviderRefs,
-    preparedRuntimeAuthModes: params.preparedRuntimeAuthModes,
+    preparedProviderAuth: params.preparedProviderAuth,
     preparedRuntimeAuthStore: params.preparedRuntimeAuthStore,
     preparedRuntimeAuthMaterializations: params.preparedRuntimeAuthMaterializations,
   }).evaluateModelAuth("openai", params.ref);

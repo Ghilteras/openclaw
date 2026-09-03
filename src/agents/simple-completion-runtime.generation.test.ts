@@ -93,7 +93,7 @@ beforeEach(() => {
       agentDir: "/tmp/openclaw-agent",
       workspaceDir: "/tmp/runtime-workspace",
       config: {},
-      authModes: {},
+      providerAuth: {},
       metadataSnapshot: createPluginMetadataSnapshotFixture(),
       allowGatewaySubagentBinding: false,
       modelCatalog: { entries: [] },

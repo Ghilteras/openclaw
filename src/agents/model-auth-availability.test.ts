@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { SecretRef } from "../config/types.secrets.js";
 import type { ProviderModelRouteCandidate } from "../plugin-sdk/provider-model-types.js";
-import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { createModelAuthAvailabilityResolver } from "./model-auth-availability.js";
 import {
   authStore,
@@ -50,84 +49,6 @@ describe("createModelAuthAvailabilityResolver", () => {
     });
   });
 
-  it("canonicalizes prepared runtime auth through provider aliases", () => {
-    const metadataSnapshot = {
-      index: {
-        plugins: [
-          {
-            pluginId: "external-cloud",
-            origin: "global",
-            enabled: true,
-            enabledByDefault: true,
-          },
-        ],
-      },
-      plugins: [
-        {
-          id: "external-cloud",
-          origin: "global",
-          providerAuthAliases: { "cloud-alias": "external-cloud" },
-        },
-      ],
-    } as unknown as PluginMetadataSnapshot;
-    const resolver = createModelAuthAvailabilityResolver({
-      cfg: {},
-      authStore: authStore(),
-      env: {},
-      metadataSnapshot,
-      preparedRuntimeAuthModes: { "external-cloud": "api_key" },
-    });
-
-    expect(resolver.evaluateModelAuth("cloud-alias")).toMatchObject({
-      availability: true,
-      evidence: "runtime",
-      routeResolution: null,
-      selectedAuthMode: "api_key",
-    });
-    const syntheticResolver = createModelAuthAvailabilityResolver({
-      cfg: {},
-      authStore: authStore(),
-      env: {},
-      metadataSnapshot,
-      syntheticAuthProviderRefs: ["cloud-alias"],
-    });
-    expect(syntheticResolver.evaluateModelAuth("cloud-alias")).toEqual({
-      availability: undefined,
-      evidence: "synthetic",
-      routeResolution: null,
-    });
-    expect(syntheticResolver.evaluateModelAuth("external-cloud").unavailableReason).toBe(
-      "missing-auth",
-    );
-  });
-
-  it("keeps prepared native-runtime authentication scoped to its exact owner", () => {
-    const metadataSnapshot = {
-      index: { plugins: [] },
-      plugins: [
-        {
-          id: "anthropic",
-          origin: "bundled",
-          providerAuthAliases: { "claude-cli": "anthropic" },
-        },
-      ],
-    } as unknown as PluginMetadataSnapshot;
-    const resolver = createModelAuthAvailabilityResolver({
-      cfg: {},
-      authStore: authStore(),
-      env: {},
-      metadataSnapshot,
-      preparedRuntimeAuthModes: { "claude-cli": "api_key" },
-    });
-
-    expect(resolver.evaluateModelAuth("claude-cli")).toMatchObject({
-      availability: true,
-      evidence: "runtime",
-      selectedAuthMode: "api_key",
-    });
-    expect(resolver.evaluateModelAuth("anthropic").availability).not.toBe(true);
-  });
-
   it("keeps configured local providers independent from native-auth probe completion", () => {
     const resolver = createModelAuthAvailabilityResolver({
       cfg: {
@@ -156,7 +77,12 @@ describe("createModelAuthAvailabilityResolver", () => {
   ])(
     "uses prepared runtime $mode auth when the profile snapshot is empty",
     ({ mode, selectedRoute }) => {
-      expect(evaluate({ preparedRuntimeAuthModes: { openai: mode } })).toMatchObject({
+      expect(
+        evaluate({
+          cfg: { plugins: { enabled: false } },
+          preparedProviderAuth: { openai: { mode } },
+        }),
+      ).toMatchObject({
         availability: true,
         evidence: "runtime",
         selectedAuthMode: mode,
@@ -910,61 +836,6 @@ describe("createModelAuthAvailabilityResolver", () => {
     expect(resolveRoutes).toHaveBeenCalledWith({
       modelId: "gpt-future-observed",
       observedRoutes,
-    });
-  });
-
-  it("keeps Codex synthetic auth indeterminate until the native account is read", () => {
-    const result = evaluate({ syntheticAuthProviderRefs: ["codex"] });
-    expect(result).toMatchObject({
-      availability: undefined,
-      evidence: "synthetic",
-      routeResolution: dualRoutes,
-    });
-    expect(result).not.toHaveProperty("selectedAuthMode");
-    expect(result).not.toHaveProperty("selectedRoute");
-  });
-
-  it("keeps one unconfigured Codex route indeterminate until native account validation", () => {
-    expect(
-      evaluate({
-        resolution: { ...dualRoutes, routes: [subscriptionRoute] },
-        syntheticAuthProviderRefs: ["codex"],
-      }),
-    ).toMatchObject({ availability: undefined, evidence: "synthetic" });
-  });
-
-  it("does not let invalid automatic profile evidence block synthetic Codex ownership", () => {
-    expect(
-      evaluate({
-        store: authStore({
-          "openai:invalid": { type: "api_key", provider: "openai", key: "" },
-        }),
-        syntheticAuthProviderRefs: ["codex"],
-      }),
-    ).toMatchObject({
-      availability: undefined,
-      evidence: "synthetic",
-      routeResolution: dualRoutes,
-    });
-  });
-
-  it("does not let Codex synthetic auth own an OpenClaw-only route", () => {
-    const openClawOnlyRoute = {
-      ...platformRoute,
-      runtimePolicy: { compatibleIds: ["openclaw"] },
-    } satisfies ProviderModelRouteCandidate;
-    expect(
-      evaluate({
-        resolution: {
-          kind: "routes",
-          defaultRuntimeId: "openclaw",
-          routes: [openClawOnlyRoute],
-        },
-        syntheticAuthProviderRefs: ["codex"],
-      }),
-    ).toMatchObject({
-      availability: false,
-      selectedRoute: openClawOnlyRoute,
     });
   });
 

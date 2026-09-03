@@ -819,7 +819,7 @@ export class ConfigPage extends OpenClawLightDomElement {
       })
       .catch(() => {
         if (isCurrent()) {
-          this.resetSessionObserverModels(true);
+          this.sessionObserverModelsUnavailable = true;
         }
       })
       .finally(() => {

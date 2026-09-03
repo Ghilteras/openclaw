@@ -19,6 +19,10 @@ import {
   replacePersistedPluginModelCatalogs,
 } from "./plugin-model-catalog.js";
 
+vi.mock("./cli-backends.js", () => ({
+  listCliRuntimeProviderIds: () => ["claude-cli"],
+}));
+
 function listPersistedPluginModelCatalogs(agentDir: string) {
   return loadPersistedPluginModelCatalogs(agentDir).catalogs;
 }
@@ -200,6 +204,47 @@ beforeEach(() => {
 });
 
 describe("models-config write serialization", () => {
+  it("drops retired generated providers while keeping a configured provider", async () => {
+    await withModelsTempHome(async (home) => {
+      const agentDir = path.join(home, "agent");
+      const configuredProvider = {
+        baseUrl: "https://models.example/v1",
+        api: "openai-completions",
+        apiKey: "configured-provider-key",
+        models: [{ id: "configured-model", name: "Configured model" }],
+      };
+      const existing = {
+        providers: {
+          "claude-cli": { baseUrl: "https://legacy.example", models: [] },
+          codex: { baseUrl: "https://legacy.example", models: [] },
+          "openai-codex": { baseUrl: "https://legacy.example", models: [] },
+          configured: configuredProvider,
+        },
+      };
+      await fs.mkdir(agentDir, { recursive: true });
+      await fs.writeFile(path.join(agentDir, "models.json"), `${JSON.stringify(existing)}\n`);
+      planOpenClawModelsJsonMock.mockImplementationOnce(
+        async (params: { existingParsed?: unknown }) => {
+          expect(params.existingParsed).toEqual({ providers: { configured: configuredProvider } });
+          return {
+            action: "write",
+            contents: `${JSON.stringify(params.existingParsed, null, 2)}\n`,
+          };
+        },
+      );
+
+      await ensureOpenClawModelsJson(
+        { models: { providers: { configured: configuredProvider } } },
+        agentDir,
+        { pluginMetadataSnapshot: createPluginMetadataSnapshot(path.join(home, "workspace")) },
+      );
+
+      expect(JSON.parse(await fs.readFile(path.join(agentDir, "models.json"), "utf8"))).toEqual({
+        providers: { configured: configuredProvider },
+      });
+    });
+  });
+
   it("materializes an authoritative plugin catalog replacement without mutating state", async () => {
     await withModelsTempHome(async (home) => {
       const agentDir = path.join(home, "agent");
@@ -414,6 +459,60 @@ describe("models-config write serialization", () => {
         pluginMetadataSnapshot,
       });
 
+      expect(planOpenClawModelsJsonMock).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("drops retired generated providers while preserving user-authored providers", async () => {
+    await withModelsTempHome(async (home) => {
+      const agentDir = path.join(home, "agent");
+      const userProvider = { baseUrl: "https://user.example/v1", models: [] };
+      await fs.mkdir(agentDir, { recursive: true });
+      await fs.writeFile(
+        path.join(agentDir, "models.json"),
+        JSON.stringify({
+          providers: {
+            "zai-retired": { baseUrl: "https://retired.example/v1", models: [] },
+            "user-authored": userProvider,
+          },
+        }),
+      );
+      replacePersistedPluginModelCatalogs({
+        agentDir,
+        pluginCatalogWrites: {
+          [encodePluginModelCatalogRelativePath("zai")]: JSON.stringify({
+            generatedBy: PLUGIN_MODEL_CATALOG_GENERATED_BY,
+            providers: {
+              zai: { baseUrl: "https://zai.example/v1", models: [] },
+            },
+          }),
+        },
+      });
+      const pluginMetadataSnapshot = {
+        index: { plugins: [{ pluginId: "zai", enabled: true }] },
+        normalizePluginId: (pluginId: string) => pluginId,
+        owners: {
+          providers: new Map([
+            ["zai-retired", ["zai"]],
+            ["zai", ["zai"]],
+          ]),
+          modelCatalogProviders: new Map(),
+          setupProviders: new Map(),
+        },
+      } as unknown as Pick<PluginMetadataSnapshot, "index" | "owners">;
+      planOpenClawModelsJsonMock.mockImplementation(
+        async (params: { existingParsed?: unknown }) => {
+          expect(params.existingParsed).toEqual({
+            providers: {
+              "user-authored": userProvider,
+              zai: { baseUrl: "https://zai.example/v1", models: [] },
+            },
+          });
+          return { action: "skip" };
+        },
+      );
+
+      await ensureOpenClawModelsJson({}, agentDir, { pluginMetadataSnapshot });
       expect(planOpenClawModelsJsonMock).toHaveBeenCalledOnce();
     });
   });

@@ -177,7 +177,7 @@ describe("ClawRouter cold prepared catalog", () => {
       snapshot: result.snapshot,
       metadataSnapshot: prepared.pluginGeneration.pluginMetadataSnapshot,
       preparedAuthStore: result.authStore,
-      preparedRuntimeAuthModes: result.authModes,
+      preparedProviderAuth: result.providerAuth,
     });
     const catalog = await buildModelsListResult({
       context: { getRuntimeConfig: () => config } as GatewayRequestContext,

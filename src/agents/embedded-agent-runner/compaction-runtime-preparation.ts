@@ -177,7 +177,6 @@ export async function prepareCompactionHarnessAuth(params: {
 }> {
   const runtimeAuthProfileStore = isOpenAIProvider(params.provider)
     ? ensureAuthProfileStore(params.agentDir, {
-        externalCliProviderIds: ["openai"],
         allowKeychainPrompt: false,
       })
     : ensureAuthProfileStoreWithoutExternalProfiles(params.agentDir, {
