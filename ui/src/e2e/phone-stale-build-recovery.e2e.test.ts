@@ -212,6 +212,7 @@ suite.define(() => {
           installedArtifacts.push(observation);
         }
         if (
+          proofIdentity.proofRevision === "head" &&
           expectedRevisionSha &&
           !installedArtifact.buildId?.includes(`-${expectedRevisionSha.slice(0, 12)}-`)
         ) {
