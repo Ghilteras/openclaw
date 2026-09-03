@@ -324,50 +324,43 @@ jobs:
             --fallback-ok \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Checkout selected ref for reachability fallback
-        if: steps.fast_ref.outputs.fallback == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ inputs.ref }}
-          path: source
-          fetch-depth: 0
-          filter: blob:none
-          sparse-checkout: package.json
-          sparse-checkout-cone-mode: false
-
-      - name: Resolve checked-out fallback SHA
+      - name: Validate fallback ref belongs to this repository
         if: steps.fast_ref.outputs.fallback == 'true'
         id: fallback_ref
-        working-directory: source
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Validate selected ref belongs to this repository
-        if: steps.fast_ref.outputs.fallback == 'true'
-        working-directory: source
         env:
+          FALLBACK_SHA: ${{ steps.fast_ref.outputs.sha }}
           RELEASE_REF: ${{ inputs.ref }}
           GITHUB_TOKEN: ${{ github.token }}
+          TRUSTED_REPOSITORY_URL: https://github.com/${{ github.repository }}.git
         run: |
           set -euo pipefail
-          SELECTED_SHA="$(git rev-parse HEAD)"
-          git_fetch_with_checkout_auth() {
+          SELECTED_SHA="$FALLBACK_SHA"
+          if [[ ! "$SELECTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Unable to resolve selected ref '${RELEASE_REF}' to a full commit SHA." >&2
+            exit 1
+          fi
+          target_repo="$(mktemp -d)"
+          trap 'rm -rf -- "$target_repo"' EXIT
+          git init --bare --quiet "$target_repo"
+          git_fetch_with_token() {
             local -a git_args=(git)
-            if ! git config --get-all http.https://github.com/.extraheader >/dev/null; then
+            if ! git -C "$target_repo" config --get-all http.https://github.com/.extraheader >/dev/null; then
               local auth_header
               auth_header="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
               git_args+=(-c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}")
             fi
-            timeout --signal=TERM --kill-after=10s 120s "${git_args[@]}" fetch "$@"
+            timeout --signal=TERM --kill-after=10s 120s "${git_args[@]}" -C "$target_repo" fetch "$@"
           }
-          git_fetch_with_checkout_auth --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
-          git_fetch_with_checkout_auth --tags origin '+refs/tags/*:refs/tags/*'
+          # Reachability needs only repository objects; do not materialize or execute target code.
+          git_fetch_with_token --no-tags "$TRUSTED_REPOSITORY_URL" '+refs/heads/*:refs/remotes/origin/*'
+          git_fetch_with_token --no-tags "$TRUSTED_REPOSITORY_URL" '+refs/tags/*:refs/tags/*'
 
-          if git tag --points-at "${SELECTED_SHA}" | grep -Eq '^v'; then
-            exit 0
+          if ! git -C "$target_repo" cat-file -e "${SELECTED_SHA}^{commit}"; then
+            echo "Ref '${RELEASE_REF}' resolved to ${SELECTED_SHA}, but that object is not a commit in this repository." >&2
+            exit 1
           fi
-
-          if git for-each-ref --format='%(refname:short)' --contains "${SELECTED_SHA}" refs/remotes/origin | grep -Eq '^origin/'; then
+          if git -C "$target_repo" for-each-ref --format='%(refname:short)' --contains "${SELECTED_SHA}" refs/remotes/origin refs/tags | grep -q .; then
+            echo "sha=${SELECTED_SHA,,}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 

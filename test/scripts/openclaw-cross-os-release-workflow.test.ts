@@ -245,6 +245,26 @@ describe("cross-OS release checks workflow", () => {
     );
   });
 
+  it("validates fallback release SHA reachability without checking out target code", () => {
+    const target = job(readWorkflow(RELEASE_CHECKS_PATH), "resolve_target");
+    const fallback = step(target, "Validate fallback ref belongs to this repository");
+
+    expect(
+      target.steps?.some(
+        (candidate) => candidate.name === "Checkout selected ref for reachability fallback",
+      ),
+    ).toBe(false);
+    expect(fallback.env).toMatchObject({
+      FALLBACK_SHA: "${{ steps.fast_ref.outputs.sha }}",
+      TRUSTED_REPOSITORY_URL: "https://github.com/${{ github.repository }}.git",
+    });
+    expect(fallback.run).toContain('git init --bare --quiet "$target_repo"');
+    expect(fallback.run).toContain('git -C "$target_repo" cat-file -e "${SELECTED_SHA}^{commit}"');
+    expect(fallback.run).toContain(
+      'git -C "$target_repo" for-each-ref --format=\'%(refname:short)\' --contains "${SELECTED_SHA}" refs/remotes/origin refs/tags',
+    );
+  });
+
   it("installs trusted workflow dependencies for artifact resolution and upgrade metadata", () => {
     const prepare = job(readWorkflow(WORKFLOW_PATH), "prepare");
     const install = step(prepare, "Install workflow validation dependencies");
