@@ -22,9 +22,11 @@ import {
   readSessionEntryCount,
   iterateSessionEntryKeys,
 } from "./session-accessor.sqlite-entry-store.js";
+import { readReferencedSessionIds } from "./session-accessor.sqlite-lifecycle-state.js";
 import { ensureTranscriptSessionRoot } from "./session-accessor.sqlite-transcript-state.js";
 
 const parseSessionEntryCalls = vi.hoisted(() => vi.fn());
+const parseReferenceEntryCalls = vi.hoisted(() => vi.fn());
 vi.mock("./session-accessor.sqlite-status.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./session-accessor.sqlite-status.js")>();
   return {
@@ -34,6 +36,8 @@ vi.mock("./session-accessor.sqlite-status.js", async (importOriginal) => {
       // share this decoder but are outside the cache work measured here.
       if (args[0].current_session_id === undefined) {
         parseSessionEntryCalls(args[0].entry_json);
+      } else {
+        parseReferenceEntryCalls(args[0].entry_json);
       }
       return actual.parseSessionEntryJson(...args);
     },
@@ -44,6 +48,7 @@ const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 beforeEach(() => {
   parseSessionEntryCalls.mockClear();
+  parseReferenceEntryCalls.mockReset();
 });
 
 afterEach(() => {
@@ -118,7 +123,294 @@ function createSessionScope(label: string) {
   };
 }
 
+describe("SQLite node reference protection", () => {
+  function insertNode(database: DatabaseSync, key: string, currentId: string, entry: unknown) {
+    database
+      .prepare(
+        "INSERT INTO session_nodes (session_key, current_session_id, entry_json, updated_at) VALUES (?, ?, ?, 1)",
+      )
+      .run(key, currentId, typeof entry === "string" ? entry : JSON.stringify(entry));
+  }
+
+  it("keeps raw identities, nested references and exclusions independent of listing parsing", () => {
+    const scope = createSessionScope("reference-shapes");
+    const database = openOpenClawAgentDatabase(scope);
+    insertNode(database.db, "nested", " current ", {
+      sessionId: " current ",
+      updatedAt: 2,
+      previousSessionId: " previous ",
+      usageFamilySessionIds: ["family", "previous"],
+      compactionCheckpoints: [
+        {
+          sessionId: "checkpoint",
+          preCompaction: { sessionId: "pre" },
+          postCompaction: { sessionId: "post" },
+        },
+      ],
+      skillsSnapshot: { prompt: "saved prompt must not be read", skills: [] },
+    });
+    insertNode(database.db, "broken", "raw-invalid", "{");
+    insertNode(database.db, "mismatch", "raw-mismatch", {
+      sessionId: "listed-only",
+      updatedAt: 1,
+      previousSessionId: "not-a-reference",
+    });
+    insertNode(database.db, "shared", "shared-current", {
+      sessionId: "shared-current",
+      updatedAt: 1,
+      previousSessionId: "previous",
+    });
+    const expected = new Set([
+      " current ",
+      "current",
+      "previous",
+      "family",
+      "checkpoint",
+      "pre",
+      "post",
+      "raw-invalid",
+      "raw-mismatch",
+      "shared-current",
+    ]);
+    parseReferenceEntryCalls.mockClear();
+    expect(readReferencedSessionIds(database)).toEqual(expected);
+    expect(parseReferenceEntryCalls.mock.calls.flat().join(" ")).not.toContain(
+      "saved prompt must not be read",
+    );
+    expect(readSessionEntryCache(database, { cache: true }).entries.has("nested")).toBe(false);
+    expect(
+      readSessionEntryCache(database, { cache: true }).entries.get("mismatch")?.sessionId,
+    ).toBe("listed-only");
+    expect(readReferencedSessionIds(database, new Set(["nested", "broken", "mismatch"]))).toEqual(
+      new Set(["shared-current", "previous"]),
+    );
+    expect(readReferencedSessionIds(database)).toEqual(expected);
+  });
+
+  it.each(["same connection", "external connection", "reopened handle"] as const)(
+    "observes new references before commit (%s)",
+    (kind) => {
+      const scope = createSessionScope("reference-invalidation");
+      let database = openOpenClawAgentDatabase(scope);
+      insertNode(database.db, scope.sessionKey, "current", { sessionId: "current", updatedAt: 1 });
+      expect(readReferencedSessionIds(database)).toEqual(new Set(["current"]));
+      const firstHandle = database.db;
+      if (kind === "reopened handle") {
+        closeOpenClawAgentDatabasesForTest();
+        database = openOpenClawAgentDatabase(scope);
+        expect(database.db === firstHandle).toBe(false);
+      }
+      const writer = kind === "external connection" ? new DatabaseSync(database.path) : database.db;
+      try {
+        writer.prepare("UPDATE session_nodes SET entry_json = ? WHERE session_key = ?").run(
+          JSON.stringify({
+            sessionId: "current",
+            updatedAt: 1,
+            previousSessionId: "new-reference",
+          }),
+          scope.sessionKey,
+        );
+      } finally {
+        if (writer !== database.db) {
+          writer.close();
+        }
+      }
+      runOpenClawAgentWriteTransaction((current) => {
+        expect(readReferencedSessionIds(current)).toEqual(new Set(["current", "new-reference"]));
+      }, scope);
+      expect(readReferencedSessionIds(database)).toEqual(new Set(["current", "new-reference"]));
+      database.db.prepare("DELETE FROM session_nodes WHERE session_key = ?").run(scope.sessionKey);
+      expect(readReferencedSessionIds(database)).toEqual(new Set());
+    },
+  );
+
+  it("excludes malformed target references without caching an incomplete owner inventory", () => {
+    const scope = createSessionScope("reference-excluded-invalid");
+    const database = openOpenClawAgentDatabase(scope);
+    insertNode(database.db, "survivor", "current", { sessionId: "current", updatedAt: 1 });
+    insertNode(database.db, "excluded", "excluded-current", {
+      sessionId: "excluded-current",
+      updatedAt: 1,
+      previousSessionId: 42,
+    });
+    expect(readReferencedSessionIds(database, new Set(["excluded"]))).toEqual(new Set(["current"]));
+    expect(() => readReferencedSessionIds(database)).toThrow(TypeError);
+  });
+
+  it("does not publish rolled-back references or install tracker DDL in a transaction", () => {
+    const scope = createSessionScope("reference-rollback");
+    const database = openOpenClawAgentDatabase(scope);
+    insertNode(database.db, scope.sessionKey, "current", { sessionId: "current", updatedAt: 1 });
+    const tempSchema = () =>
+      database.db.prepare("SELECT name, sql FROM sqlite_temp_schema ORDER BY name").all();
+    const coldSchema = tempSchema();
+    runOpenClawAgentWriteTransaction((current) => {
+      expect(readReferencedSessionIds(current)).toEqual(new Set(["current"]));
+      expect(tempSchema()).toEqual(coldSchema);
+    }, scope);
+    expect(readReferencedSessionIds(database)).toEqual(new Set(["current"]));
+    const warmSchema = tempSchema();
+    expect(() =>
+      runOpenClawAgentWriteTransaction((current) => {
+        current.db.prepare("UPDATE session_nodes SET entry_json = ? WHERE session_key = ?").run(
+          JSON.stringify({
+            sessionId: "current",
+            updatedAt: 1,
+            previousSessionId: "rolled-back",
+          }),
+          scope.sessionKey,
+        );
+        expect(readReferencedSessionIds(current)).toEqual(new Set(["current", "rolled-back"]));
+        current.db.exec("ALTER TABLE session_nodes ADD COLUMN reference_probe TEXT");
+        expect(readReferencedSessionIds(current)).toEqual(new Set(["current", "rolled-back"]));
+        expect(tempSchema()).toEqual(warmSchema);
+        throw new Error("rollback reference probe");
+      }, scope),
+    ).toThrow("rollback reference probe");
+    parseReferenceEntryCalls.mockClear();
+    expect(readReferencedSessionIds(database)).toEqual(new Set(["current"]));
+    expect(parseReferenceEntryCalls).not.toHaveBeenCalled();
+    database.db.exec("ALTER TABLE session_nodes ADD COLUMN reference_probe TEXT");
+    expect(readReferencedSessionIds(database)).toEqual(new Set(["current"]));
+    expect(parseReferenceEntryCalls).toHaveBeenCalledOnce();
+  });
+
+  it("does not certify an external commit that happens during reference loading", () => {
+    const scope = createSessionScope("reference-external-scan");
+    const database = openOpenClawAgentDatabase(scope);
+    insertNode(database.db, scope.sessionKey, "current", { sessionId: "current", updatedAt: 1 });
+    const external = new DatabaseSync(database.path);
+    try {
+      parseReferenceEntryCalls.mockImplementationOnce(() => {
+        external.prepare("UPDATE session_nodes SET entry_json = ? WHERE session_key = ?").run(
+          JSON.stringify({
+            sessionId: "current",
+            updatedAt: 1,
+            previousSessionId: "external-reference",
+          }),
+          scope.sessionKey,
+        );
+      });
+      expect(readReferencedSessionIds(database)).toEqual(new Set(["current"]));
+      runOpenClawAgentWriteTransaction((current) => {
+        expect(readReferencedSessionIds(current)).toEqual(
+          new Set(["current", "external-reference"]),
+        );
+      }, scope);
+    } finally {
+      external.close();
+    }
+  });
+
+  it("reads retained candidate windows freshly, with bounded batches and owner exclusions", () => {
+    const scope = createSessionScope("reference-window-candidates");
+    const database = openOpenClawAgentDatabase(scope);
+    insertNode(database.db, scope.sessionKey, "current", { sessionId: "current", updatedAt: 1 });
+    readReferencedSessionIds(database);
+    const ids = Array.from({ length: 1201 }, (_, index) => `history-${index}`);
+    runOpenClawAgentWriteTransaction((current) => {
+      current.db
+        .prepare("UPDATE session_nodes SET archived_at = 1 WHERE session_key = ?")
+        .run(scope.sessionKey);
+      const insert = current.db.prepare(
+        "INSERT INTO session_windows (session_id, session_key, created_at, updated_at) VALUES (?, ?, 1, 1)",
+      );
+      for (const id of ids) {
+        insert.run(id, scope.sessionKey);
+      }
+      expect(readReferencedSessionIds(current, undefined, ids.slice(1))).toEqual(
+        new Set(ids.slice(1)),
+      );
+      expect(readReferencedSessionIds(current, new Set([scope.sessionKey]), ids)).toEqual(
+        new Set(),
+      );
+    }, scope);
+    expect(readReferencedSessionIds(database)).toEqual(new Set(["current", ...ids]));
+    database.db
+      .prepare("UPDATE session_nodes SET archived_at = NULL WHERE session_key = ?")
+      .run(scope.sessionKey);
+    expect(readReferencedSessionIds(database, undefined, ids)).toEqual(new Set());
+  });
+});
+
 describe("SQLite session entry cache", () => {
+  it("reuses node references across window and FTS writes, including deletion transactions", async () => {
+    const scope = createSessionScope("reference-non-node-writes");
+    await upsertSessionEntryCore(scope, {
+      sessionId: "reference-current",
+      previousSessionId: "reference-previous",
+      updatedAt: 1,
+      skillsSnapshot: { prompt: "private saved prompt".repeat(1024), skills: [] },
+    });
+    const database = openOpenClawAgentDatabase(scope);
+    const expected = new Set(["reference-current", "reference-previous"]);
+    expect(readReferencedSessionIds(database)).toEqual(expected);
+    for (let index = 0; index < 3; index += 1) {
+      await appendTranscriptMessage(
+        { ...scope, sessionId: "reference-current" },
+        { message: { role: "user", content: "searchable reference probe" }, now: index + 2 },
+      );
+      parseReferenceEntryCalls.mockClear();
+      parseSessionEntryCalls.mockClear();
+      expect(readReferencedSessionIds(database)).toEqual(expected);
+      runOpenClawAgentWriteTransaction((current) => {
+        expect(readReferencedSessionIds(current)).toEqual(expected);
+      }, scope);
+      expect(parseReferenceEntryCalls).not.toHaveBeenCalled();
+      expect(parseSessionEntryCalls).not.toHaveBeenCalled();
+    }
+    expect(
+      database.db.prepare("SELECT count(*) AS count FROM session_transcript_fts").get(),
+    ).toEqual({ count: 3 });
+  });
+
+  it("patches reference membership after a tracked upsert without reparsing siblings", async () => {
+    const scope = createSessionScope("reference-tracked");
+    const sibling = { ...scope, sessionKey: "agent:main:reference-sibling" };
+    await upsertSessionEntryCore(scope, {
+      sessionId: "reference-current",
+      previousSessionId: "shared",
+      updatedAt: 1,
+    });
+    await upsertSessionEntryCore(sibling, {
+      sessionId: "sibling-current",
+      previousSessionId: "shared",
+      updatedAt: 1,
+    });
+    const database = openOpenClawAgentDatabase(scope);
+    readReferencedSessionIds(database);
+    await upsertSessionEntryCore(scope, {
+      sessionId: "reference-current",
+      previousSessionId: "replacement",
+      updatedAt: 2,
+    });
+    parseReferenceEntryCalls.mockClear();
+    expect(readReferencedSessionIds(database)).toEqual(
+      new Set(["reference-current", "replacement", "sibling-current", "shared"]),
+    );
+    expect(readReferencedSessionIds(database, new Set([sibling.sessionKey]))).toEqual(
+      new Set(["reference-current", "replacement"]),
+    );
+    expect(parseReferenceEntryCalls).not.toHaveBeenCalled();
+    // A tracked publication must not certify a raw sibling write that preceded it.
+    database.db.prepare("UPDATE session_nodes SET entry_json = ? WHERE session_key = ?").run(
+      JSON.stringify({
+        sessionId: "sibling-current",
+        updatedAt: 1,
+        previousSessionId: "raw-reference",
+      }),
+      sibling.sessionKey,
+    );
+    await upsertSessionEntryCore(scope, {
+      sessionId: "reference-current",
+      previousSessionId: "next-reference",
+      updatedAt: 3,
+    });
+    expect(readReferencedSessionIds(database)).toEqual(
+      new Set(["reference-current", "next-reference", "sibling-current", "raw-reference"]),
+    );
+  });
+
   it.each([
     ["malformed", "{", false],
     ["JSON5", '{sessionId:"raw",updatedAt:1}', false],

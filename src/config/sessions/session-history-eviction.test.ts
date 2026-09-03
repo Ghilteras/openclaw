@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   prepareSystemAgentRunAdmission,
@@ -669,6 +670,79 @@ describe("SQLite historical session disk budget", () => {
         }),
       ).toMatchObject({ deleted: true });
       expect(sessionExists("race-old")).toBe(false);
+    },
+  );
+
+  it.each(["same connection", "external connection"] as const)(
+    "rechecks cross-owner references written through a %s after materialization",
+    async (writerKind) => {
+      const sessionKey = "agent:main:reference-race";
+      const referringKey = "agent:main:reference-survivor";
+      await createHistoricalTranscript({
+        content: "retain cross-owner history",
+        nextSessionId: "reference-live",
+        sessionId: "reference-old",
+        sessionKey,
+        updatedAt: Date.now(),
+      });
+      const archive = await import("./session-accessor.sqlite-archive.js");
+      const materialize = archive.materializeSessionStateDeletePlans;
+      const materialization = vi
+        .spyOn(archive, "materializeSessionStateDeletePlans")
+        .mockImplementationOnce(async (plans) => {
+          const prepared = await materialize(plans);
+          const owner = database();
+          const writer =
+            writerKind === "external connection" ? new DatabaseSync(owner.path) : owner.db;
+          try {
+            writer
+              .prepare(
+                "INSERT INTO session_nodes (session_key, current_session_id, entry_json, updated_at) VALUES (?, ?, ?, 1)",
+              )
+              .run(
+                referringKey,
+                "survivor-current",
+                JSON.stringify({
+                  sessionId: "survivor-current",
+                  updatedAt: 1,
+                  usageFamilySessionIds: ["reference-old"],
+                }),
+              );
+          } finally {
+            if (writer !== owner.db) {
+              writer.close();
+            }
+          }
+          return prepared;
+        });
+      expect(
+        await enforceSqliteSessionHistoryDiskBudget({
+          storePath,
+          mode: "enforce",
+          maintenance: { maxDiskBytes: 1, highWaterBytes: 1 },
+        }),
+      ).toMatchObject({ removedEntries: 0 });
+      expect(materialization).toHaveBeenCalledOnce();
+      expect(
+        loadTranscriptEventsSync({ sessionId: "reference-old", sessionKey, storePath }),
+      ).not.toEqual([]);
+      expect(readArchiveNames("reference-old")).toEqual([]);
+      // Excluding the deliberately deleted owner must not exclude a surviving reference.
+      expect(
+        await deleteSessionEntryLifecycle({
+          storePath,
+          target: { canonicalKey: sessionKey, storeKeys: [sessionKey] },
+          archiveTranscript: true,
+        }),
+      ).toMatchObject({ deleted: true });
+      expect(sessionExists("reference-old")).toBe(true);
+      expect(
+        loadTranscriptEventsSync({
+          sessionId: "reference-old",
+          sessionKey: referringKey,
+          storePath,
+        }),
+      ).not.toEqual([]);
     },
   );
 

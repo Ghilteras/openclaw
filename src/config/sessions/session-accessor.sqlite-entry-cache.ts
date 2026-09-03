@@ -9,8 +9,13 @@ import {
   projectSqliteSessionParticipants,
   projectSqliteSessionParticipantsBatch,
 } from "./session-accessor.sqlite-participant-projection.js";
+import { collectSessionStateIdsForEntry } from "./session-accessor.sqlite-references.js";
 import { getSessionKysely } from "./session-accessor.sqlite-scope.js";
-import { parseSessionEntryJson, selectSessionEntryRows } from "./session-accessor.sqlite-status.js";
+import {
+  parseSessionEntryJson,
+  selectSessionEntryRows,
+  sessionEntryMetadataJson,
+} from "./session-accessor.sqlite-status.js";
 import type { SessionEntry } from "./types.js";
 
 type SessionEntryCacheDatabase = Pick<OpenClawAgentDatabase, "agentId" | "db">;
@@ -20,8 +25,18 @@ export type SessionEntryCacheSnapshot = {
   keys: string[];
 };
 
-type SqliteSessionEntryCache = SessionEntryCacheSnapshot & {
+type CachedProjection<T> = T & {
   validityToken: SqliteSessionEntryCacheValidityToken;
+};
+
+type SessionNodeReferences = {
+  byOwner: Map<string, readonly string[]>;
+  ownersById: Map<string, Set<string>>;
+};
+
+type SqliteSessionEntryCache = {
+  listing?: CachedProjection<SessionEntryCacheSnapshot>;
+  references?: CachedProjection<SessionNodeReferences>;
 };
 
 type SqliteSessionEntryCacheValidityToken = {
@@ -34,7 +49,8 @@ type SqliteSessionEntryCacheWriteGeneration = {
   before: number;
 };
 
-// Retain listing metadata only; complete prompt snapshots belong to the caller's full read.
+// Listing metadata and node references are lazy, independently validated projections;
+// complete prompt snapshots belong to the caller's full read.
 // Weak connection ownership lets closed read-only and evicted database handles release their
 // snapshots. The connection-local validity token plus tracked-write invalidation keeps live
 // snapshots current; narrow tracked upserts patch one authoritative row after commit, while
@@ -51,7 +67,7 @@ function readDataVersion(database: DatabaseSync): number {
   return row.data_version;
 }
 
-function ensureSessionNodesGenerationTracker(database: DatabaseSync): void {
+function ensureSessionNodesGenerationTracker(database: DatabaseSync): boolean {
   const schemaRow = database.prepare("PRAGMA schema_version").get() as {
     schema_version?: unknown;
   };
@@ -60,7 +76,12 @@ function ensureSessionNodesGenerationTracker(database: DatabaseSync): void {
   }
   const trackedSchemaVersion = sessionNodesGenerationTrackerSchemaVersions.get(database);
   if (trackedSchemaVersion === schemaRow.schema_version) {
-    return;
+    return true;
+  }
+  // A transaction may inspect fresh rows, but must not install or publish a tracker
+  // whose DDL/generation could roll back. Warm it only outside the commit boundary.
+  if (database.isTransaction) {
+    return false;
   }
   // sqlite-allow-raw -- TEMP triggers are the connection-local ownership boundary: they
   // observe unpublished raw DML. A main-schema change bumps the generation before reinstalling
@@ -80,10 +101,13 @@ function ensureSessionNodesGenerationTracker(database: DatabaseSync): void {
       AFTER DELETE ON main.session_nodes BEGIN UPDATE openclaw_session_nodes_cache_generation SET generation = generation + 1 WHERE id = 1; END;
   `);
   sessionNodesGenerationTrackerSchemaVersions.set(database, schemaRow.schema_version);
+  return true;
 }
 
-function readSessionNodesGeneration(database: DatabaseSync): number {
-  ensureSessionNodesGenerationTracker(database);
+function readSessionNodesGeneration(database: DatabaseSync): number | undefined {
+  if (!ensureSessionNodesGenerationTracker(database)) {
+    return undefined;
+  }
   const row = database
     .prepare("SELECT generation FROM temp.openclaw_session_nodes_cache_generation WHERE id = 1")
     .get() as { generation?: unknown };
@@ -93,10 +117,16 @@ function readSessionNodesGeneration(database: DatabaseSync): number {
   return row.generation;
 }
 
-function readCacheValidityToken(database: DatabaseSync): SqliteSessionEntryCacheValidityToken {
+function readCacheValidityToken(
+  database: DatabaseSync,
+): SqliteSessionEntryCacheValidityToken | undefined {
+  const sessionNodesGeneration = readSessionNodesGeneration(database);
+  if (sessionNodesGeneration === undefined) {
+    return undefined;
+  }
   return {
     dataVersion: readDataVersion(database),
-    sessionNodesGeneration: readSessionNodesGeneration(database),
+    sessionNodesGeneration,
   };
 }
 
@@ -119,9 +149,91 @@ export function trackSessionEntryCacheWrite(
     ? readSessionNodesGeneration(database.db)
     : undefined;
   write();
-  return before === undefined
-    ? undefined
-    : { before, after: readSessionNodesGeneration(database.db) };
+  const after = before === undefined ? undefined : readSessionNodesGeneration(database.db);
+  return before === undefined || after === undefined ? undefined : { before, after };
+}
+
+function selectSessionNodeReferences(database: SessionEntryCacheDatabase) {
+  return getSessionKysely(database.db)
+    .selectFrom("session_nodes")
+    .select([sessionEntryMetadataJson, "current_session_id", "session_key"]);
+}
+
+function collectSessionNodeReferences(row: { current_session_id: string; entry_json: string }) {
+  const entry = parseSessionEntryJson(row);
+  // Raw current ids protect even malformed nodes; listing identity checks differ.
+  return [
+    ...new Set([row.current_session_id, ...(entry ? collectSessionStateIdsForEntry(entry) : [])]),
+  ];
+}
+
+function replaceSessionNodeReferences(
+  references: SessionNodeReferences,
+  sessionKey: string,
+  sessionIds: readonly string[],
+): void {
+  for (const id of references.byOwner.get(sessionKey) ?? []) {
+    const owners = references.ownersById.get(id)!;
+    owners.delete(sessionKey);
+    if (owners.size === 0) {
+      references.ownersById.delete(id);
+    }
+  }
+  references.byOwner.set(sessionKey, sessionIds);
+  for (const id of sessionIds) {
+    const owners = references.ownersById.get(id) ?? new Set<string>();
+    owners.add(sessionKey);
+    references.ownersById.set(id, owners);
+  }
+}
+
+/** Node-only protection. Window ownership, admissions and recency are always read live. */
+export function readSessionNodeReferences(
+  database: SessionEntryCacheDatabase,
+  excludedSessionKeys: ReadonlySet<string>,
+  candidateSessionIds?: readonly string[],
+): Set<string> {
+  const validityToken = readCacheValidityToken(database.db);
+  const cache = sessionEntryCaches.get(database.db) ?? {};
+  const references = cache.references;
+  if (
+    !references ||
+    !validityToken ||
+    !cacheValidityTokensEqual(references.validityToken, validityToken)
+  ) {
+    const loaded: SessionNodeReferences = { byOwner: new Map(), ownersById: new Map() };
+    for (const row of iterateSqliteQuerySync(database.db, selectSessionNodeReferences(database))) {
+      if (excludedSessionKeys.has(row.session_key)) {
+        continue;
+      }
+      replaceSessionNodeReferences(loaded, row.session_key, collectSessionNodeReferences(row));
+    }
+    // Capture the pre-read token: an external commit during the scan must invalidate
+    // the next use. Neither uncommitted nor owner-excluding scans certify a full projection.
+    if (validityToken && !database.db.isTransaction && excludedSessionKeys.size === 0) {
+      cache.references = { ...loaded, validityToken };
+      sessionEntryCaches.set(database.db, cache);
+    }
+    return selectReferencedSessionIds(loaded, excludedSessionKeys, candidateSessionIds);
+  }
+  return selectReferencedSessionIds(references, excludedSessionKeys, candidateSessionIds);
+}
+
+function selectReferencedSessionIds(
+  references: SessionNodeReferences,
+  excludedSessionKeys: ReadonlySet<string>,
+  candidateSessionIds?: readonly string[],
+): Set<string> {
+  const sessionIds = new Set<string>();
+  for (const id of candidateSessionIds ?? references.ownersById.keys()) {
+    for (const owner of references.ownersById.get(id) ?? []) {
+      if (!excludedSessionKeys.has(owner)) {
+        sessionIds.add(id);
+        break;
+      }
+    }
+  }
+  return sessionIds;
 }
 
 function loadSessionEntrySnapshot(
@@ -163,15 +275,20 @@ export function readSessionEntryCache(
     return loadSessionEntrySnapshot(database, options.projection);
   }
   const validityToken = readCacheValidityToken(database.db);
-  const cached = sessionEntryCaches.get(database.db);
-  if (cached && cacheValidityTokensEqual(cached.validityToken, validityToken)) {
+  const cache = sessionEntryCaches.get(database.db) ?? {};
+  const cached = cache.listing;
+  if (cached && validityToken && cacheValidityTokensEqual(cached.validityToken, validityToken)) {
     return cached;
   }
   // Only tracked publications identify changed rows. A generation gap can contain
   // same-timestamp or owner-only edits; updated_at cannot validate a partial reload.
   const loaded = loadSessionEntrySnapshot(database);
+  if (!validityToken) {
+    return loaded;
+  }
   const next = { ...loaded, validityToken };
-  sessionEntryCaches.set(database.db, next);
+  cache.listing = next;
+  sessionEntryCaches.set(database.db, cache);
   return next;
 }
 
@@ -219,7 +336,7 @@ function publishSqliteSessionEntryCacheUpsert(
   }
   const entry = projectSqliteSessionParticipants(database.db, sessionKey, parsedEntry);
   publishTrackedCacheUpdate(database, () => {
-    const cached = sessionEntryCaches.get(database.db);
+    const cached = sessionEntryCaches.get(database.db)?.listing;
     if (!cached) {
       return;
     }
@@ -248,7 +365,29 @@ export function publishSessionEntryCacheInvalidation(
   writeGeneration?: SqliteSessionEntryCacheWriteGeneration,
 ): void {
   if (update && writeGeneration) {
-    publishSqliteSessionEntryCacheUpsert(database, update, writeGeneration);
+    if (sessionEntryCaches.get(database.db)?.listing) {
+      publishSqliteSessionEntryCacheUpsert(database, update, writeGeneration);
+    }
+    if (sessionEntryCaches.get(database.db)?.references) {
+      const row = executeSqliteQuerySync(
+        database.db,
+        selectSessionNodeReferences(database).where("session_key", "=", update.sessionKey),
+      ).rows[0];
+      const sessionIds = row ? collectSessionNodeReferences(row) : [];
+      publishTrackedCacheUpdate(database, () => {
+        const cached = sessionEntryCaches.get(database.db)?.references;
+        if (!cached) {
+          return;
+        }
+        replaceSessionNodeReferences(cached, update.sessionKey, sessionIds);
+        if (cached.validityToken.sessionNodesGeneration === writeGeneration.before) {
+          cached.validityToken = {
+            ...cached.validityToken,
+            sessionNodesGeneration: writeGeneration.after,
+          };
+        }
+      });
+    }
     return;
   }
   // A cold write has no snapshot to patch; do not hydrate owner/participants or prompt JSON.

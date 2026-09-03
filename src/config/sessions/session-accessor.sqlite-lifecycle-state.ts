@@ -12,6 +12,7 @@ import {
   type OpenClawAgentDatabase,
   type OpenClawAgentDatabaseOptions,
 } from "../../state/openclaw-agent-db.js";
+import { chunkItems } from "../../utils/chunk-items.js";
 import { persistSessionTranscriptArchive } from "./session-accessor.sqlite-archive-store.js";
 import type {
   MaterializedSessionStateDeletePlan,
@@ -26,6 +27,7 @@ import {
   readSessionStateDeleteSnapshot,
   sqliteSessionStateDeleteSnapshotsEqual,
 } from "./session-accessor.sqlite-delete-snapshot.js";
+import { readSessionNodeReferences } from "./session-accessor.sqlite-entry-cache.js";
 import { sqliteSessionEntriesEqual } from "./session-accessor.sqlite-entry-equality.js";
 import {
   deleteSessionEntryRows,
@@ -40,10 +42,6 @@ import type {
 } from "./session-accessor.sqlite-lifecycle-types.js";
 import { collectSessionStateIdsForEntry } from "./session-accessor.sqlite-references.js";
 import { cloneSessionEntry, getSessionKysely } from "./session-accessor.sqlite-scope.js";
-import {
-  parseSessionEntryJson as parseSessionEntryRow,
-  sessionEntryMetadataJson,
-} from "./session-accessor.sqlite-status.js";
 import { deleteSessionTranscriptIndexInTransaction } from "./session-transcript-index.js";
 import type { SessionEntry } from "./types.js";
 
@@ -162,34 +160,21 @@ function sqliteTranscriptStateHasMarker(params: {
 export function readReferencedSessionIds(
   database: OpenClawAgentDatabase,
   excludedSessionKeys: ReadonlySet<string> = new Set(),
+  candidateSessionIds?: readonly string[],
 ): Set<string> {
-  const db = getSessionKysely(database.db);
-  const rows = iterateSqliteQuerySync(
-    database.db,
-    db
-      .selectFrom("session_nodes")
-      .select([sessionEntryMetadataJson, "current_session_id", "session_key"]),
-  );
-  const sessionIds = new Set<string>();
-  for (const row of rows) {
-    if (excludedSessionKeys.has(row.session_key)) {
-      continue;
-    }
-    sessionIds.add(row.current_session_id);
-    const entry = parseSessionEntryRow(row);
-    if (!entry) {
-      continue;
-    }
-    for (const sessionId of collectSessionStateIdsForEntry(entry)) {
-      sessionIds.add(sessionId);
-    }
+  if (candidateSessionIds?.length === 0) {
+    return new Set();
   }
+  const db = getSessionKysely(database.db);
+  const sessionIds = readSessionNodeReferences(database, excludedSessionKeys, candidateSessionIds);
   // A retained logical owner protects all its history, even generations omitted from
   // entry references. Explicit reset/delete excludes its target owner; automatic deletion
   // rechecks this relation inside its commit after archive materialization has awaited.
-  for (const row of iterateSqliteQuerySync(
-    database.db,
-    db
+  // Inventory callers need every retained window; deletion only needs its candidates.
+  // Bound parameters independently of the number of planned lifecycle generations.
+  const batches = candidateSessionIds ? chunkItems(candidateSessionIds, 400) : [undefined];
+  for (const batch of batches) {
+    let query = db
       .selectFrom("session_windows")
       .innerJoin("session_nodes", "session_nodes.session_key", "session_windows.session_key")
       .select(["session_windows.session_id", "session_nodes.session_key"])
@@ -198,10 +183,14 @@ export function readReferencedSessionIds(
           eb("session_nodes.archived_at", "is not", null),
           eb("session_nodes.pinned_at", "is not", null),
         ]),
-      ),
-  )) {
-    if (!excludedSessionKeys.has(row.session_key)) {
-      sessionIds.add(row.session_id);
+      );
+    if (batch) {
+      query = query.where("session_windows.session_id", "in", batch);
+    }
+    for (const row of iterateSqliteQuerySync(database.db, query)) {
+      if (!excludedSessionKeys.has(row.session_key)) {
+        sessionIds.add(row.session_id);
+      }
     }
   }
   return sessionIds;
@@ -261,7 +250,11 @@ export function deleteMaterializedSessionStatePlans(
     return [];
   }
   const archivedTranscripts: SessionLifecycleArchivedTranscript[] = [];
-  const referencedSessionIds = readReferencedSessionIds(database, excludedSessionKeys);
+  const referencedSessionIds = readReferencedSessionIds(
+    database,
+    excludedSessionKeys,
+    plans.map((plan) => plan.sessionId),
+  );
   for (const sessionId of protectedSessionIds ?? []) {
     referencedSessionIds.add(sessionId);
   }
