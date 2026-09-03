@@ -2923,7 +2923,7 @@ src/gateway/server-methods/terminal.ts	6
 src/gateway/server-methods/tools-catalog.ts	2
 src/gateway/server-methods/ui-command.ts	1
 src/gateway/server-methods/update.ts	2
-src/gateway/server-methods/web.ts	3
+src/gateway/server-methods/web.ts	1
 src/gateway/server-methods/wizard.ts	1
 src/gateway/server-methods/workspace-fs.ts	2
 src/gateway/server-node-events.ts	3
@@ -3916,7 +3916,6 @@ ui/src/lib/board/widget-bridge.ts	3
 ui/src/lib/board/widget-sandbox-host.ts	1
 ui/src/lib/board/widgets/workboard-card.ts	3
 ui/src/lib/board/widgets/workboard-widget.ts	2
-ui/src/lib/channels/index.ts	3
 ui/src/lib/chat/message-extract.ts	5
 ui/src/lib/chat/message-normalizer.ts	2
 ui/src/lib/chat/outbox-store-codec.ts	1
