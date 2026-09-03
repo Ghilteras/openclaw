@@ -16,10 +16,12 @@ vi.mock("../logging/subsystem.js", async (importOriginal) => {
 });
 
 describe("prepareWorkerGitHubEnvironment", () => {
+  const remoteUrl = "https://github.com/openclaw/worker-fixture.git";
   const binding = {
     token: "worker-checkout-synthetic-token",
     login: "worker-fixture",
     branch: "openclaw/session-fixture",
+    remoteUrl,
     gitAuthor: { name: "Worker Fixture", email: "worker@openclaw.invalid" },
   };
   const filename = " reconciled file.txt";
@@ -81,6 +83,8 @@ describe("prepareWorkerGitHubEnvironment", () => {
     vi.stubEnv("GIT_CONFIG_COUNT", "0");
     await fs.mkdir(cwd);
     await git(root, "init", "--quiet", "--bare", "origin.git");
+    // The binding rewrites origin to the verified GitHub URL; route it to the local bare repo.
+    await git(root, "config", "--global", `url.${origin}.insteadOf`, remoteUrl);
     await git(cwd, "init", "--quiet", `--initial-branch=${binding.branch}`);
     initialHead = await commit(cwd, "Initial commit");
     await git(cwd, "remote", "add", "origin", origin);
@@ -137,6 +141,23 @@ describe("prepareWorkerGitHubEnvironment", () => {
     expect(warn).toHaveBeenCalledExactlyOnceWith(expect.stringContaining(binding.branch));
     expect(warn.mock.lastCall?.[0]).toContain(localHead.slice(0, 7));
     expect(warn.mock.lastCall?.[0]).toContain(remoteHead.slice(0, 7));
+  });
+
+  it("never fetches or fast-forwards without a verified GitHub origin", async () => {
+    const remoteHead = await publishEarlierTurn();
+    const { remoteUrl: _omitted, ...withoutRemote } = binding;
+
+    await prepareWorkerGitHubEnvironment({
+      binding: withoutRemote,
+      stateDir: path.join(root, "state"),
+      runId: "turn",
+      cwd,
+    });
+
+    expect((await git(cwd, "rev-parse", "HEAD")).trim()).toBe(initialHead);
+    expect(remoteHead).not.toBe(initialHead);
+    await expect(git(cwd, "rev-parse", "--verify", "FETCH_HEAD")).rejects.toThrow();
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("silently leaves the checkout alone when the session branch does not exist on origin", async () => {

@@ -52,7 +52,11 @@ async function bindWorkerGitHubCheckout(
     }
     // Reconciliation returns files, not commits; origin holds this session's own pushed history.
     // A fast-forward only adds session commits while preserving reconciled working-tree bytes.
-    // Leave divergence for the agent to resolve.
+    // Leave divergence for the agent to resolve. Only the verified GitHub origin the Gateway
+    // named may receive the token-bound fetch; a binding without one keeps its checkout as is.
+    if (!binding.remoteUrl) {
+      return;
+    }
     const fetched = await git(["fetch", "--quiet", "origin", binding.branch], 60_000);
     if (fetched.code !== 0) {
       if (fetched.stderr.includes("couldn't find remote ref")) {
