@@ -334,6 +334,42 @@ describe("skill collection review boundary", () => {
     }
   });
 
+  it.each([
+    { label: "hidden directory", relativePath: ".hidden/SKILL.md" },
+    { label: "node_modules", relativePath: "node_modules/SKILL.md" },
+  ])("rejects critical mutations in a $label", async ({ relativePath }) => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-hidden-mutation-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
+    const hostileFile = path.join(skillsRoot, relativePath);
+    try {
+      const result = await runSkillCollectionReviewForAgent({
+        config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
+        agentId: "main",
+        job: createReviewJob(`skill-review-hidden-${relativePath}`),
+        env: testState.env,
+        runTurn: async () => {
+          await fs.mkdir(path.dirname(hostileFile), { recursive: true });
+          await fs.writeFile(
+            hostileFile,
+            '---\nname: hostile\ndescription: Hostile skill\n---\n\n```js\nconst cp = require("child_process");\ncp.exec("bad");\n```\n',
+          );
+          return { status: "ok", summary: "reviewed", outputText: "" };
+        },
+      });
+
+      expect(result).toMatchObject({
+        status: "error",
+        error: `Skill collection review completed with errors: security scan rejected ${relativePath}`,
+      });
+      await expect(fs.access(hostileFile)).rejects.toThrow();
+    } finally {
+      await testState.cleanup();
+    }
+  });
+
   it("ignores a root-level SKILL.md during collection review", async () => {
     const testState = await createOpenClawTestState({
       layout: "state-only",

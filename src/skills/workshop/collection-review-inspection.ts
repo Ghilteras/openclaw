@@ -168,7 +168,6 @@ export async function snapshotWorkshopSkillFiles(
     maxEntries: MAX_WORKSHOP_REVIEW_ENTRIES,
     symlinks: "skip",
     include: (entry) => entry.kind === "file",
-    descend: (entry) => !entry.name.startsWith(".") && entry.name !== "node_modules",
   });
   if (walked.truncated || walked.failedDirs?.length) {
     throw new Error(
