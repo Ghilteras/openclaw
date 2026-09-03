@@ -221,6 +221,28 @@ describe("Telegram userbot driver runtime", () => {
     await driver.close();
   });
 
+  it("surfaces a chat preflight failure before readiness", async () => {
+    const scriptPath = path.join(tempRoot(), "unwritable-chat-driver.py");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "import sys",
+        "print('Telegram tester cannot send basic messages to the selected chat.', file=sys.stderr)",
+        "raise SystemExit(1)",
+      ].join("\n"),
+    );
+
+    await expect(
+      TelegramUserbotDriver.start({
+        chatId: "-1001",
+        driverEnv: {},
+        leaseHealth: { assertHealthy() {}, whenUnhealthy: new Promise<Error>(() => {}) },
+        userDriverPath: scriptPath,
+        onUpdate() {},
+      }),
+    ).rejects.toThrow(/exited before cleanup.*cannot send basic messages/u);
+  });
+
   it("loads the selected repository skill from a different working directory", async () => {
     const repoRoot = tempRoot();
     const skillPath = path.join(repoRoot, ".agents", "skills", "telegram-e2e-userbot");

@@ -24,19 +24,29 @@ export async function runTelegramTestDoctor({
   let proxy;
   try {
     const driverEnv = { ...sanitizeChildEnvironment(), ...credential.driverEnv };
-    const status = await runCommandImpl("uv", ["run", USER_DRIVER_PATH, "status", "--json"], {
-      cwd: process.cwd(),
-      env: driverEnv,
-      leaseFailure,
-      timeoutMs: 30_000,
-    });
-    if (status.status !== 0 || status.timedOut) {
+    const status = await runCommandImpl(
+      "uv",
+      ["run", USER_DRIVER_PATH, "status", "--json", "--chat", credential.groupId],
+      {
+        cwd: process.cwd(),
+        env: driverEnv,
+        leaseFailure,
+        timeoutMs: 30_000,
+      },
+    );
+    if (status.timedOut) {
       throw new Error("TDLib Test Server user session is not authorized.");
     }
-    const driver = JSON.parse(status.stdout);
+    let driver;
+    try {
+      driver = JSON.parse(status.stdout);
+    } catch {
+      throw new Error("TDLib Test Server user session is not authorized.");
+    }
+    if (driver.authorized !== true) {
+      throw new Error("TDLib Test Server user session is not authorized.");
+    }
     if (
-      driver.ok !== true ||
-      driver.authorized !== true ||
       driver.testDc !== true ||
       driver.tdlibVersion !== credential.tdlibVersion ||
       String(driver.user?.id) !== credential.testerUserId
@@ -71,9 +81,7 @@ export async function runTelegramTestDoctor({
     ) {
       throw new Error("Telegram Test Server bot identity does not match the lease.");
     }
-    if (bot.result?.can_read_all_group_messages !== true) {
-      throw new Error("Telegram Test Server bot group privacy is enabled.");
-    }
+    const groupPrivacyDisabled = bot.result?.can_read_all_group_messages === true;
     const membershipResponse = await fetchWithLease(
       `${proxy.apiRoot}/bot${credential.sutToken}/getChatMember`,
       {
@@ -89,15 +97,20 @@ export async function runTelegramTestDoctor({
     );
     const membership = await membershipResponse.json().catch(() => ({}));
     lease.assertHealthy();
-    if (
-      !membershipResponse.ok ||
-      membership.ok !== true ||
-      !["administrator", "creator", "member"].includes(membership.result?.status)
-    ) {
-      throw new Error("Telegram Test Server bot is not an active member of the test group.");
+    if (!membershipResponse.ok || membership.ok !== true) {
+      throw new Error("Telegram Test Server Bot API membership request failed.");
     }
+    const sutBotGroupMembership = ["administrator", "creator", "member"].includes(
+      membership.result?.status,
+    );
+    const testerGroupMembership = driver.testerGroupMembership === true;
+    const testerCanSendBasicMessages = driver.testerCanSendBasicMessages === true;
     return {
-      ok: true,
+      ok:
+        testerGroupMembership &&
+        testerCanSendBasicMessages &&
+        groupPrivacyDisabled &&
+        sutBotGroupMembership,
       credentialSource: "convex",
       credentialLoaded: true,
       isolatedTdlibState: true,
@@ -105,8 +118,10 @@ export async function runTelegramTestDoctor({
       tdlibAuthorized: true,
       botApiProxy: true,
       sutBot: true,
-      groupPrivacyDisabled: true,
-      groupMembership: true,
+      groupPrivacyDisabled,
+      testerGroupMembership,
+      testerCanSendBasicMessages,
+      sutBotGroupMembership,
     };
   } finally {
     await proxy?.close();
@@ -116,7 +131,12 @@ export async function runTelegramTestDoctor({
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runTelegramTestDoctor()
-    .then((result) => console.log(JSON.stringify(result)))
+    .then((result) => {
+      console.log(JSON.stringify(result));
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+    })
     .catch((error) => {
       console.error(
         JSON.stringify({

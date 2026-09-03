@@ -377,11 +377,13 @@ describe("Telegram QA transport adapter", () => {
   it("releases the lease when userbot startup fails", async () => {
     const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "telegram-adapter-failure-test-"));
     mocks.createStateRoot.mockReturnValueOnce(stateRoot);
-    mocks.userbotStart.mockRejectedValueOnce(new Error("authorization failed"));
+    mocks.userbotStart.mockRejectedValueOnce(
+      new Error("Telegram tester cannot send basic messages to the selected chat."),
+    );
 
     await expect(
       createTelegramQaTransportAdapter({ adapterOptions: {}, messages: {} } as never),
-    ).rejects.toThrow("authorization failed");
+    ).rejects.toThrow("cannot send basic messages");
 
     expect(mocks.proxyClose).toHaveBeenCalledOnce();
     expect(mocks.heartbeatStop).toHaveBeenCalledOnce();
