@@ -1,6 +1,16 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   MOBILE_PAIRING_AUDIT_CLIENT,
@@ -271,11 +281,21 @@ describe("upgrade survivor mobile pairing client", () => {
     expect(nextParams.auth).toEqual({ token: "node-token-2" });
   });
 
-  it("requires clean paired device and node stores for the mobile identity", () => {
+  it("accepts only the known node authority expansion for the mobile identity", () => {
+    const pairedNode = {
+      nodeId: "device-1",
+      commands: ["camera.snap"],
+      caps: ["camera"],
+      permissions: { camera: false, screenRecording: true },
+    };
+    const pendingNode = {
+      ...pairedNode,
+      commands: ["watch.status", "camera.snap", "watch.notify"],
+    };
     expect(
       validatePairingAudit({
         devicePairing: { pending: [], paired: [{ deviceId: "device-1" }] },
-        nodePairing: { pending: [], paired: [{ nodeId: "device-1" }] },
+        nodePairing: { pending: [], paired: [pairedNode] },
         deviceId: "device-1",
       }),
     ).toEqual({
@@ -283,14 +303,68 @@ describe("upgrade survivor mobile pairing client", () => {
       pendingNodePairingCount: 0,
       pairedDevicePresent: true,
       pairedNodePresent: true,
+      nodeSurfaceReapprovalRequired: false,
+      nodeSurfaceCommandAdditions: [],
+    });
+    expect(
+      validatePairingAudit({
+        devicePairing: { pending: [], paired: [{ deviceId: "device-1" }] },
+        nodePairing: { pending: [pendingNode], paired: [pairedNode] },
+        deviceId: "device-1",
+        allowKnownNodeSurfaceUpgrade: true,
+      }),
+    ).toEqual({
+      pendingDevicePairingCount: 0,
+      pendingNodePairingCount: 1,
+      pairedDevicePresent: true,
+      pairedNodePresent: true,
+      nodeSurfaceReapprovalRequired: true,
+      nodeSurfaceCommandAdditions: ["watch.notify", "watch.status"],
     });
     expect(() =>
       validatePairingAudit({
         devicePairing: { pending: [], paired: [{ deviceId: "device-1" }] },
-        nodePairing: { pending: [{ nodeId: "device-1" }], paired: [] },
+        nodePairing: { pending: [pendingNode], paired: [pairedNode] },
         deviceId: "device-1",
       }),
-    ).toThrow(/node pairing left a pending request/);
+    ).toThrow(/unexpected pending request/);
+    for (const invalidPending of [
+      { ...pendingNode, nodeId: "device-2" },
+      { ...pendingNode, commands: ["camera.snap", "watch.status"] },
+      { ...pendingNode, caps: ["camera", "microphone"] },
+      { ...pendingNode, permissions: { camera: true, screenRecording: true } },
+    ]) {
+      expect(() =>
+        validatePairingAudit({
+          devicePairing: { pending: [], paired: [{ deviceId: "device-1" }] },
+          nodePairing: { pending: [invalidPending], paired: [pairedNode] },
+          deviceId: "device-1",
+          allowKnownNodeSurfaceUpgrade: true,
+        }),
+      ).toThrow();
+    }
+    for (const narrowedPending of [
+      { ...pendingNode, commands: ["watch.notify", "watch.status"] },
+      { ...pendingNode, caps: [] },
+      { ...pendingNode, permissions: { camera: false } },
+    ]) {
+      expect(() =>
+        validatePairingAudit({
+          devicePairing: { pending: [], paired: [{ deviceId: "device-1" }] },
+          nodePairing: { pending: [narrowedPending], paired: [pairedNode] },
+          deviceId: "device-1",
+          allowKnownNodeSurfaceUpgrade: true,
+        }),
+      ).not.toThrow();
+    }
+    expect(() =>
+      validatePairingAudit({
+        devicePairing: { pending: [], paired: [{ deviceId: "device-1" }] },
+        nodePairing: { pending: [pendingNode, pendingNode], paired: [pairedNode] },
+        deviceId: "device-1",
+        allowKnownNodeSurfaceUpgrade: true,
+      }),
+    ).toThrow(/unexpected pending request/);
   });
 
   it("completes legacy baseline node pairing only for the bootstrapped identity", async () => {
@@ -400,6 +474,8 @@ describe("upgrade survivor mobile pairing client", () => {
           pendingNodePairingCount: 0,
           pairedDevicePresent: true,
           pairedNodePresent: true,
+          nodeSurfaceReapprovalRequired: false,
+          nodeSurfaceCommandAdditions: [],
         },
       }),
     );
@@ -417,6 +493,8 @@ describe("upgrade survivor mobile pairing client", () => {
       pendingNodePairingCount: 0,
       pairedDevicePresent: true,
       pairedNodePresent: true,
+      nodeSurfaceReapprovalRequired: false,
+      nodeSurfaceCommandAdditions: [],
       missingPasswordReason: true,
       missingPasswordClose1008: true,
       credentials: {
@@ -468,17 +546,140 @@ describe("upgrade survivor mobile pairing client", () => {
     const source = readFileSync(RUNNER_PATH, "utf8");
     const bootstrap = source.indexOf("phase bootstrap-mobile-pairing bootstrap_mobile_pairing");
     const update = source.indexOf("phase update-candidate update_candidate");
+    const automaticMigration = source.indexOf("phase assert-automatic-migration assert_survival");
+    const historicalPrestart = source.indexOf(
+      "phase assert-historical-package-replacement-prestart",
+    );
     const candidateFirst = source.indexOf("phase mobile-pairing-candidate-first");
+    const historicalStartupRepair = source.indexOf(
+      "phase assert-historical-package-replacement-startup-repair",
+    );
     const candidateRestart = source.indexOf("phase mobile-pairing-candidate-restart");
     const doctor = source.indexOf("phase doctor run_doctor");
     const final = source.indexOf("phase mobile-pairing-final");
 
     expect(bootstrap).toBeGreaterThan(-1);
     expect(bootstrap).toBeLessThan(update);
+    expect(update).toBeLessThan(automaticMigration);
+    expect(automaticMigration).toBeLessThan(candidateFirst);
+    expect(update).toBeLessThan(historicalPrestart);
+    expect(historicalPrestart).toBeLessThan(candidateFirst);
     expect(update).toBeLessThan(candidateFirst);
+    expect(candidateFirst).toBeLessThan(historicalStartupRepair);
+    expect(historicalStartupRepair).toBeLessThan(candidateRestart);
     expect(candidateFirst).toBeLessThan(candidateRestart);
     expect(candidateRestart).toBeLessThan(doctor);
     expect(doctor).toBeLessThan(final);
+  });
+
+  it("uses npm package-manager replacement only for the exact shipped 7.1 to 8.1 row", () => {
+    const source = readFileSync(RUNNER_PATH, "utf8");
+    expect(source).toContain('[ "$SCENARIO" = "mobile-pairing-reconnect" ]');
+    expect(source).toContain('[ "$baseline_version" = "2026.7.1" ]');
+    expect(source).toContain('[ "$candidate_version" = "2026.8.1" ]');
+    expect(source).toContain('candidate_install_mode="historical-package-replacement"');
+    expect(source).toContain(
+      'npm install -g --prefix "$npm_prefix" "$update_spec" --no-fund --no-audit',
+    );
+    expect(source).toContain('npm_prefix="$(dirname "$(dirname "$(dirname "$live_package")")")"');
+    expect(source).not.toContain(".openclaw-mobile-stage");
+    expect(source).not.toContain("mobile-backup");
+  });
+
+  it("installs the historical candidate into the live npm prefix with dependency siblings", () => {
+    const root = mkdtempSync(join(tmpdir(), "openclaw-mobile-package-replacement-"));
+    try {
+      const prefix = join(root, "prefix");
+      const packageRoot = join(prefix, "lib", "node_modules", "openclaw");
+      const bin = join(root, "bin");
+      const artifacts = join(root, "artifacts");
+      mkdirSync(packageRoot, { recursive: true });
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(artifacts, { recursive: true });
+      writeFileSync(
+        join(packageRoot, "package.json"),
+        JSON.stringify({ name: "openclaw", version: "2026.7.1" }),
+      );
+      const npm = join(bin, "npm");
+      writeFileSync(
+        npm,
+        `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+fs.writeFileSync(process.env.NPM_ARGS_FILE, JSON.stringify(args));
+const prefix = args[args.indexOf("--prefix") + 1];
+const modules = path.join(prefix, "lib", "node_modules");
+fs.mkdirSync(path.join(modules, "openclaw"), { recursive: true });
+fs.mkdirSync(path.join(modules, "candidate-dependency"), { recursive: true });
+fs.writeFileSync(path.join(modules, "openclaw", "package.json"), JSON.stringify({name:"openclaw",version:"2026.8.1"}));
+fs.writeFileSync(path.join(modules, "candidate-dependency", "package.json"), JSON.stringify({name:"candidate-dependency",version:"1.0.0"}));
+`,
+      );
+      chmodSync(npm, 0o755);
+      const source = readFileSync(RUNNER_PATH, "utf8");
+      const functions = source.slice(
+        source.indexOf("replace_historical_mobile_pairing_candidate()"),
+        source.indexOf("\nassert_root_managed_vps_cli_usable()"),
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `set -eu
+openclaw_e2e_maybe_timeout() { shift; "$@"; }
+openclaw_e2e_print_log() { :; }
+package_root() { printf '%s\\n' "$TEST_PACKAGE_ROOT"; }
+candidate_update_spec() { printf '%s\\n' "$TEST_CANDIDATE_SPEC"; }
+read_installed_version() {
+  node -e 'process.stdout.write(require(process.argv[1]).version)' "$TEST_PACKAGE_ROOT/package.json"
+}
+baseline_spec=openclaw@2026.7.1
+baseline_version=2026.7.1
+candidate_version=2026.8.1
+CANDIDATE_KIND=tarball
+UPDATE_JSON="$TEST_ARTIFACTS/update.json"
+UPDATE_ERR="$TEST_ARTIFACTS/update.err"
+${functions}
+replace_historical_mobile_pairing_candidate
+`,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            NPM_ARGS_FILE: join(root, "npm-args.json"),
+            TEST_ARTIFACTS: artifacts,
+            TEST_CANDIDATE_SPEC: join(root, "candidate.tgz"),
+            TEST_PACKAGE_ROOT: packageRoot,
+          },
+        },
+      );
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(join(root, "npm-args.json"), "utf8"))).toEqual([
+        "install",
+        "-g",
+        "--prefix",
+        prefix,
+        join(root, "candidate.tgz"),
+        "--no-fund",
+        "--no-audit",
+      ]);
+      expect(
+        existsSync(join(prefix, "lib", "node_modules", "candidate-dependency", "package.json")),
+      ).toBe(true);
+      expect(JSON.parse(readFileSync(join(artifacts, "update.json"), "utf8"))).toMatchObject({
+        status: "ok",
+        mode: "historical-package-replacement",
+        updaterRun: false,
+        doctorRun: false,
+        before: { version: "2026.7.1" },
+        after: { version: "2026.8.1" },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("fails pairing phases when gateway teardown fails", () => {

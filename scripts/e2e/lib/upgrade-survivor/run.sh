@@ -104,6 +104,7 @@ baseline_version=""
 baseline_version_expected="0"
 candidate_version=""
 installed_version=""
+candidate_install_mode="updater"
 start_seconds=""
 status_seconds=""
 healthz_seconds=""
@@ -166,6 +167,7 @@ MOBILE_PAIRING_BASELINE_EVIDENCE="$ARTIFACT_ROOT/mobile-pairing-baseline.json"
 MOBILE_PAIRING_CANDIDATE_FIRST_EVIDENCE="$ARTIFACT_ROOT/mobile-pairing-candidate-first.json"
 MOBILE_PAIRING_CANDIDATE_RESTART_EVIDENCE="$ARTIFACT_ROOT/mobile-pairing-candidate-restart.json"
 MOBILE_PAIRING_FINAL_EVIDENCE="$ARTIFACT_ROOT/mobile-pairing-final.json"
+HISTORICAL_PACKAGE_REPLACEMENT_EVIDENCE="$ARTIFACT_ROOT/historical-package-replacement.json"
 export OPENCLAW_UPGRADE_SURVIVOR_CONFIG_COVERAGE_JSON="$CONFIG_COVERAGE_JSON"
 rm -f "$SUMMARY_JSON" "$CONFIG_COVERAGE_JSON"
 : >"$PHASE_LOG"
@@ -251,6 +253,7 @@ write_summary() {
     SUMMARY_BASELINE_VERSION="$baseline_version" \
     SUMMARY_CANDIDATE_VERSION="$candidate_version" \
     SUMMARY_INSTALLED_VERSION="$installed_version" \
+    SUMMARY_CANDIDATE_INSTALL_MODE="$candidate_install_mode" \
     SUMMARY_SCENARIO="$SCENARIO" \
     SUMMARY_UPDATE_RESTART_MODE="$UPDATE_RESTART_MODE" \
     SUMMARY_UPDATE_REPAIR_REQUIRED="$update_repair_required" \
@@ -269,6 +272,7 @@ write_summary() {
     SUMMARY_WATCH_CANDIDATE_STATE="$WATCH_CANDIDATE_STATE_JSON" \
     SUMMARY_WATCH_RESTART_CONNECT="$WATCH_RESTART_CONNECT_JSON" \
     SUMMARY_WATCH_RESTART_STATE="$WATCH_RESTART_STATE_JSON" \
+    SUMMARY_HISTORICAL_PACKAGE_REPLACEMENT="$HISTORICAL_PACKAGE_REPLACEMENT_EVIDENCE" \
     node <<'NODE'
 const fs = require("node:fs");
 const phaseLog = process.env.SUMMARY_PHASE_LOG;
@@ -297,6 +301,7 @@ const summary = {
     version: process.env.SUMMARY_CANDIDATE_VERSION || null,
   },
   installedVersion: process.env.SUMMARY_INSTALLED_VERSION || null,
+  candidateInstallMode: process.env.SUMMARY_CANDIDATE_INSTALL_MODE || "updater",
   updateRestartMode: process.env.SUMMARY_UPDATE_RESTART_MODE || "manual",
   updateRecovery: process.env.SUMMARY_UPDATE_REPAIR_REQUIRED === "1" ? "capability-consent" : null,
   updateRestartSource: process.env.SUMMARY_UPDATE_RESTART_SOURCE || null,
@@ -337,6 +342,10 @@ const summary = {
         },
       }
     : undefined,
+  historicalPackageReplacement:
+    process.env.SUMMARY_CANDIDATE_INSTALL_MODE === "historical-package-replacement"
+      ? readJsonOrNull(process.env.SUMMARY_HISTORICAL_PACKAGE_REPLACEMENT)
+      : undefined,
   failure: process.env.SUMMARY_STATUS === "passed"
     ? null
     : {
@@ -1234,6 +1243,15 @@ resolve_candidate_version() {
   export OPENCLAW_PACKAGE_ACCEPTANCE_LEGACY_COMPAT
 }
 
+resolve_candidate_install_mode() {
+  candidate_install_mode="updater"
+  if [ "$SCENARIO" = "mobile-pairing-reconnect" ] &&
+    [ "$baseline_version" = "2026.7.1" ] &&
+    [ "$candidate_version" = "2026.8.1" ]; then
+    candidate_install_mode="historical-package-replacement"
+  fi
+}
+
 candidate_update_spec() {
   if [ "$CANDIDATE_KIND" != "tarball" ]; then
     printf '%s\n' "$CANDIDATE_SPEC"
@@ -1341,6 +1359,123 @@ update_candidate() {
     echo "update did not leave the candidate installed: $installed_version" >&2
     return 1
   fi
+}
+
+replace_historical_mobile_pairing_candidate() {
+  local update_spec
+  update_spec="$(candidate_update_spec)"
+  local live_package
+  live_package="$(package_root)"
+  local npm_prefix
+  npm_prefix="$(dirname "$(dirname "$(dirname "$live_package")")")"
+  local install_status=0
+
+  if [ "$live_package" != "$npm_prefix/lib/node_modules/openclaw" ]; then
+    echo "historical package replacement could not derive the npm prefix" >&2
+    return 1
+  fi
+  echo "Replacing baseline $baseline_spec with candidate $CANDIDATE_KIND:$update_spec through npm without updater or Doctor"
+  openclaw_e2e_maybe_timeout "${OPENCLAW_E2E_NPM_INSTALL_TIMEOUT:-600s}" \
+    npm install -g --prefix "$npm_prefix" "$update_spec" --no-fund --no-audit \
+    >"$UPDATE_ERR" 2>&1 || install_status=$?
+  if [ "$install_status" -ne 0 ]; then
+    echo "historical mobile pairing package replacement failed" >&2
+    openclaw_e2e_print_log "$UPDATE_ERR" >&2
+    return "$install_status"
+  fi
+
+  installed_version="$(read_installed_version)"
+  if [ "$installed_version" != "$candidate_version" ]; then
+    echo "historical package replacement did not leave the candidate installed: $installed_version" >&2
+    return 1
+  fi
+  UPDATE_BEFORE_VERSION="$baseline_version" \
+    UPDATE_AFTER_VERSION="$installed_version" \
+    node <<'NODE' >"$UPDATE_JSON"
+const result = {
+  status: "ok",
+  mode: "historical-package-replacement",
+  before: { version: process.env.UPDATE_BEFORE_VERSION },
+  after: { version: process.env.UPDATE_AFTER_VERSION },
+  updaterRun: false,
+  doctorRun: false,
+};
+process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+NODE
+  chmod 600 "$UPDATE_JSON" "$UPDATE_ERR"
+}
+
+update_candidate_for_install_mode() {
+  case "$candidate_install_mode" in
+    updater)
+      update_candidate
+      ;;
+    historical-package-replacement)
+      replace_historical_mobile_pairing_candidate
+      ;;
+    *)
+      echo "unknown candidate install mode: $candidate_install_mode" >&2
+      return 1
+      ;;
+  esac
+}
+
+assert_historical_package_replacement_prestart() {
+  CONFIG_PATH="$OPENCLAW_CONFIG_PATH" \
+    UPDATE_PATH="$UPDATE_JSON" \
+    EVIDENCE_PATH="$HISTORICAL_PACKAGE_REPLACEMENT_EVIDENCE" \
+    BASELINE_VERSION="$baseline_version" \
+    CANDIDATE_VERSION="$candidate_version" \
+    node <<'NODE'
+const fs = require("node:fs");
+const config = JSON.parse(fs.readFileSync(process.env.CONFIG_PATH, "utf8"));
+const update = JSON.parse(fs.readFileSync(process.env.UPDATE_PATH, "utf8"));
+if (
+  update.status !== "ok" ||
+  update.mode !== "historical-package-replacement" ||
+  update.updaterRun !== false ||
+  update.doctorRun !== false
+) {
+  throw new Error("historical package replacement evidence changed");
+}
+if (!Object.hasOwn(config.meta ?? {}, "lastTouchedAt")) {
+  throw new Error("historical package replacement did not preserve the baseline metadata defect");
+}
+const evidence = {
+  mode: "historical-package-replacement",
+  baselineVersion: process.env.BASELINE_VERSION,
+  candidateVersion: process.env.CANDIDATE_VERSION,
+  updaterRun: false,
+  doctorRunBeforeCandidateStart: false,
+  legacyLastTouchedAtPresentBeforeCandidateStart: true,
+  legacyLastTouchedAtPresentAfterCandidateStart: null,
+  candidateStartupRepairObserved: null,
+};
+fs.writeFileSync(process.env.EVIDENCE_PATH, `${JSON.stringify(evidence, null, 2)}\n`, {
+  mode: 0o600,
+});
+fs.chmodSync(process.env.EVIDENCE_PATH, 0o600);
+NODE
+}
+
+assert_historical_package_replacement_startup_repair() {
+  CONFIG_PATH="$OPENCLAW_CONFIG_PATH" \
+    EVIDENCE_PATH="$HISTORICAL_PACKAGE_REPLACEMENT_EVIDENCE" \
+    node <<'NODE'
+const fs = require("node:fs");
+const config = JSON.parse(fs.readFileSync(process.env.CONFIG_PATH, "utf8"));
+if (Object.hasOwn(config.meta ?? {}, "lastTouchedAt")) {
+  throw new Error("candidate startup did not repair retired meta.lastTouchedAt");
+}
+const evidence = JSON.parse(fs.readFileSync(process.env.EVIDENCE_PATH, "utf8"));
+evidence.legacyLastTouchedAtPresentAfterCandidateStart = false;
+evidence.candidateStartupRepairObserved = true;
+fs.writeFileSync(process.env.EVIDENCE_PATH, `${JSON.stringify(evidence, null, 2)}\n`, {
+  mode: 0o600,
+});
+fs.chmodSync(process.env.EVIDENCE_PATH, 0o600);
+NODE
+  assert_survival
 }
 
 assert_root_managed_vps_cli_usable() {
@@ -1587,6 +1722,7 @@ if [ "$SCENARIO" = "watchos-direct-node" ]; then
 fi
 phase validate-baseline-config validate_baseline_config
 phase resolve-candidate resolve_candidate_version
+phase resolve-candidate-install-mode resolve_candidate_install_mode
 phase configure-clawhub-fixture configure_clawhub_fixture
 phase prepare-update-restart-probe prepare_update_restart_probe
 phase bootstrap-mobile-pairing bootstrap_mobile_pairing
@@ -1619,11 +1755,20 @@ if [ "$SCENARIO" = "recovery-cleanup" ]; then
   phase recovery-package-evidence node scripts/e2e/lib/upgrade-survivor/recovery-cleanup.mjs packages "$baseline_spec" "$CANDIDATE_SPEC"
 fi
 phase configure-plugin-registry configure_plugin_registry
-phase update-candidate update_candidate
-# A standalone Doctor pass would conceal missing migrations in the updater.
-phase assert-automatic-migration assert_survival
+phase update-candidate update_candidate_for_install_mode
+if [ "$candidate_install_mode" = "historical-package-replacement" ]; then
+  phase assert-historical-package-replacement-prestart \
+    assert_historical_package_replacement_prestart
+else
+  # A standalone Doctor pass would conceal missing migrations in the updater.
+  phase assert-automatic-migration assert_survival
+fi
 phase mobile-pairing-candidate-first verify_mobile_pairing_once \
   candidate-first "$MOBILE_PAIRING_CANDIDATE_FIRST_EVIDENCE"
+if [ "$candidate_install_mode" = "historical-package-replacement" ]; then
+  phase assert-historical-package-replacement-startup-repair \
+    assert_historical_package_replacement_startup_repair
+fi
 phase mobile-pairing-candidate-restart verify_mobile_pairing_once \
   candidate-restart "$MOBILE_PAIRING_CANDIDATE_RESTART_EVIDENCE"
 if [ "$SCENARIO" = "recovery-cleanup" ]; then

@@ -1648,6 +1648,7 @@ function assertUpdateRunSelfUpgrade([file]) {
 
 function assertMobilePairingEvidence(files) {
   const expectedPhases = ["baseline", "candidate-first", "candidate-restart", "final"];
+  const expectedNodeSurfaceAdditions = ["watch.notify", "watch.status"];
   assert(
     files.length === expectedPhases.length,
     "mobile pairing evidence requires all four reconnect phases",
@@ -1661,11 +1662,26 @@ function assertMobilePairingEvidence(files) {
       value?.connectedDevicePresent === true,
       "mobile pairing connected device assertion did not pass",
     );
-    assert(value?.pendingPairingCount === 0, "mobile pairing left a pending request");
     assert(value?.pendingDevicePairingCount === 0, "mobile device pairing left a pending request");
-    assert(value?.pendingNodePairingCount === 0, "mobile node pairing left a pending request");
     assert(value?.pairedDevicePresent === true, "paired mobile device missing");
     assert(value?.pairedNodePresent === true, "paired mobile node missing");
+    const cleanPairingState =
+      value?.pendingPairingCount === 0 &&
+      value?.pendingNodePairingCount === 0 &&
+      value?.nodeSurfaceReapprovalRequired === false &&
+      Array.isArray(value?.nodeSurfaceCommandAdditions) &&
+      value.nodeSurfaceCommandAdditions.length === 0;
+    const scopedNodeSurfaceReapproval =
+      index > 0 &&
+      value?.pendingPairingCount === 1 &&
+      value?.pendingNodePairingCount === 1 &&
+      value?.nodeSurfaceReapprovalRequired === true &&
+      JSON.stringify(value?.nodeSurfaceCommandAdditions) ===
+        JSON.stringify(expectedNodeSurfaceAdditions);
+    assert(
+      cleanPairingState || scopedNodeSurfaceReapproval,
+      "mobile node pairing pending state exceeded the known command-surface reapproval",
+    );
     assert(value?.missingPasswordReason === true, "mobile pairing password_missing proof missing");
     assert(
       value?.missingPasswordClose1008 === true,

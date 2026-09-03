@@ -1177,16 +1177,21 @@ process.stdout.write(sessionDir + "\\n");
     const hashes = ["a", "b", "c", "d", "e"].map((value) => value.repeat(64));
     const files = phases.map((phase, index) => {
       const file = join(root, `${phase}.json`);
+      const scopedNodeSurfaceReapproval = index > 0;
       writeJson(file, {
         phase,
         ok: true,
         health: true,
         connectedDevicePresent: true,
-        pendingPairingCount: 0,
+        pendingPairingCount: scopedNodeSurfaceReapproval ? 1 : 0,
         pendingDevicePairingCount: 0,
-        pendingNodePairingCount: 0,
+        pendingNodePairingCount: scopedNodeSurfaceReapproval ? 1 : 0,
         pairedDevicePresent: true,
         pairedNodePresent: true,
+        nodeSurfaceReapprovalRequired: scopedNodeSurfaceReapproval,
+        nodeSurfaceCommandAdditions: scopedNodeSurfaceReapproval
+          ? ["watch.notify", "watch.status"]
+          : [],
         missingPasswordReason: true,
         missingPasswordClose1008: true,
         credentials: {
@@ -1221,6 +1226,10 @@ process.stdout.write(sessionDir + "\\n");
       stale.credentials.node.usedTokenHash = hashes[0];
       writeJson(files[2], stale);
       expect(verify).toThrow(/newest stored token/);
+      stale.credentials.node.usedTokenHash = hashes[2];
+      stale.nodeSurfaceCommandAdditions = ["watch.status", "system.run"];
+      writeJson(files[2], stale);
+      expect(verify).toThrow(/known command-surface reapproval/);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

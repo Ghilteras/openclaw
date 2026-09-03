@@ -57,9 +57,11 @@ export type StoredCredentialTransition = {
 };
 export type MobilePairingAudit = {
   pendingDevicePairingCount: 0;
-  pendingNodePairingCount: 0;
+  pendingNodePairingCount: 0 | 1;
   pairedDevicePresent: true;
   pairedNodePresent: true;
+  nodeSurfaceReapprovalRequired: boolean;
+  nodeSurfaceCommandAdditions: string[];
 };
 type WebSocketLike = {
   readyState: number;
@@ -165,6 +167,7 @@ export const MOBILE_PAIRING_APPROVAL_SCOPES = Object.freeze(["operator.pairing",
 const GATEWAY_PROTOCOL_VERSION = 4;
 const GATEWAY_MIN_NODE_PROTOCOL_VERSION = 3;
 const PAIRING_AUDIT_SCOPES = ["operator.pairing"];
+const EXPECTED_UPGRADE_COMMAND_ADDITIONS = ["watch.notify", "watch.status"];
 const BASELINE_PAIRING_POLL_ATTEMPTS = 50;
 const BASELINE_PAIRING_POLL_INTERVAL_MS = 100;
 const RESPONSE_TIMEOUT_MS = 15_000;
@@ -616,6 +619,7 @@ async function auditPairingState(params: {
   WebSocket: WebSocketConstructor;
   credentials: MobilePairingCredentials;
   password: string;
+  allowKnownNodeSurfaceUpgrade: boolean;
 }): Promise<MobilePairingAudit> {
   // Match the node approval CLI's local backend shared-auth path. Keep this
   // audit device-less so it cannot rotate mobile tokens.
@@ -634,6 +638,7 @@ async function auditPairingState(params: {
       devicePairing: await request(audit.socket, "device.pair.list"),
       nodePairing: await request(audit.socket, "node.pair.list"),
       deviceId: params.credentials.identity.deviceId,
+      allowKnownNodeSurfaceUpgrade: params.allowKnownNodeSurfaceUpgrade,
     });
   } finally {
     await closeSocket(audit.socket, params.WebSocket);
@@ -644,29 +649,85 @@ export function validatePairingAudit(params: {
   devicePairing: unknown;
   nodePairing: unknown;
   deviceId: string;
+  allowKnownNodeSurfaceUpgrade?: boolean;
 }): MobilePairingAudit {
-  const lists = [
-    { label: "device", value: params.devicePairing, idKey: "deviceId" },
-    { label: "node", value: params.nodePairing, idKey: "nodeId" },
-  ] as const;
-  for (const list of lists) {
-    if (!isRecord(list.value) || !Array.isArray(list.value.pending)) {
-      throw new Error(`mobile ${list.label} pairing audit invalid`);
-    }
-    if (list.value.pending.length !== 0) {
-      throw new Error(`mobile ${list.label} pairing left a pending request`);
-    }
-    const paired = Array.isArray(list.value.paired) ? list.value.paired : [];
-    const row = paired.find((entry) => isRecord(entry) && entry[list.idKey] === params.deviceId);
-    if (!isRecord(row)) {
-      throw new Error(`paired mobile ${list.label} missing`);
-    }
+  if (!isRecord(params.devicePairing) || !Array.isArray(params.devicePairing.pending)) {
+    throw new Error("mobile device pairing audit invalid");
+  }
+  if (params.devicePairing.pending.length !== 0) {
+    throw new Error("mobile device pairing left a pending request");
+  }
+  const pairedDevices = Array.isArray(params.devicePairing.paired)
+    ? params.devicePairing.paired
+    : [];
+  if (!pairedDevices.some((entry) => isRecord(entry) && entry.deviceId === params.deviceId)) {
+    throw new Error("paired mobile device missing");
+  }
+
+  if (
+    !isRecord(params.nodePairing) ||
+    !Array.isArray(params.nodePairing.pending) ||
+    !Array.isArray(params.nodePairing.paired)
+  ) {
+    throw new Error("mobile node pairing audit invalid");
+  }
+  const pairedNode = params.nodePairing.paired.find(
+    (entry) => isRecord(entry) && entry.nodeId === params.deviceId,
+  );
+  if (!isRecord(pairedNode)) {
+    throw new Error("paired mobile node missing");
+  }
+  if (params.nodePairing.pending.length === 0) {
+    return {
+      pendingDevicePairingCount: 0,
+      pendingNodePairingCount: 0,
+      pairedDevicePresent: true,
+      pairedNodePresent: true,
+      nodeSurfaceReapprovalRequired: false,
+      nodeSurfaceCommandAdditions: [],
+    };
+  }
+  if (!params.allowKnownNodeSurfaceUpgrade || params.nodePairing.pending.length !== 1) {
+    throw new Error("mobile node pairing left an unexpected pending request");
+  }
+  const pendingNode = params.nodePairing.pending[0];
+  if (!isRecord(pendingNode) || pendingNode.nodeId !== params.deviceId) {
+    throw new Error("mobile node pairing pending identity changed");
+  }
+  const pairedCommands = new Set(
+    requireStringArray(pairedNode.commands ?? [], "paired node commands"),
+  );
+  const pendingCommands = requireStringArray(pendingNode.commands ?? [], "pending node commands");
+  const commandAdditions = pendingCommands
+    .filter((command) => !pairedCommands.has(command))
+    .toSorted();
+  if (JSON.stringify(commandAdditions) !== JSON.stringify(EXPECTED_UPGRADE_COMMAND_ADDITIONS)) {
+    throw new Error("mobile node pairing pending command expansion changed");
+  }
+  const pairedCaps = new Set(requireStringArray(pairedNode.caps ?? [], "paired node caps"));
+  const capabilityAdditions = requireStringArray(
+    pendingNode.caps ?? [],
+    "pending node caps",
+  ).filter((capability) => !pairedCaps.has(capability));
+  if (capabilityAdditions.length !== 0) {
+    throw new Error("mobile node pairing pending capability expansion changed");
+  }
+  const pairedPermissions = isRecord(pairedNode.permissions) ? pairedNode.permissions : {};
+  const pendingPermissions = isRecord(pendingNode.permissions) ? pendingNode.permissions : {};
+  if (
+    Object.entries(pendingPermissions).some(
+      ([permission, enabled]) => enabled === true && pairedPermissions[permission] !== true,
+    )
+  ) {
+    throw new Error("mobile node pairing pending permission expansion changed");
   }
   return {
     pendingDevicePairingCount: 0,
-    pendingNodePairingCount: 0,
+    pendingNodePairingCount: 1,
     pairedDevicePresent: true,
     pairedNodePresent: true,
+    nodeSurfaceReapprovalRequired: true,
+    nodeSurfaceCommandAdditions: commandAdditions,
   };
 }
 
@@ -903,6 +964,7 @@ async function verifyReconnect(params: {
       WebSocket,
       credentials: params.credentials,
       password: params.password,
+      allowKnownNodeSurfaceUpgrade: params.phase !== "baseline",
     });
     writeRedactedEvidence(
       params.evidenceFile,
