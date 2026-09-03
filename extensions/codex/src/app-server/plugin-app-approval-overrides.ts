@@ -21,13 +21,11 @@ export async function clearPersistedAppApprovalOverrides(params: {
     if (overrideKeyPaths.length === 0) {
       return true;
     }
-    const edits = overrideKeyPaths.map(
-      (keyPath): CodexConfigEdit => ({
-        keyPath,
-        value: null,
-        mergeStrategy: "replace",
-      }),
-    );
+    const edits = overrideKeyPaths.map((keyPath): CodexConfigEdit => ({
+      keyPath,
+      value: null,
+      mergeStrategy: "replace",
+    }));
     const response = await params.request("config/batchWrite", { edits });
     if (
       !isJsonObject(response) ||
