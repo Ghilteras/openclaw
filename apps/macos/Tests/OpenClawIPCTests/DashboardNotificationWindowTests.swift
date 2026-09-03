@@ -6,10 +6,10 @@ import WebKit
 @testable import OpenClaw
 
 @MainActor
-private final class DashboardNotificationAlertCapture {
+private final class DashboardNotificationAlertCapture: NSObject {
     private(set) var textValues: [String] = []
 
-    func captureAndAbortModal() {
+    @objc func captureAndAbortModal() {
         if let contentView = NSApp.modalWindow?.contentView {
             self.textValues = Self.textValues(in: contentView)
         }
@@ -29,17 +29,18 @@ extension DashboardWindowOwnershipTests {
     @Test func `localized background session failure title`() async throws {
         let probeKey = "OPENCLAW_LOCALIZED_GATEWAY_ERROR_PROBE"
         if ProcessInfo.processInfo.environment[probeKey] != "1" {
+            let arguments = ProcessInfo.processInfo.arguments
+            let bundleFlagIndex = try #require(arguments.firstIndex(of: "--test-bundle-path"))
+            let bundlePathIndex = arguments.index(after: bundleFlagIndex)
+            let testBundlePath = try #require(
+                arguments.indices.contains(bundlePathIndex) ? arguments[bundlePathIndex] : nil)
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+            process.executableURL = URL(fileURLWithPath: arguments[0])
             process.arguments = [
-                "test", "--skip-build", "--filter", "localized background session failure title", "--",
-                "-AppleLanguages", "(fr)", "-AppleLocale", "fr_FR",
-                "-NSDoubleLocalizedStrings", "YES",
+                "--test-bundle-path", testBundlePath,
+                "--testing-library", "swift-testing",
+                "--filter", "localized background session failure title",
             ]
-            process.currentDirectoryURL = URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
             var environment = ProcessInfo.processInfo.environment
             environment[probeKey] = "1"
             process.environment = environment
@@ -54,14 +55,28 @@ extension DashboardWindowOwnershipTests {
             return
         }
 
-        #expect(Locale.current.language.languageCode?.identifier == "fr")
+        let defaults = UserDefaults.standard
+        let argumentDomain = UserDefaults.argumentDomain
+        let previousArguments = defaults.volatileDomain(forName: argumentDomain)
+        var localizedArguments = previousArguments
+        localizedArguments["NSDoubleLocalizedStrings"] = true
+        defaults.setVolatileDomain(localizedArguments, forName: argumentDomain)
+        defer { defaults.setVolatileDomain(previousArguments, forName: argumentDomain) }
+
+        _ = NSApplication.shared
         let expectedTitle = String(localized: "Could Not Open Background Session")
-        #expect(expectedTitle != "Could Not Open Background Session")
+        #expect(expectedTitle == "Could Not Open Background Session Could Not Open Background Session")
         let manager = DashboardManager._testMake(
             primaryEndpointProvider: { _ in throw DashboardNotificationEndpointFailure() })
         defer { manager.close() }
         let capture = DashboardNotificationAlertCapture()
-        DispatchQueue.main.async { capture.captureAndAbortModal() }
+        let timer = Timer(
+            timeInterval: 0.01,
+            target: capture,
+            selector: #selector(DashboardNotificationAlertCapture.captureAndAbortModal),
+            userInfo: nil,
+            repeats: false)
+        RunLoop.main.add(timer, forMode: .modalPanel)
 
         let sourceURL = try #require(URL(string: "https://gateway.example"))
         try await manager.openBackgroundSession(
