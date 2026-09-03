@@ -70,6 +70,15 @@ export function normalizeRegisteredChannelPlugin(params: {
     });
     return null;
   }
+  if (!Array.isArray(params.plugin.capabilities?.chatTypes)) {
+    params.pushDiagnostic({
+      level: "error",
+      pluginId: params.pluginId,
+      source: params.source,
+      message: `channel "${id}" registration missing required capabilities.chatTypes`,
+    });
+    return null;
+  }
   if (
     typeof params.plugin.config?.listAccountIds !== "function" ||
     typeof params.plugin.config?.resolveAccount !== "function"

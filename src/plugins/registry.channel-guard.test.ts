@@ -40,6 +40,24 @@ function createChannelPlugin(id: string, label: string): ChannelPlugin {
 }
 
 describe("plugin registry channel guard", () => {
+  it("rejects incomplete channel plugins at the registrar boundary", () => {
+    const pluginRegistry = createTestRegistry();
+    const record = createPluginRecord({ id: "incomplete-channel-owner", origin: "global" });
+    const plugin = createChannelPlugin("incomplete-channel", "Incomplete Channel");
+    plugin.capabilities = undefined as never;
+
+    pluginRegistry.registry.plugins.push(record);
+    pluginRegistry
+      .createApi(record, { config: {} as OpenClawConfig, registrationMode: "full" })
+      .registerChannel({ plugin });
+
+    expect(pluginRegistry.registry.channelSetups).toHaveLength(0);
+    expect(pluginRegistry.registry.channels).toHaveLength(0);
+    expect(pluginRegistry.registry.diagnostics.map((diag) => diag.message)).toContain(
+      'channel "incomplete-channel" registration missing required capabilities.chatTypes',
+    );
+  });
+
   it("rejects channel registration from disabled workspace plugins", () => {
     const pluginRegistry = createTestRegistry();
     const config = {} as OpenClawConfig;
