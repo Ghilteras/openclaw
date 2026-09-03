@@ -143,6 +143,8 @@ export class ReefFederationCoordinator {
 
     try {
       const runId = `reef:${frame.proposalId}`;
+      // Canonical agent admission converts inter-session provenance into the model-facing safety
+      // envelope. Keep the message undecorated so transcript and display projection remain canonical.
       const result = await this.runtime.gateway.request<AgentResponse>(
         "agent",
         {

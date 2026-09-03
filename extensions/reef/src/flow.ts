@@ -239,7 +239,7 @@ export class ReefMessageFlow {
       throw new Error("Only active guest Reef mounts can propose prompts");
     }
     const friend = this.options.trust.get(mount.peer);
-    if (!matchesReefPeerIdentity(friend, mount.peerIdentity)) {
+    if (!friend || !matchesReefPeerIdentity(friend, mount.peerIdentity)) {
       throw new ReefOutboundRejectedError(
         `Reef peer @${mount.peer} is not approved with current keys`,
       );
