@@ -1,6 +1,6 @@
 // Qa Lab tests cover slack live plugin behavior.
 import { sanitizeAssistantVisibleText } from "openclaw/plugin-sdk/text-chunking";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readQaScenarioById } from "../../scenario-catalog.js";
 import { requireFlowScenario } from "../../scenario-catalog.test-utils.js";
 import { resolveLiveTransportQaScenarioIds } from "../shared/scenario-selection.js";
@@ -32,6 +32,13 @@ import {
   runSlackTableInvalidBlocksFallbackScenario,
 } from "./slack-live.observations.js";
 import * as slackScenarioImplementations from "./slack-live.scenario-implementations.js";
+
+// Keep real Slack operations in Vitest's graph instead of recompiling them through Jiti.
+// The separate facade tests own plugin loading; this suite owns delivery behavior.
+vi.mock("./slack-plugin.runtime.js", async () => {
+  const runtime = await import("@openclaw/slack/test-api.js");
+  return { loadSlackQaRuntime: () => runtime };
+});
 
 function toSlackScenarioExportName(id: string): string {
   const suffix = id
@@ -114,6 +121,10 @@ describe("Slack live QA runtime helpers", () => {
   });
 
   beforeEach(() => {
+    vi.useRealTimers();
+  });
+
+  afterEach(() => {
     vi.useRealTimers();
   });
 
@@ -1163,9 +1174,11 @@ describe("Slack live QA runtime helpers", () => {
   });
 
   it("settles complete channel and thread observations after the final reply", async () => {
+    // The second observation belongs to the settle window, not host scheduling speed.
+    vi.useFakeTimers();
     let historyCalls = 0;
     const observedMessages: Array<{ text: string }> = [];
-    await testing.observeSlackScenarioMessages({
+    const observation = testing.observeSlackScenarioMessages({
       channelId: "C123456789",
       client: {
         conversations: {
@@ -1198,6 +1211,8 @@ describe("Slack live QA runtime helpers", () => {
       sutIdentity: { userId: "U999999999" },
       threadTs: "1.000000",
     });
+    await vi.advanceTimersByTimeAsync(10);
+    await observation;
 
     expect(historyCalls).toBeGreaterThanOrEqual(2);
     expect(new Set(observedMessages.map((message) => message.text))).toEqual(
