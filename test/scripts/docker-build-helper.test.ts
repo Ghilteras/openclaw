@@ -159,6 +159,61 @@ function extractUpgradeSurvivorPayload(script: string) {
   return quoted.slice(1, end + 1).replaceAll(`'"'"'`, "'");
 }
 
+function runTypedOnboardingDriver(dialect: string) {
+  const source = readFileSync(RELEASE_TYPED_ONBOARDING_SCENARIO_PATH, "utf8");
+  const start = source.indexOf("send() {");
+  const end = source.indexOf("\nopenclaw_e2e_install_package", start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  const root = tempDirs.make("openclaw-typed-onboarding-driver-");
+  const functionsPath = join(root, "driver.sh");
+  const transcriptPath = join(root, "onboard.log");
+  writeFileSync(functionsPath, source.slice(start, end));
+  const prompt =
+    dialect === "current"
+      ? "Help make OpenClaw better?"
+      : dialect === "legacy"
+        ? "to search"
+        : "What should we call your first agent?";
+  writeFileSync(transcriptPath, `fixture onboarding transcript\n${prompt}\n`);
+
+  return spawnSync(
+    "/bin/bash",
+    [
+      "-c",
+      String.raw`
+set -Eeuo pipefail
+source "$1"
+shift
+export ONBOARD_LOG="$OPENCLAW_TEST_ONBOARD_LOG"
+wait_for_log() {
+  return 0
+}
+send() {
+  case "$1" in
+    $'y\r') printf 'continue\n' ;;
+    $'ollama\r') printf 'search\n' ;;
+    $' \r') printf 'hooks\n' ;;
+    $'\r') printf 'enter\n' ;;
+    *) printf 'unknown:%q\n' "$1" ;;
+  esac
+}
+drive_typed_onboarding
+`,
+      "test",
+      functionsPath,
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        OPENCLAW_TEST_ONBOARD_LOG: transcriptPath,
+      },
+    },
+  );
+}
+
 // Prompt-driving scripts must consume public prompts in the order the CLI renders them.
 function expectOrderedScriptFragments(script: string, fragments: readonly string[]): void {
   let offset = 0;
@@ -2934,16 +2989,19 @@ docker_e2e_docker_run_cmd run demo
   });
 
   it("keeps real-TTY onboarding drivers aligned with the guided prompt sequence", () => {
-    expectOrderedScriptFragments(readFileSync(RELEASE_TYPED_ONBOARDING_SCENARIO_PATH, "utf8"), [
-      'wait_for_log "Continue?"',
-      "send $'y\\r'",
-      'wait_for_log "Help make OpenClaw better?"',
-      "send $'\\r'",
-      'wait_for_log "What should we call your first agent?"',
-      "send $'\\r'",
-      'wait_for_log "to search"',
-      "send $'ollama\\r'",
-    ]);
+    const current = runTypedOnboardingDriver("current");
+    expect(current.status, current.stderr).toBe(0);
+    expect(current.stdout.trim().split("\n")).toEqual(["continue", "enter", "enter", "search"]);
+
+    const legacy = runTypedOnboardingDriver("legacy");
+    expect(legacy.status, legacy.stderr).toBe(0);
+    expect(legacy.stdout.trim().split("\n")).toEqual(["continue", "search", "hooks", "enter"]);
+
+    const unknown = runTypedOnboardingDriver("unknown");
+    expect(unknown.status).not.toBe(0);
+    expect(unknown.stderr).toContain("unexpected typed onboarding transition");
+    expect(unknown.stderr).toContain("fixture onboarding transcript");
+
     expectOrderedScriptFragments(readFileSync(ONBOARD_SCENARIO_PATH, "utf8"), [
       'wait_for_log "Help make OpenClaw better?"',
       "send $'\\r'",
@@ -7769,5 +7827,42 @@ done
       'openclaw_e2e_maybe_timeout "$OPENCLAW_PLUGINS_CLI_TIMEOUT"',
       "clawhub:@openclaw/kitchen-sink",
     ]);
+  });
+
+  it("forwards frozen-target omission authorization into the plugins container", () => {
+    const root = tempDirs.make("openclaw-plugins-docker-env-");
+    const binDir = join(root, "bin");
+    const dockerLog = join(root, "docker.log");
+    writeExecutables(binDir, {
+      docker: `#!/bin/bash
+printf '%s\\n' "$*" >>"$OPENCLAW_TEST_DOCKER_LOG"
+exit 0
+`,
+    });
+    const selectedSha = "a".repeat(40);
+    const toolingSha = "b".repeat(40);
+
+    const result = spawnSync("bash", [PLUGINS_DOCKER_E2E_PATH], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH}`,
+        OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS: "1",
+        OPENCLAW_DOCKER_E2E_DISABLE_RESOURCE_LIMITS: "1",
+        OPENCLAW_SELECTED_SHA: selectedSha,
+        OPENCLAW_SKIP_DOCKER_BUILD: "1",
+        OPENCLAW_TEST_DOCKER_LOG: dockerLog,
+        OPENCLAW_TOOLING_SHA: toolingSha,
+      },
+    });
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    const run = readFileSync(dockerLog, "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("run "));
+    expect(run).toContain("-e OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS");
+    expect(run).toContain("-e OPENCLAW_SELECTED_SHA");
+    expect(run).toContain("-e OPENCLAW_TOOLING_SHA");
   });
 });

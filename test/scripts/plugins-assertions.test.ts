@@ -555,6 +555,38 @@ done
     }
   });
 
+  it("exports both npm registry aliases for fixture package resolution", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "openclaw-plugin-npm-fixture-env-"));
+    try {
+      const fixtureDir = path.join(root, "fixture");
+      writeFileSync(path.join(root, "fixture.tgz"), "fixture package archive", "utf8");
+      mkdirSync(fixtureDir);
+      const result = spawnSync(
+        "/bin/bash",
+        [
+          "-c",
+          [
+            "set -euo pipefail",
+            "source scripts/e2e/lib/plugins/fixtures.sh",
+            `start_npm_fixture_registry fixture-pkg 1.0.0 ${shellQuote(path.join(root, "fixture.tgz"))} ${shellQuote(fixtureDir)}`,
+            '[ "$NPM_CONFIG_REGISTRY" = "$npm_config_registry" ]',
+            '[[ "$NPM_CONFIG_REGISTRY" = http://127.0.0.1:* ]]',
+            "openclaw_plugins_cleanup_fixture_servers",
+          ].join("\n"),
+        ],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: { ...process.env },
+        },
+      );
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("force-kills stubborn npm fixture registry children during cleanup", () => {
     const root = mkdtempSync(path.join(tmpdir(), "openclaw-plugin-npm-fixture-kill-"));
     try {

@@ -255,7 +255,6 @@ start_npm_fixture_registry() {
   shift 4
 
   openclaw_plugins_validate_fixture_log_print_bytes || return $?
-
   node scripts/e2e/lib/plugins/npm-registry-server.mjs "$server_port_file" "$package_name" "$version" "$tarball" "$@" >"$server_log" 2>&1 &
   local server_pid="$!"
   echo "$server_pid" >"$server_pid_file"
