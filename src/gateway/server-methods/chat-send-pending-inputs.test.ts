@@ -337,6 +337,14 @@ describe("ordinary browser input admission", () => {
         expect.anything(),
       );
       await vi.waitFor(() => expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(2));
+      const reconnect = await fixture.send();
+      expect(reconnect).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({ runId: fixture.params.idempotencyKey, status: "in_flight" }),
+        undefined,
+        expect.objectContaining({ cached: true }),
+      );
+      expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(2);
       expect(listSessionPendingInputs(fixture.scope)).toMatchObject({
         total: 1,
         items: [{ state: "queued", runId: fixture.params.idempotencyKey }],

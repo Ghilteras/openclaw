@@ -4536,7 +4536,7 @@ describe("gateway server chat", () => {
           const options = (params as { replyOptions?: GetReplyOptions }).replyOptions;
           options?.onAgentRunStart?.(runId);
           agentStarts();
-          return undefined;
+          return {};
         });
 
       await sendControlUiChat({
@@ -4563,9 +4563,14 @@ describe("gateway server chat", () => {
         expect.objectContaining({ runId, state: "error" }),
         expect.anything(),
       );
+      expect(
+        dispatchInboundMessageMock.mock.calls.map(
+          ([params]) => (params as { replyOptions?: GetReplyOptions }).replyOptions?.runId,
+        ),
+      ).toEqual([runId, runId]);
       expect(loadSessionEntry({ sessionKey: "agent:main:main", storePath })).toMatchObject({
         abortedLastRun: false,
-        status: "done",
+        restartRecoveryDeliveryRunId: runId,
       });
     } finally {
       resetDirectChatSession();
