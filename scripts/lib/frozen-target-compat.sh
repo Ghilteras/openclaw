@@ -26,11 +26,24 @@ openclaw_frozen_target_omissions_authorized() {
   fi
 }
 
+openclaw_frozen_target_session_repair_mode() {
+  local source_root="${1:?missing selected source root}"
+
+  if ! git -C "$source_root" cat-file -e "$OPENCLAW_SELECTED_SHA:src/state/openclaw-agent-db-session-migrations.ts" 2>/dev/null &&
+    git -C "$source_root" show "$OPENCLAW_SELECTED_SHA:src/commands/doctor-session-transcripts.ts" 2>/dev/null |
+      grep -Fq '.pre-doctor-branch-repair-'; then
+    printf '%s\n' jsonl
+  else
+    printf '%s\n' sqlite
+  fi
+}
+
 openclaw_resolve_frozen_upgrade_survivor_capabilities() {
   local source_root="${1:?missing selected source root}" authorization_status=0
 
   export OPENCLAW_UPGRADE_SURVIVOR_EXEC_APPROVALS_MODE="required" \
-    OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_REQUEST_DIALECT="current"
+    OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_REQUEST_DIALECT="current" \
+    OPENCLAW_UPGRADE_SURVIVOR_SESSION_REPAIR_MODE="sqlite"
 
   openclaw_frozen_target_omissions_authorized || authorization_status=$?
   [ "$authorization_status" -eq 1 ] && return 0
@@ -52,6 +65,9 @@ openclaw_resolve_frozen_upgrade_survivor_capabilities() {
       grep -Fq 'from "../infra/clawhub.js"'; then
     export OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_REQUEST_DIALECT="legacy"
   fi
+
+  export OPENCLAW_UPGRADE_SURVIVOR_SESSION_REPAIR_MODE
+  OPENCLAW_UPGRADE_SURVIVOR_SESSION_REPAIR_MODE="$(openclaw_frozen_target_session_repair_mode "$source_root")"
 }
 
 openclaw_resolve_frozen_core_harness_capabilities() {
@@ -108,11 +124,8 @@ openclaw_resolve_frozen_core_harness_capabilities() {
     export OPENCLAW_FROZEN_TARGET_MCP_CODE_MODE_CATALOG_MODE="legacy"
   fi
 
-  if ! git -C "$source_root" cat-file -e "$OPENCLAW_SELECTED_SHA:src/state/openclaw-agent-db-session-migrations.ts" 2>/dev/null &&
-    git -C "$source_root" show "$OPENCLAW_SELECTED_SHA:src/commands/doctor-session-transcripts.ts" 2>/dev/null |
-      grep -Fq '.pre-doctor-branch-repair-'; then
-    export OPENCLAW_FROZEN_TARGET_SESSION_REPAIR_MODE="jsonl"
-  fi
+  export OPENCLAW_FROZEN_TARGET_SESSION_REPAIR_MODE
+  OPENCLAW_FROZEN_TARGET_SESSION_REPAIR_MODE="$(openclaw_frozen_target_session_repair_mode "$source_root")"
 
   # The manager API and MCP App assertions were added after the selected
   # release. Run its still-packaged bundle-MCP contract instead of importing a

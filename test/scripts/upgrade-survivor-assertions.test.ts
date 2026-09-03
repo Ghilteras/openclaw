@@ -1683,6 +1683,17 @@ process.stdout.write(sessionDir + "\\n");
     ).toThrow(/main legacy session row missing/);
   });
 
+  it("uses the selected JSONL session store when a newer cache table is unrelated", () => {
+    expect(() =>
+      runSessionStateAssertion((stateDir) => {
+        mkdirSync(join(stateDir, "agents", "main", "agent"), { recursive: true });
+        writeLegacyCacheSessionState(stateDir, { empty: true });
+        writeMigratedSessionFiles(stateDir);
+        return { OPENCLAW_UPGRADE_SURVIVOR_SESSION_REPAIR_MODE: "jsonl" };
+      }),
+    ).not.toThrow();
+  });
+
   it("prefers legacy cache_entries over a stale file session store", () => {
     expect(() =>
       runSessionStateAssertion((stateDir) => {

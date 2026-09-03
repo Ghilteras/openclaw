@@ -66,6 +66,11 @@ PACKAGE_TGZ="$(
 mkdir -p "$FIXTURE_ROOT/packages/negative" "$FIXTURE_ROOT/packages/future"
 tar -xzf "$PACKAGE_TGZ" -C "$FIXTURE_ROOT/packages/negative"
 tar -xzf "$PACKAGE_TGZ" -C "$FIXTURE_ROOT/packages/future"
+if ! tar -tzf "$PACKAGE_TGZ" | grep -Fxq "package/dist/shared-DTaQo6Hi.js" ||
+  ! tar -tzf "$PACKAGE_TGZ" | grep -Fxq "package/dist/shared-Y6bNiw2w.js"; then
+  echo "Skipping updater first-hop compatibility: candidate predates the updater bridge."
+  exit 0
+fi
 node "$ROOT_DIR/scripts/e2e/lib/update-first-hop-package-fixtures.mjs" \
   negative "$FIXTURE_ROOT/packages/negative/package"
 node "$ROOT_DIR/scripts/e2e/lib/update-first-hop-package-fixtures.mjs" \
