@@ -82,6 +82,9 @@ function createTalkClientAgentRuntime(params: { config: OpenClawConfig; rawSourc
     runParams.abortSignal?.addEventListener("abort", close, { once: true });
     try {
       runParams.abortSignal?.throwIfAborted();
+      // Provider-owned work can outlive or replace its audio transport. Unlike
+      // chat-backed Talk, it has no independent Chat terminal delivery; hiding
+      // its final transcript would lose the answer when no spoken replacement arrives.
       return await execution.runEmbeddedAgent({
         ...runParams,
         preparedRunAdmission,
