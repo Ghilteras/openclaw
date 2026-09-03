@@ -12,11 +12,12 @@ import { latestCommittedBackupId } from "./collection-backup.js";
 import { resolveSkillCollectionBackupRoot } from "./collection-paths.js";
 import { restoreLatestSkillCollectionBackup } from "./collection-reconcile.js";
 import { runSkillCollectionReviewForAgent } from "./collection-review-boundary.js";
+import { snapshotWorkshopSkillFiles } from "./collection-review-inspection.js";
 import {
   listSkillCollectionReviewOutcomes,
   readSkillReviewOutcomes,
 } from "./collection-review-state.js";
-import { MAX_EVALUATION_FILE_BYTES } from "./proposal-bundle.js";
+import { MAX_EVALUATION_BUNDLE_BYTES, MAX_EVALUATION_FILE_BYTES } from "./proposal-bundle.js";
 import { resolveWorkshopSkillsDir } from "./skills-root.js";
 
 type ReviewChange = Pick<PluginHookSkillChangedEvent, "action">;
@@ -569,6 +570,38 @@ describe("skill collection review boundary", () => {
       expect(loadSkillRootRecords).not.toHaveBeenCalled();
     } finally {
       loadSkillRootRecords.mockRestore();
+      await testState.cleanup();
+    }
+  });
+
+  it("allows the aggregate snapshot byte limit but rejects the next file", async () => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-snapshot-byte-bound-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
+    try {
+      await fs.mkdir(skillsRoot, { recursive: true });
+      await Promise.all(
+        Array.from({ length: 8 }, (_, index) =>
+          fs.writeFile(
+            path.join(skillsRoot, `snapshot-${index.toString()}.bin`),
+            Buffer.alloc(MAX_EVALUATION_FILE_BYTES),
+          ),
+        ),
+      );
+
+      const withinLimit = await snapshotWorkshopSkillFiles(skillsRoot);
+      expect(withinLimit).toHaveLength(8);
+
+      await fs.writeFile(
+        path.join(skillsRoot, "snapshot-over-limit.bin"),
+        Buffer.alloc(MAX_EVALUATION_FILE_BYTES),
+      );
+      await expect(snapshotWorkshopSkillFiles(skillsRoot)).rejects.toThrow(
+        `Skill collection review inventory exceeds ${MAX_EVALUATION_BUNDLE_BYTES} total bytes.`,
+      );
+    } finally {
       await testState.cleanup();
     }
   });

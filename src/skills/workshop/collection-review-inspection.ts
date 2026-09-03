@@ -5,7 +5,11 @@ import { removePathWithinRoot } from "../../infra/fs-safe-remove.js";
 import { pathExists, root, walkDirectory } from "../../infra/fs-safe.js";
 import { scanSkillContent, scanSource } from "../security/scanner.js";
 import { restoreSkillCollectionDirectoryFromBackup } from "./collection-rollback.js";
-import { isUtf8Buffer, MAX_EVALUATION_FILE_BYTES } from "./proposal-bundle.js";
+import {
+  isUtf8Buffer,
+  MAX_EVALUATION_BUNDLE_BYTES,
+  MAX_EVALUATION_FILE_BYTES,
+} from "./proposal-bundle.js";
 
 const MAX_WORKSHOP_REVIEW_ENTRIES = 10_000;
 
@@ -179,23 +183,30 @@ export async function snapshotWorkshopSkillFiles(
       .filter((entry) => entry.kind === "file" && entry.name === "SKILL.md")
       .map((entry) => path.dirname(entry.relativePath)),
   );
-  const snapshots = await Promise.all(
-    walked.entries
-      .toSorted((left, right) => left.relativePath.localeCompare(right.relativePath))
-      .map(async (entry) => {
-        const read = await skillsRootAccess.read(entry.relativePath, {
-          hardlinks: "reject",
-          maxBytes: MAX_EVALUATION_FILE_BYTES,
-          symlinks: "reject",
-        });
-        return {
-          relativeDir: resolveWorkshopSkillDirectory(entry.relativePath, skillDirs),
-          relativePath: entry.relativePath,
-          filePath: entry.path,
-          contentHash: sha256Hex(read.buffer),
-        } satisfies WorkshopReviewSkillFile;
-      }),
-  );
+  const snapshots: WorkshopReviewSkillFile[] = [];
+  let totalBytes = 0;
+  // Read one file at a time so in-flight buffers and the aggregate snapshot stay bounded.
+  for (const entry of walked.entries.toSorted((left, right) =>
+    left.relativePath.localeCompare(right.relativePath),
+  )) {
+    const read = await skillsRootAccess.read(entry.relativePath, {
+      hardlinks: "reject",
+      maxBytes: MAX_EVALUATION_FILE_BYTES,
+      symlinks: "reject",
+    });
+    totalBytes += read.buffer.byteLength;
+    if (totalBytes > MAX_EVALUATION_BUNDLE_BYTES) {
+      throw new Error(
+        `Skill collection review inventory exceeds ${MAX_EVALUATION_BUNDLE_BYTES} total bytes.`,
+      );
+    }
+    snapshots.push({
+      relativeDir: resolveWorkshopSkillDirectory(entry.relativePath, skillDirs),
+      relativePath: entry.relativePath,
+      filePath: entry.path,
+      contentHash: sha256Hex(read.buffer),
+    });
+  }
   return new Map(snapshots.map((snapshot) => [snapshot.relativePath, snapshot]));
 }
 

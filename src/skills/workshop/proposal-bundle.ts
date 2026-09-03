@@ -10,7 +10,7 @@ import type { PreparedSkillProposalSupportFile, SkillProposalReadResult } from "
 
 const MAX_EVALUATION_FILES = 256;
 export const MAX_EVALUATION_FILE_BYTES = 1024 * 1024;
-const MAX_EVALUATION_BUNDLE_BYTES = 8 * 1024 * 1024;
+export const MAX_EVALUATION_BUNDLE_BYTES = 8 * 1024 * 1024;
 const EXCLUDED_ROOT_DIRS = new Set([".clawhub", ".clawdhub", ".openclaw"]);
 
 export function isUtf8Buffer(content: Buffer): boolean {
