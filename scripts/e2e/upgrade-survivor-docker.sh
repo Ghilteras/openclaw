@@ -521,6 +521,7 @@ NODE
 
 install_companion_plugins() {
   local authored_config="$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_ROOT/companion-install-authored.json"
+  local clawhub_request_dialect="${OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_REQUEST_DIALECT:-current}"
   local install_status=0
   local restore_status=0
   node "$OPENCLAW_UPGRADE_SURVIVOR_CONFIG_PARKING_HELPER" \
@@ -538,7 +539,7 @@ install_companion_plugins() {
   if [ "$install_status" -eq 0 ]; then
     node "$OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_FIXTURE_SERVER" \
       assert-prepublish-requests "$OPENCLAW_CLAWHUB_URL" "@openclaw/whatsapp" "$package_version" \
-      "$OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_REQUEST_DIALECT"
+      "$clawhub_request_dialect"
     install_status=$?
   fi
   if [ "$install_status" -eq 0 ]; then
