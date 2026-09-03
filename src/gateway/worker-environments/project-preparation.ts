@@ -97,12 +97,40 @@ export function createWorkerProjectPreparation(params: {
       throw error;
     }
   };
+  const readPreparedWorkspace = (prepared: unknown) => {
+    if (!preparation) {
+      throw new Error("Project preparation did not request a prepared workspace");
+    }
+    const suffix = `/.openclaw-worker/prepared/${params.namespace}/${preparation.key}`;
+    if (
+      !isRecord(prepared) ||
+      typeof prepared.workspaceDir !== "string" ||
+      prepared.workspaceDir.length > 4096 ||
+      !path.posix.isAbsolute(prepared.workspaceDir) ||
+      path.posix.normalize(prepared.workspaceDir) !== prepared.workspaceDir ||
+      !prepared.workspaceDir.endsWith(`${suffix}/workspace`) ||
+      prepared.homeDir !== path.posix.join(path.posix.dirname(prepared.workspaceDir), "home") ||
+      typeof prepared.sourceManifestRef !== "string" ||
+      !/^sha256:[a-f0-9]{64}$/u.test(prepared.sourceManifestRef)
+    ) {
+      throw new Error("Prepared project returned invalid workspace identity");
+    }
+    return Object.freeze({
+      preparationKey: preparation.key,
+      workspaceDir: prepared.workspaceDir,
+      homeDir: prepared.homeDir,
+      sourceManifestRef: prepared.sourceManifestRef,
+    });
+  };
   const prepareSeed: ProjectPreparation["prepare"] = async (transport) => {
     requireCurrent();
     const scriptInput = {
       namespace: params.namespace,
       seedKey,
       baseCommit: params.project.baseCommit,
+      ...(preparation
+        ? { preparation: { preparationKey: preparation.key, setupRecipe: preparation.setupRecipe } }
+        : {}),
     };
     const inspection: unknown = JSON.parse(
       await transport.runScript(createProjectSeedScript(scriptInput), signal),
@@ -112,7 +140,13 @@ export function createWorkerProjectPreparation(params: {
       throw new Error("Project preparation returned invalid seed status");
     }
     if (inspection.ready) {
-      return { seedKey, cacheHit: true };
+      return {
+        seedKey,
+        cacheHit: true,
+        ...(inspection.preparedWorkspace !== undefined
+          ? { preparedWorkspace: readPreparedWorkspace(inspection.preparedWorkspace) }
+          : {}),
+      };
     }
     const directory = inspection.directory;
     if (
@@ -168,7 +202,8 @@ export function createWorkerProjectPreparation(params: {
   const prepare: ProjectPreparation["prepare"] = async (transport) => {
     const result = await prepareSeed(transport);
     requireCurrent();
-    if (!preparation) {
+    if (!preparation || result.preparedWorkspace) {
+      preparedWorkspace = result.preparedWorkspace;
       return result;
     }
     // Seed transfer can outlive its caller. Repository code starts only under
@@ -186,26 +221,7 @@ export function createWorkerProjectPreparation(params: {
       ),
     );
     requireCurrent();
-    const suffix = `/.openclaw-worker/prepared/${params.namespace}/${preparation.key}`;
-    if (
-      !isRecord(prepared) ||
-      typeof prepared.workspaceDir !== "string" ||
-      prepared.workspaceDir.length > 4096 ||
-      !path.posix.isAbsolute(prepared.workspaceDir) ||
-      path.posix.normalize(prepared.workspaceDir) !== prepared.workspaceDir ||
-      !prepared.workspaceDir.endsWith(`${suffix}/workspace`) ||
-      prepared.homeDir !== path.posix.join(path.posix.dirname(prepared.workspaceDir), "home") ||
-      typeof prepared.sourceManifestRef !== "string" ||
-      !/^sha256:[a-f0-9]{64}$/u.test(prepared.sourceManifestRef)
-    ) {
-      throw new Error("Prepared project returned invalid workspace identity");
-    }
-    preparedWorkspace = Object.freeze({
-      preparationKey: preparation.key,
-      workspaceDir: prepared.workspaceDir,
-      homeDir: prepared.homeDir,
-      sourceManifestRef: prepared.sourceManifestRef,
-    });
+    preparedWorkspace = readPreparedWorkspace(prepared);
     return { ...result, preparedWorkspace };
   };
   return {

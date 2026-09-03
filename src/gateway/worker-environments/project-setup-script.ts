@@ -1,22 +1,12 @@
 import { MAX_WORKSPACE_MANIFEST_BYTES } from "./workspace-inventory-limits.js";
 import { REMOTE_WORKSPACE_MANIFEST_JS } from "./workspace-sync-scripts.js";
 
-/** Setup runs at the final absolute paths, before enrollment or session overlays. */
-export function createProjectSetupScript(input: {
-  namespace: string;
-  seedKey: string;
-  preparationKey: string;
-  baseCommit: string;
-  setupRecipe?: string;
-}): string {
-  return `set -eu
-node <<'PROJECT_SETUP_SCRIPT'
+export const PREPARE_PROJECT_WORKSPACE_JS = `async (input, inspectOnly = false) => {
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const { spawn, spawnSync } = require("node:child_process");
-const input = ${JSON.stringify(input)};
 const manifestScript = ${JSON.stringify(REMOTE_WORKSPACE_MANIFEST_JS)};
 process.umask(0o077);
 const machineHome = fs.realpathSync(os.homedir());
@@ -79,8 +69,9 @@ const runSetup = (script, workspaceDir, homeDir) => new Promise((resolve, reject
     else resolve();
   });
 });
-(async () => {
   const workerRoot = ownedDirectory(machineHome, ".openclaw-worker");
+  // Inspection cannot create a workspace or execute repository code before the Gateway rechecks its owner.
+  if (inspectOnly && !fs.existsSync(path.join(workerRoot, "prepared", input.namespace, input.preparationKey))) return;
   const seeds = ownedDirectory(ownedDirectory(workerRoot, "git-seeds"), input.namespace);
   const seed = ownedDirectory(seeds, input.seedKey);
   ownedDirectory(seed, ".git");
@@ -91,9 +82,10 @@ const runSetup = (script, workspaceDir, homeDir) => new Promise((resolve, reject
   const sourceManifestRef = manifest(seed);
   const sourceFile = path.join(workerRoot, "manifests", sourceManifestRef.slice(7) + ".json");
   const sourceBytes = readManifest(sourceFile, sourceManifestRef);
-  const preparedRoot = ownedDirectory(ownedDirectory(workerRoot, "prepared", true), input.namespace, true);
+  const preparedRoot = ownedDirectory(ownedDirectory(workerRoot, "prepared", !inspectOnly), input.namespace, !inspectOnly);
   const directory = path.join(preparedRoot, input.preparationKey);
   const fresh = !fs.existsSync(directory);
+  if (fresh && inspectOnly) return;
   ownedDirectory(preparedRoot, input.preparationKey, fresh);
   if (fresh) {
     fs.mkdirSync(path.join(directory, "home"), { mode: 0o700 });
@@ -117,7 +109,21 @@ const runSetup = (script, workspaceDir, homeDir) => new Promise((resolve, reject
   ownedDirectory(workspaceDir, ".git");
   if (git(workspaceDir, ["rev-parse", "HEAD"]) !== input.baseCommit || manifest(workspaceDir) !== sourceManifestRef) throw new Error("Prepared project setup modified its source manifest");
   if (fresh) fs.writeFileSync(completedManifest, sourceBytes, { flag: "wx", mode: 0o600 });
-  process.stdout.write(JSON.stringify({ workspaceDir, homeDir, sourceManifestRef }));
-})().catch((error) => { console.error(error.message); process.exitCode = 1; });
+  return { workspaceDir, homeDir, sourceManifestRef };
+}`;
+
+/** Setup runs at the final absolute paths, before enrollment or session overlays. */
+export function createProjectSetupScript(input: {
+  namespace: string;
+  seedKey: string;
+  preparationKey: string;
+  baseCommit: string;
+  setupRecipe?: string;
+}): string {
+  return `set -eu
+node <<'PROJECT_SETUP_SCRIPT'
+(${PREPARE_PROJECT_WORKSPACE_JS})(${JSON.stringify(input)})
+  .then((result) => process.stdout.write(JSON.stringify(result)))
+  .catch((error) => { console.error(error.message); process.exitCode = 1; });
 PROJECT_SETUP_SCRIPT`;
 }

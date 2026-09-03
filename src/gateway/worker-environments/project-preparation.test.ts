@@ -242,8 +242,10 @@ printf 'setup\\n' >> "$HOME/count"
     expect(manifest.baseCommit).toBe(f.project.baseCommit);
     expect(manifest.entries.some((entry) => entry.path.startsWith("build/"))).toBe(false);
     const second = await f.preparedOperation();
+    f.runScript.mockClear();
     expect(await second.project.prepare(f)).toEqual({ ...result, cacheHit: true });
     second.close();
+    expect(f.runScript).toHaveBeenCalledTimes(1);
     expect(await fs.readFile(path.join(prepared.homeDir, "count"), "utf8")).toBe("setup\n");
     expect(f.upload).toHaveBeenCalledTimes(1);
     await fs.writeFile(path.join(prepared.workspaceDir, "linked-input"), "session edit\n");
@@ -286,6 +288,57 @@ printf '%s' "$!" > "$HOME/setup-child"
         }
       }
     }
+  });
+
+  it.each(["completion", "workspace", "seed"])(
+    "rejects a completed preparation with changed %s without rerunning setup",
+    async (changed) => {
+      const f = await fixture('#!/bin/sh\nprintf "setup\\n" >> "$HOME/count"\n');
+      const first = await f.preparedOperation();
+      const prepared = (await first.project.prepare(f)).preparedWorkspace!;
+      first.close();
+      const target =
+        changed === "completion"
+          ? path.join(
+              prepared.homeDir,
+              ".openclaw-worker",
+              "manifests",
+              `${prepared.sourceManifestRef.slice(7)}.json`,
+            )
+          : path.join(changed === "workspace" ? prepared.workspaceDir : f.seed, "input.txt");
+      await fs.writeFile(target, "changed\n");
+      const second = await f.preparedOperation();
+      await expect(second.project.prepare(f)).rejects.toThrow();
+      expect(second.getPreparedWorkspace()).toBeUndefined();
+      second.close();
+      expect(await fs.readFile(path.join(prepared.homeDir, "count"), "utf8")).toBe("setup\n");
+    },
+  );
+
+  it("rejects a completed workspace result after its provisioning owner changes", async () => {
+    const f = await fixture();
+    const first = await f.preparedOperation();
+    await first.project.prepare(f);
+    first.close();
+    let current = true;
+    const second = await f.preparedOperation(() => {
+      if (!current) {
+        throw new Error("owner replaced");
+      }
+    });
+    await expect(
+      second.project.prepare({
+        upload: f.upload,
+        runScript: async (script) => {
+          const output = await f.runScript(script);
+          current = false;
+          return output;
+        },
+      }),
+    ).rejects.toThrow("owner replaced");
+    expect(second.getPreparedWorkspace()).toBeUndefined();
+    expect(second.project.signal.aborted).toBe(true);
+    second.close();
   });
 
   it("prepares a recipe-free project without inventing setup authority", async () => {
