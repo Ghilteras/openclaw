@@ -10,7 +10,6 @@ import { DEFAULT_PROVIDER } from "../defaults.js";
 import type { ModelCatalogEntry, ModelCatalogSnapshot } from "../model-catalog.types.js";
 import { resolveModelRefFromString } from "../model-selection-shared.js";
 import { resolveModelCatalogIdentityKey } from "../openai-model-routes.js";
-import { collectPreparedModelRuntimeConfiguredRefs } from "../prepared-model-runtime.configured.js";
 import type { PreparedModelRuntimeInput } from "../prepared-model-runtime.types.js";
 import { resolveDefaultAgentWorkspaceDir } from "../workspace.js";
 import { resolveAgentHarnessPolicy } from "./policy.js";
@@ -162,26 +161,11 @@ export async function augmentModelCatalogWithAgentHarness(params: {
     return params.snapshot;
   }
   try {
-    const configuredModelRefs = collectPreparedModelRuntimeConfiguredRefs(
-      params.cfg,
-      params.agentId,
-    ).flatMap(({ value }) => {
-      const resolved = resolveModelRefFromString({
-        cfg: params.cfg,
-        agentId: params.agentId,
-        raw: value,
-        defaultProvider: params.defaultProvider,
-        allowManifestNormalization: true,
-        allowPluginNormalization: true,
-      })?.ref;
-      return resolved ? [resolved] : [];
-    });
     const listedRows = await harness.loadModelCatalog({
       config: params.cfg,
       agentId: params.agentId,
       agentDir: params.agentDir,
       workspaceDir: params.workspaceDir,
-      configuredModelRefs,
     });
     if (!params.pluginRegistry && getActivePluginRegistry() !== pluginRegistry) {
       return params.snapshot;

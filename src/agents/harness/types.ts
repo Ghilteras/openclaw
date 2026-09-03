@@ -514,7 +514,6 @@ export type AgentHarnessModelCatalogParams = {
   agentId: string;
   agentDir: string;
   workspaceDir: string;
-  configuredModelRefs?: readonly import("../model-ref-shared.js").ModelRef[];
 };
 
 type AgentHarnessModelCatalogCapability = {

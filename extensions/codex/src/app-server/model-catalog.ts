@@ -99,18 +99,7 @@ export function createCodexAppServerModelCatalog(runtime: string) {
         { startOptions: start, config: params.config, agentDir: params.agentDir, timeoutMs },
         async (request, client) => {
           const isCurrent = captureSharedCodexAppServerCatalogLifetime(client);
-          const listed = await listAllCodexAppServerModels({
-            request,
-            limit: 100,
-            includeHidden: true,
-          });
-          const models = listed.models.filter(
-            (model) =>
-              !model.hidden ||
-              params.configuredModelRefs?.some(
-                (ref) => ref.provider === "openai" && ref.model === model.id,
-              ),
-          );
+          const listed = await listAllCodexAppServerModels({ request, limit: 100 });
           const account = await request<CodexGetAccountResponse>({
             method: "account/read",
             requestParams: { refreshToken: false },
@@ -122,7 +111,7 @@ export function createCodexAppServerModelCatalog(runtime: string) {
                 ? observedType
                 : undefined
               : undefined;
-          return { models, isCurrent, accountType } as const;
+          return { models: listed.models, isCurrent, accountType } as const;
         },
       );
       // Publish only after the bounded operation settles; a late timed-out callback cannot publish.
