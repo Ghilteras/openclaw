@@ -6,7 +6,11 @@ import {
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryAuditStore, MemoryReplayStore } from "../protocol/index.js";
+import {
+  createReefFederatedPromptDigest,
+  MemoryAuditStore,
+  MemoryReplayStore,
+} from "../protocol/index.js";
 import { ReefChannelConfigSchema } from "./config-schema.js";
 import { ReefFederationCoordinator } from "./federation-coordinator.js";
 import { ReefFederationState, type ReefFederationMount } from "./federation-state.js";
@@ -41,9 +45,9 @@ function config(handle: string) {
   });
 }
 
-function federationState(name: string): ReefFederationState {
+function federationState(name: string, existingStateDir?: string): ReefFederationState {
   const runtime = createPluginRuntimeMock();
-  const stateDir = tempDirs.make(`openclaw-reef-${name}-`);
+  const stateDir = existingStateDir ?? tempDirs.make(`openclaw-reef-${name}-`);
   runtime.state.openSyncKeyedStore = <T>(options: OpenKeyedStoreOptions) =>
     createPluginStateSyncKeyedStoreForTests<T>("reef", {
       ...options,
@@ -68,7 +72,8 @@ describe("Reef federated prompt E2E", () => {
     const guestKeys = reefKeys();
     const hostTrust = trust({ guest: peerTrust(guestKeys) });
     const guestTrust = trust({ host: peerTrust(hostKeys) });
-    const hostState = federationState("host");
+    const hostStateDir = tempDirs.make("openclaw-reef-host-");
+    const hostState = federationState("host", hostStateDir);
     const guestState = federationState("guest");
     const hostStores = flowStores();
     const guestStores = flowStores();
@@ -148,6 +153,9 @@ describe("Reef federated prompt E2E", () => {
           frame,
         });
         await hostFlow.sendFederation(peer, outcome);
+        if (!hostState.markOutcomeSent(frame.proposalId, frame.textSha256)) {
+          throw new Error(`failed to mark ${frame.proposalId} delivered`);
+        }
       },
       onOwnerNotice: async () => {},
     });
@@ -247,6 +255,42 @@ describe("Reef federated prompt E2E", () => {
         "Try after revocation",
       ),
     ).rejects.toThrow("Only active guest Reef mounts can propose prompts");
+
+    const staleBinding = {
+      from: "guest#1",
+      to: "host#1",
+      mountId: hostMount.mountId,
+      proposalId: "proposal-after-revocation",
+      sessionId: hostMount.sessionId,
+      grantGeneration: 0,
+      text: "Bypass the revoked mount",
+    };
+    hostTransport.sendEnvelope.mockRejectedValueOnce(new Error("relay unavailable"));
+    await expect(
+      guestFlow.sendFederation("host", {
+        type: "session.prompt.propose",
+        mountId: staleBinding.mountId,
+        proposalId: staleBinding.proposalId,
+        sessionId: staleBinding.sessionId,
+        grantGeneration: staleBinding.grantGeneration,
+        text: staleBinding.text,
+        textSha256: createReefFederatedPromptDigest(staleBinding),
+      }),
+    ).rejects.toThrow("relay unavailable");
+
+    expect(outcomes).toEqual(["session.prompt.accepted"]);
     expect(gatewayRequest).toHaveBeenCalledTimes(2);
+    const restartedHostState = federationState("host-restart", hostStateDir);
+    const [unsent] = restartedHostState.listUnsentProposals();
+    expect(unsent).toMatchObject({
+      proposalId: "proposal-after-revocation",
+      status: "denied",
+      outcome: expect.objectContaining({ reason: "grant-revoked" }),
+    });
+
+    await hostFlow.sendFederation(unsent!.request.peer, unsent!.outcome!);
+    expect(restartedHostState.markOutcomeSent(unsent!.proposalId, unsent!.digest)).toBe(true);
+    expect(restartedHostState.listUnsentProposals()).toEqual([]);
+    expect(outcomes).toEqual(["session.prompt.accepted", "session.prompt.denied"]);
   });
 });

@@ -197,20 +197,60 @@ describe("Reef federation coordinator", () => {
     expect(request.mock.calls.some(([method]) => method === "agent")).toBe(false);
   });
 
-  it("rejects stale grant and session bindings before approval", async () => {
-    const { coordinator, request } = fixture();
+  it("persists stale grant and session denials before approval", async () => {
+    const { coordinator, proposals, request } = fixture();
 
     await expect(handle(coordinator, promptFrame({ grantGeneration: 1 }))).resolves.toMatchObject({
       type: "session.prompt.denied",
       reason: "grant-revoked",
     });
     await expect(
-      handle(coordinator, promptFrame({ sessionId: "session-2" })),
+      handle(coordinator, promptFrame({ proposalId: "proposal-2", sessionId: "session-2" })),
     ).resolves.toMatchObject({
       type: "session.prompt.denied",
       reason: "stale-session",
     });
     expect(request).not.toHaveBeenCalled();
+    expect([...proposals.values()]).toEqual([
+      expect.objectContaining({
+        status: "denied",
+        outcome: expect.objectContaining({ reason: "grant-revoked" }),
+      }),
+      expect.objectContaining({
+        status: "denied",
+        outcome: expect.objectContaining({ reason: "stale-session" }),
+      }),
+    ]);
+  });
+
+  it("persists digest rejection before returning its terminal outcome", async () => {
+    const { coordinator, proposals, request } = fixture();
+    const frame = { ...promptFrame(), textSha256: "f".repeat(64) };
+
+    await expect(handle(coordinator, frame)).resolves.toMatchObject({
+      type: "session.prompt.failed",
+      code: "digest-mismatch",
+    });
+    expect(proposals.get(frame.proposalId)).toMatchObject({
+      digest: frame.textSha256,
+      status: "failed",
+      outcome: { type: "session.prompt.failed", code: "digest-mismatch" },
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("bounds dispatch failures by UTF-8 bytes", async () => {
+    const { coordinator, proposals, request } = fixture({ allowAlways: true });
+    request.mockRejectedValueOnce(new Error("🦞".repeat(512)));
+
+    const outcome = await handle(coordinator);
+
+    expect(outcome).toMatchObject({ type: "session.prompt.failed", code: "dispatch-failed" });
+    if (outcome.type !== "session.prompt.failed") {
+      throw new Error("expected failed prompt outcome");
+    }
+    expect(Buffer.byteLength(outcome.message, "utf8")).toBe(512);
+    expect(proposals.get("proposal-1")?.outcome).toEqual(outcome);
   });
 
   it("revalidates grant and peer authority after host approval", async () => {

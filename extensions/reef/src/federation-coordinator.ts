@@ -1,4 +1,5 @@
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
+import { truncateUtf8Prefix } from "openclaw/plugin-sdk/text-utility-runtime";
 import {
   createReefFederatedPromptDigest,
   type ReefFederationFrame,
@@ -52,23 +53,9 @@ export class ReefFederationCoordinator {
     frame: Extract<ReefFederationFrame, { type: "session.prompt.propose" }>;
   }): Promise<Exclude<ReefFederationFrame, { type: "session.prompt.propose" }>> {
     const { frame } = params;
-    const mount = this.state.getMount(frame.mountId);
-    const invalid = this.validateMount({ ...params, mount });
-    if (invalid) {
-      return this.denied(frame, invalid);
-    }
-    const digest = createReefFederatedPromptDigest({
-      from: params.from,
-      to: params.to,
-      mountId: frame.mountId,
-      proposalId: frame.proposalId,
-      sessionId: frame.sessionId,
-      grantGeneration: frame.grantGeneration,
-      text: frame.text,
-    });
-    if (digest !== frame.textSha256) {
-      return this.failed(frame, "digest-mismatch", "The prompt digest does not match its binding.");
-    }
+    // Claim before any asynchronous work or authority rejection so every terminal result can be
+    // recovered after the source envelope is acknowledged.
+    const digest = frame.textSha256;
     const claim = this.state.claimProposal({
       proposalId: frame.proposalId,
       mountId: frame.mountId,
@@ -88,18 +75,35 @@ export class ReefFederationCoordinator {
       return prior;
     }
 
+    const mount = this.state.getMount(frame.mountId);
+    const invalid = this.validateMount({ ...params, mount });
+    if (invalid) {
+      return this.recordDenial(frame, digest, invalid);
+    }
+    const expectedDigest = createReefFederatedPromptDigest({
+      from: params.from,
+      to: params.to,
+      mountId: frame.mountId,
+      proposalId: frame.proposalId,
+      sessionId: frame.sessionId,
+      grantGeneration: frame.grantGeneration,
+      text: frame.text,
+    });
+    if (expectedDigest !== digest) {
+      return this.recordFailure(
+        frame,
+        digest,
+        "digest-mismatch",
+        "The prompt digest does not match its binding.",
+      );
+    }
+
     let approvalId: string | undefined;
     if (!mount!.allowAlways) {
       const approval = await this.requestApproval(params.peer, mount!, frame);
       approvalId = approval.id;
       if (approval.decision === "deny") {
-        const denied = this.denied(frame, "host-denied");
-        this.state.resolveProposal(frame.proposalId, digest, {
-          status: "denied",
-          outcome: denied,
-          ...(approvalId ? { approvalId } : {}),
-        });
-        return denied;
+        return this.recordDenial(frame, digest, "host-denied", approvalId);
       }
       if (approval.decision !== "allow-once" && approval.decision !== "allow-always") {
         return this.recordFailure(
@@ -132,13 +136,7 @@ export class ReefFederationCoordinator {
       mount: currentPeerIdentity ? currentMount : undefined,
     });
     if (staleAuthority) {
-      const denied = this.denied(frame, staleAuthority);
-      this.state.resolveProposal(frame.proposalId, digest, {
-        status: "denied",
-        outcome: denied,
-        ...(approvalId ? { approvalId } : {}),
-      });
-      return denied;
+      return this.recordDenial(frame, digest, staleAuthority, approvalId);
     }
 
     try {
@@ -248,6 +246,21 @@ export class ReefFederationCoordinator {
     return failed;
   }
 
+  private recordDenial(
+    frame: Extract<ReefFederationFrame, { type: "session.prompt.propose" }>,
+    digest: string,
+    reason: Extract<ReefFederationFrame, { type: "session.prompt.denied" }>["reason"],
+    approvalId?: string,
+  ): Extract<ReefFederationFrame, { type: "session.prompt.denied" }> {
+    const denied = this.denied(frame, reason);
+    this.state.resolveProposal(frame.proposalId, digest, {
+      status: "denied",
+      outcome: denied,
+      ...(approvalId ? { approvalId } : {}),
+    });
+    return denied;
+  }
+
   private denied(
     frame: Extract<ReefFederationFrame, { type: "session.prompt.propose" }>,
     reason: Extract<ReefFederationFrame, { type: "session.prompt.denied" }>["reason"],
@@ -272,7 +285,7 @@ export class ReefFederationCoordinator {
       proposalId: frame.proposalId,
       sessionId: frame.sessionId,
       code,
-      message: message.slice(0, 512),
+      message: truncateUtf8Prefix(message, 512),
     };
   }
 }
