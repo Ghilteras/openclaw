@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModelsAuthLoginFlowOptions } from "../commands/models/auth.js";
+import type {
+  ModelsAuthLoginFlowOptions,
+  ModelsAuthLoginFlowResult,
+} from "../commands/models/auth.js";
 import {
   decideProviderLoginSessionAdoption,
   formatProviderLoginComplete,
@@ -9,11 +12,13 @@ import {
 } from "./provider-auth-login-flow-runtime.js";
 
 const mocks = vi.hoisted(() => ({
-  runModelsAuthLoginFlowCore: vi.fn(async (_options: unknown) => ({
+  runModelsAuthLoginFlowCore: vi.fn<
+    (options: ModelsAuthLoginFlowOptions) => Promise<ModelsAuthLoginFlowResult>
+  >(async () => ({
     providerId: "xai",
     methodId: "oauth",
-    modelAccess: "already-visible" as const,
-    authRefresh: "refreshed" as const,
+    modelAccess: "already-visible",
+    authRefresh: "refreshed",
     profiles: [],
   })),
 }));
@@ -55,7 +60,7 @@ describe("provider channel login runtime", () => {
   it("fails closed when an offered provider asks chat for extra input", async () => {
     const sendMessage = vi.fn(async () => {});
     mocks.runModelsAuthLoginFlowCore.mockImplementationOnce(async (options) => {
-      await (options as ModelsAuthLoginFlowOptions).prompter.text({ message: "Enter a secret" });
+      await options.prompter.text({ message: "Enter a secret" });
       return { providerId: "xai", methodId: "oauth", profiles: [] };
     });
 
