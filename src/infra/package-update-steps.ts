@@ -823,6 +823,25 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
       (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`))
     );
   };
+  // `path.resolve()` normalizes `segment/..` before the filesystem expands a
+  // symlink at `segment`. Reject that ambiguous shape instead of certifying a
+  // target whose real traversal can escape the parked package tree.
+  const hasSymlinkSensitiveParentTraversal = (linkTarget: string): boolean => {
+    let descendedThroughTarget = false;
+    for (const component of linkTarget.split(/[\\/]+/)) {
+      if (!component || component === ".") {
+        continue;
+      }
+      if (component === "..") {
+        if (descendedThroughTarget) {
+          return true;
+        }
+        continue;
+      }
+      descendedThroughTarget = true;
+    }
+    return false;
+  };
   const visit = async (entryPath: string, relativePath: string): Promise<boolean> => {
     entries += 1;
     if (entries > PACKAGE_FINGERPRINT_MAX_ENTRIES) {
@@ -849,7 +868,10 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
         return false;
       }
       const linkTarget = await fs.readlink(entryPath);
-      if (isExternalTarget(path.resolve(path.dirname(entryPath), linkTarget))) {
+      if (
+        hasSymlinkSensitiveParentTraversal(linkTarget) ||
+        isExternalTarget(path.resolve(path.dirname(entryPath), linkTarget))
+      ) {
         return false;
       }
       fingerprint.update(

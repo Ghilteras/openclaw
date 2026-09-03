@@ -492,4 +492,63 @@ describe("package rollback tree integrity", () => {
       });
     },
   );
+
+  it.runIf(process.platform !== "win32")(
+    "keeps rollback unverified for parent traversal after an internal symlink",
+    async () => {
+      await withTestDir({ prefix: "openclaw-package-recovery-chained-link-" }, async (base) => {
+        const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+        const packageRoot = path.join(globalRoot, "openclaw");
+        const externalEntry = path.join(globalRoot, "outside.txt");
+        await writePackageRoot(packageRoot, "1.0.0");
+        await fs.writeFile(externalEntry, "external before Doctor\n", "utf8");
+        await fs.symlink(".", path.join(packageRoot, "pivot"));
+        await fs.symlink("pivot/../outside.txt", path.join(packageRoot, "escape"));
+
+        const result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: stageCandidatePackage,
+          postVerifyStep: async (candidateRoot) => {
+            expect(candidateRoot).toBe(packageRoot);
+            const backupName = (await fs.readdir(globalRoot)).find((entry) =>
+              entry.startsWith(".openclaw.package-backup-"),
+            );
+            if (!backupName) {
+              throw new Error("missing old-package backup during candidate Doctor");
+            }
+            await fs.writeFile(
+              path.join(globalRoot, backupName, "escape"),
+              "external changed by Doctor\n",
+              "utf8",
+            );
+            return {
+              name: "openclaw doctor",
+              command: "openclaw doctor --non-interactive --fix",
+              cwd: candidateRoot,
+              durationMs: 0,
+              exitCode: 1,
+              stderrTail: "doctor rejected candidate",
+            };
+          },
+          timeoutMs: 1000,
+        });
+
+        expect(result.afterVersion).toBe("1.0.0");
+        expect(result.recovery).toMatchObject({
+          serviceRestartSafe: false,
+          packageRollbackVerified: false,
+        });
+        expect(result.failedStep?.stderrTail).toContain(
+          "rollback verification failed: restored package tree does not match backup",
+        );
+        await expect(fs.readFile(externalEntry, "utf8")).resolves.toBe(
+          "external changed by Doctor\n",
+        );
+      });
+    },
+  );
 });
