@@ -518,7 +518,7 @@ export abstract class ChatPaneHeader extends ChatPaneDiscussion {
       }),
       sharingControl:
         sharing &&
-        !sharing.openDisabledReason &&
+        (!canManageChatSessionSharing(sharing.session) || !sharing.openDisabledReason) &&
         (!this.narrow || !canManageChatSessionSharing(sharing.session))
           ? renderChatSessionSharing(sharing)
           : nothing,
