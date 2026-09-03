@@ -21,8 +21,7 @@ export type AgentHarnessPolicy = {
   forcedByEnvironment?: true;
 };
 
-/** Resolves model/provider/runtime config into the canonical harness runtime id. */
-export function resolveAgentHarnessPolicy(params: {
+type AgentHarnessPolicyParams = {
   provider?: string;
   modelId?: string;
   modelApi?: string | null;
@@ -32,27 +31,13 @@ export function resolveAgentHarnessPolicy(params: {
   agentId?: string;
   sessionKey?: string;
   env?: NodeJS.ProcessEnv;
-}): AgentHarnessPolicy {
-  const configured = resolveModelRuntimePolicy({
-    config: params.config,
-    provider: params.provider,
-    modelId: params.modelId,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-  });
-  const configuredRuntime = normalizeOptionalAgentRuntimeId(configured.policy?.id);
-  const runtime =
-    configuredRuntime && configuredRuntime !== "default"
-      ? configuredRuntime
-      : AUTO_AGENT_RUNTIME_ID;
-  const runtimeSource =
-    runtime === AUTO_AGENT_RUNTIME_ID ? "implicit" : (configured.source ?? "implicit");
-  if (runtime !== "auto") {
-    return {
-      runtime,
-      runtimeSource,
-      ...(configured.forcedByEnvironment ? { forcedByEnvironment: true } : {}),
-    };
+};
+
+/** Resolves model/provider/runtime config into the canonical harness runtime id. */
+export function resolveAgentHarnessPolicy(params: AgentHarnessPolicyParams): AgentHarnessPolicy {
+  const configured = resolveConfiguredHarnessPolicy(params);
+  if (configured.runtime !== AUTO_AGENT_RUNTIME_ID) {
+    return configured;
   }
   // Credentials chose this runtime, not the provider's default route. Check native
   // login first so model surfaces can distinguish a logged-in CLI from an unavailable one.
@@ -65,6 +50,49 @@ export function resolveAgentHarnessPolicy(params: {
   if (cliRuntime) {
     return { runtime: cliRuntime, runtimeSource: "auth" };
   }
+  return resolveImplicitHarnessPolicy(params, configured);
+}
+
+/**
+ * Config and implicit defaults only. Fleet-wide scans resolve every roster model; reading
+ * credential state per model would re-project the roster O(agents x models) times (#135743).
+ */
+export function resolveConfiguredAgentHarnessPolicy(
+  params: AgentHarnessPolicyParams,
+): AgentHarnessPolicy {
+  const configured = resolveConfiguredHarnessPolicy(params);
+  return configured.runtime !== AUTO_AGENT_RUNTIME_ID
+    ? configured
+    : resolveImplicitHarnessPolicy(params, configured);
+}
+
+function resolveConfiguredHarnessPolicy(params: AgentHarnessPolicyParams): AgentHarnessPolicy {
+  const configured = resolveModelRuntimePolicy({
+    config: params.config,
+    provider: params.provider,
+    modelId: params.modelId,
+    agentId: params.agentId,
+    sessionKey: params.sessionKey,
+  });
+  const configuredRuntime = normalizeOptionalAgentRuntimeId(configured.policy?.id);
+  const runtime =
+    configuredRuntime && configuredRuntime !== "default"
+      ? configuredRuntime
+      : AUTO_AGENT_RUNTIME_ID;
+  return {
+    runtime,
+    runtimeSource:
+      runtime === AUTO_AGENT_RUNTIME_ID ? "implicit" : (configured.source ?? "implicit"),
+    ...(runtime !== AUTO_AGENT_RUNTIME_ID && configured.forcedByEnvironment
+      ? { forcedByEnvironment: true }
+      : {}),
+  };
+}
+
+function resolveImplicitHarnessPolicy(
+  params: AgentHarnessPolicyParams,
+  fallback: AgentHarnessPolicy,
+): AgentHarnessPolicy {
   const openAIImplicitRuntime = resolveOpenAIImplicitAgentRuntime({
     provider: params.provider,
     modelId: params.modelId,
@@ -76,11 +104,7 @@ export function resolveAgentHarnessPolicy(params: {
     env: params.env,
     requestTransportOverrides: params.requestTransportOverrides,
   });
-  if (openAIImplicitRuntime) {
-    return { runtime: openAIImplicitRuntime, runtimeSource };
-  }
-  return {
-    runtime,
-    runtimeSource,
-  };
+  return openAIImplicitRuntime
+    ? { runtime: openAIImplicitRuntime, runtimeSource: fallback.runtimeSource }
+    : fallback;
 }

@@ -18,6 +18,11 @@ const CODEX_API_KEY_IMPORT = {
   itemId: "auth:openai:api-key",
   credentialKind: "api_key",
 } as const;
+const CODEX_CHATGPT_IMPORT = {
+  migrationProviderId: "codex",
+  itemId: "auth:openai",
+  credentialKind: "oauth",
+} as const;
 
 export function createOpenAIProvider(): ProviderPlugin {
   return {
@@ -32,6 +37,7 @@ export function createOpenAIProvider(): ProviderPlugin {
         kind: "oauth",
         label: OPENAI_CHATGPT_LOGIN_LABEL,
         hint: OPENAI_CHATGPT_LOGIN_HINT,
+        credentialImport: CODEX_CHATGPT_IMPORT,
         run: noopAuth,
         wizard: {
           choiceId: "openai",
@@ -47,6 +53,7 @@ export function createOpenAIProvider(): ProviderPlugin {
         kind: "device_code",
         label: OPENAI_CHATGPT_DEVICE_PAIRING_LABEL,
         hint: OPENAI_CHATGPT_DEVICE_PAIRING_HINT,
+        credentialImport: CODEX_CHATGPT_IMPORT,
         run: noopAuth,
         wizard: {
           choiceId: "openai-device-code",

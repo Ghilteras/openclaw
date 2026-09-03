@@ -613,7 +613,7 @@ describe("models.authLogout saved API-key profile", () => {
                     id: "llama-3.3-70b",
                     name: "Llama 3.3 70B",
                     reasoning: false,
-                    input: ["text"],
+                    input: ["text" as const],
                     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
                     maxTokens: 8192,
                   },

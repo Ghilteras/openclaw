@@ -600,7 +600,7 @@ describe("modelsAuthLoginCommand", () => {
         },
       },
     };
-    mocks.promoteAuthProfileInOrder.mockResolvedValueOnce(null);
+    mocks.promoteAuthProfileInOrder.mockResolvedValueOnce({ ok: false, error: "lock-contention" });
 
     await expect(modelsAuthLoginCommand({ provider: "openai" }, runtime)).rejects.toThrow(
       "The auth profile was saved, but its order could not be updated because the auth store is busy. Wait a moment, then retry the login.",

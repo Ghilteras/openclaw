@@ -33,10 +33,17 @@ function migrationPluginIdsKey(pluginIds: readonly string[]): string {
 }
 
 function findMigrationProviderById(
-  entries: ReadonlyArray<{ provider: MigrationProviderPlugin }>,
+  entries: ReadonlyArray<{ provider: MigrationProviderPlugin; pluginId?: string }>,
   providerId: string,
+  ownerPluginIds?: readonly string[],
 ): MigrationProviderPlugin | undefined {
-  return entries.find((entry) => entry.provider.id === providerId)?.provider;
+  // Resolution names the plugins that own the contract; a registry from another owner
+  // generation must not answer for them.
+  return entries.find(
+    (entry) =>
+      entry.provider.id === providerId &&
+      (!ownerPluginIds || !entry.pluginId || ownerPluginIds.includes(entry.pluginId)),
+  )?.provider;
 }
 
 function bindMigrationProviderToRegistry(
@@ -68,11 +75,15 @@ function resolveMigrationProviderRegistry(params: {
 }) {
   const pluginIds = params.resolution.pluginIds;
   const active = getLoadedRuntimePluginRegistry({ requiredPluginIds: pluginIds });
-  if (
-    active &&
-    (!params.providerId ||
-      findMigrationProviderById(active.migrationProviders, params.providerId) !== undefined)
-  ) {
+  // The running Gateway registry answers only when it actually owns the contract plugins;
+  // otherwise bundled migration plugins load into the standalone slot below.
+  const activeOwnsContract = params.providerId
+    ? findMigrationProviderById(active?.migrationProviders ?? [], params.providerId, pluginIds) !==
+      undefined
+    : pluginIds.every((pluginId) =>
+        active?.migrationProviders.some((entry) => entry.pluginId === pluginId),
+      );
+  if (active && activeOwnsContract) {
     return active;
   }
   const pluginIdsKey = migrationPluginIdsKey(pluginIds);
@@ -96,10 +107,12 @@ function resolveMigrationProviderRegistry(params: {
     onlyPluginIds: pluginIds,
     activate: false,
   });
-  standaloneMigrationRegistrySlot = registry
-    ? { config: params.cfg, pluginIdsKey, registry }
+  // A loader may hand back an already-retired generation; never bind providers to it.
+  const usable = registry && !isPluginRegistryRetired(registry) ? registry : undefined;
+  standaloneMigrationRegistrySlot = usable
+    ? { config: params.cfg, pluginIdsKey, registry: usable }
     : undefined;
-  return registry ?? undefined;
+  return usable;
 }
 
 function resolveMigrationProviderPluginResolution(params: {
@@ -135,6 +148,11 @@ function resolveMigrationProviderPluginResolution(params: {
     });
   }
 
+  // Bundled migration plugins load through compat enablement even when config disables
+  // plugins, so the standalone slot must request them alongside the enabled owners.
+  for (const pluginId of bundledCompatPluginIds) {
+    pluginIds.add(pluginId);
+  }
   return {
     pluginIds: [...pluginIds].toSorted((left, right) => left.localeCompare(right)),
     bundledCompatPluginIds: [...bundledCompatPluginIds].toSorted((left, right) =>
@@ -189,7 +207,11 @@ export function resolvePluginMigrationProvider(params: {
     resolution,
     providerId: params.providerId,
   });
-  const provider = findMigrationProviderById(registry?.migrationProviders ?? [], params.providerId);
+  const provider = findMigrationProviderById(
+    registry?.migrationProviders ?? [],
+    params.providerId,
+    resolution.pluginIds,
+  );
   return provider && registry ? bindMigrationProviderToRegistry(provider, registry) : undefined;
 }
 
@@ -208,9 +230,9 @@ export function resolvePluginMigrationProviders(
   }
   const registry = resolveMigrationProviderRegistry({ cfg: params.cfg, resolution });
   const scopedProviders = registry
-    ? registry.migrationProviders.map(({ provider }) =>
-        bindMigrationProviderToRegistry(provider, registry),
-      )
+    ? registry.migrationProviders
+        .filter(({ pluginId }) => resolution.pluginIds.includes(pluginId))
+        .map(({ provider }) => bindMigrationProviderToRegistry(provider, registry))
     : [];
   return mergeMigrationProviders(
     activeProviders.map(({ provider }) => provider),

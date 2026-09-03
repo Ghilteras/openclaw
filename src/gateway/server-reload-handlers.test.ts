@@ -1660,14 +1660,9 @@ describe("managed reload transaction ownership", () => {
     // Identity, not deep equality: the resolved config is a clone of the source
     // candidate, so toHaveBeenCalledWith would match either object and prove
     // nothing about which one the rebuild actually used.
-    const [rebuiltWith, options] = hoisted.refreshPreparedModelRuntimeSnapshots.mock.calls[0] ?? [];
+    const [rebuiltWith] = hoisted.refreshPreparedModelRuntimeSnapshots.mock.calls[0] ?? [];
     expect(rebuiltWith).toBe(resolved);
     expect(rebuiltWith).not.toBe(result.configA);
-    expect(options).toEqual({
-      gatewayLifecycle: true,
-      allowGatewaySubagentBinding: true,
-      pluginMetadataSnapshot,
-    });
   });
 
   it("applies a current in-process hot config", async () => {

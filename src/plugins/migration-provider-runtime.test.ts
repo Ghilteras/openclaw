@@ -107,7 +107,6 @@ vi.mock("./migration-provider-public-artifacts.js", () => ({
     mocks.resolveBundledMigrationProviderPublicArtifacts,
 }));
 
-let ensureStandaloneMigrationProviderRegistryLoaded: typeof import("./migration-provider-runtime.js").ensureStandaloneMigrationProviderRegistryLoaded;
 let resolvePluginMigrationProvider: typeof import("./migration-provider-runtime.js").resolvePluginMigrationProvider;
 let resolvePluginMigrationProviders: typeof import("./migration-provider-runtime.js").resolvePluginMigrationProviders;
 
@@ -151,8 +150,6 @@ describe("migration provider runtime", () => {
       }),
     );
     const runtime = await import("./migration-provider-runtime.js");
-    ensureStandaloneMigrationProviderRegistryLoaded =
-      runtime.ensureStandaloneMigrationProviderRegistryLoaded;
     resolvePluginMigrationProvider = runtime.resolvePluginMigrationProvider;
     resolvePluginMigrationProviders = runtime.resolvePluginMigrationProviders;
   });
@@ -178,9 +175,7 @@ describe("migration provider runtime", () => {
       ],
     }));
 
-    ensureStandaloneMigrationProviderRegistryLoaded({
-      cfg: { plugins: { enabled: false } } as OpenClawConfig,
-    });
+    resolvePluginMigrationProviders({ cfg: { plugins: { enabled: false } } as OpenClawConfig });
 
     const standaloneParams = requireMockCallArg(
       mocks.loadPluginRegistryHandle,
@@ -208,7 +203,7 @@ describe("migration provider runtime", () => {
       },
     ] as never);
 
-    ensureStandaloneMigrationProviderRegistryLoaded({ providerId: "hermes" });
+    resolvePluginMigrationProvider({ providerId: "hermes" });
 
     const standaloneParams = requireMockCallArg(
       mocks.loadPluginRegistryHandle,
@@ -387,8 +382,6 @@ describe("migration provider runtime", () => {
       },
     ] as never);
 
-    ensureStandaloneMigrationProviderRegistryLoaded({ providerId: "codex" });
-
     expect(resolvePluginMigrationProvider({ providerId: "codex" })).toMatchObject({ id: "codex" });
   });
 
@@ -416,10 +409,6 @@ describe("migration provider runtime", () => {
         },
       ] as never);
 
-      ensureStandaloneMigrationProviderRegistryLoaded({
-        cfg: cfgA,
-        providerId: "shared-import",
-      });
       expect(
         resolvePluginMigrationProvider({ providerId: "shared-import", cfg: cfgA }),
       ).toBeDefined();

@@ -11,7 +11,7 @@ import {
   normalizeOptionalAgentRuntimeId,
 } from "./agent-runtime-id.js";
 import { listAgentEntries, withAgentRosterFactsBatch } from "./agent-scope-config.js";
-import { resolveAgentHarnessPolicy } from "./harness/policy.js";
+import { resolveConfiguredAgentHarnessPolicy } from "./harness/policy.js";
 
 // Harness runtime discovery feeds plugin preloading/setup. Only plugin runtimes
 // are selectable here; built-in OpenClaw/default runtime ids are excluded.
@@ -48,7 +48,7 @@ export function resolveConfiguredModelHarnessRuntime(params: {
   if (!parsed) {
     return undefined;
   }
-  const policy = resolveAgentHarnessPolicy({
+  const policy = resolveConfiguredAgentHarnessPolicy({
     config: params.config,
     provider: parsed.provider,
     modelId: parsed.modelId,

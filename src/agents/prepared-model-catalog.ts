@@ -66,21 +66,13 @@ export type GetPublishedPreparedModelCatalogOwnerParams = Omit<
 
 type PreparedModelCatalogConfigPolicy = "exact" | "published";
 
-async function materializeRequestedModelCatalog(
+// A completed full catalog crosses the worker boundary with its own auth generation. Every
+// reader takes the pair together; full rows over startup auth would mark account-scoped
+// models unavailable.
+function pairPreparedModelCatalogAuth(
   snapshot: PreparedModelRuntimeSnapshot,
-  readOnly: boolean | undefined,
-  refreshFullCatalog: boolean | undefined,
-): Promise<PreparedModelRuntimeSnapshot> {
-  if (!snapshot.loadFullModelCatalog) {
-    return snapshot;
-  }
-  const modelCatalog =
-    readOnly === true
-      ? undefined
-      : await snapshot.loadFullModelCatalog({ refresh: refreshFullCatalog === true });
-  if (!modelCatalog) {
-    return snapshot;
-  }
+  modelCatalog: ModelCatalogSnapshot,
+): PreparedModelRuntimeSnapshot {
   const fullAuth = getPreparedModelFullCatalogAuth(modelCatalog);
   if (!fullAuth) {
     throw new Error("prepared full model catalog omitted its auth generation");
@@ -102,6 +94,31 @@ async function materializeRequestedModelCatalog(
     getPreparedModelRuntimeAuthMaterializations(snapshot),
   );
   return materialized;
+}
+
+/** The published owner: its completed catalog once discovery landed, otherwise its configured facts. */
+export function readPublishedPreparedModelCatalog(
+  snapshot: PreparedModelRuntimeSnapshot,
+): PreparedModelRuntimeSnapshot {
+  const modelCatalog = snapshot.readFullModelCatalog?.();
+  return modelCatalog ? pairPreparedModelCatalogAuth(snapshot, modelCatalog) : snapshot;
+}
+
+async function materializeRequestedModelCatalog(
+  snapshot: PreparedModelRuntimeSnapshot,
+  readOnly: boolean | undefined,
+  refreshFullCatalog: boolean | undefined,
+): Promise<PreparedModelRuntimeSnapshot> {
+  if (!snapshot.loadFullModelCatalog) {
+    return snapshot;
+  }
+  if (readOnly === true) {
+    return readPublishedPreparedModelCatalog(snapshot);
+  }
+  return pairPreparedModelCatalogAuth(
+    snapshot,
+    await snapshot.loadFullModelCatalog({ refresh: refreshFullCatalog === true }),
+  );
 }
 
 function acceptsPreparedSnapshotConfig(

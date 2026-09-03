@@ -117,7 +117,9 @@ const preparedModelRuntimeMocks = vi.hoisted(() => ({
   >(),
 }));
 
-vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
+vi.mock("../plugins/plugin-metadata-snapshot.js", async () => ({
+  // The env fingerprint is a pure helper re-exported by the snapshot module; keep the real one.
+  ...(await import("../plugins/plugin-metadata-env.js")),
   isPluginMetadataSnapshotCompatible: () => true,
   loadPluginMetadataSnapshot: () => preparedModelRuntimeMocks.pluginMetadataSnapshot,
   resolvePluginMetadataSnapshot: () => preparedModelRuntimeMocks.pluginMetadataSnapshot,

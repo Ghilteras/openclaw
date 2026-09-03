@@ -40,9 +40,14 @@ describe("OpenAI provider Codex transport hooks", () => {
       "openai-device-code",
       "openai-api-key",
     ]);
+    const chatgptImport = {
+      migrationProviderId: "codex",
+      itemId: "auth:openai",
+      credentialKind: "oauth",
+    };
     expect(provider.auth?.map((method) => method.credentialImport)).toEqual([
-      undefined,
-      undefined,
+      chatgptImport,
+      chatgptImport,
       {
         migrationProviderId: "codex",
         itemId: "auth:openai:api-key",

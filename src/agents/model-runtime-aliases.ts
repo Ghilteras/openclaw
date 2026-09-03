@@ -5,7 +5,7 @@ import { parseModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { resolveAgentDir, resolveDefaultAgentId } from "./agent-scope-config.js";
+import { resolveAgentDir } from "./agent-scope-config.js";
 import { resolveExplicitAuthOrderSelection } from "./auth-profiles/order.js";
 import { getPreparedRuntimeAuthProfileStoreSnapshotCore } from "./auth-profiles/runtime-snapshots.js";
 import {
@@ -291,7 +291,7 @@ function resolveCliRuntimeFromAuthProfile(
       profileProvider: configuredProfiles[profileId]?.provider,
     });
   }
-  return resolveNativeLoginCliRuntime({ provider, cfg: params.cfg, agentDir });
+  return resolveNativeLoginCliRuntime({ provider, agentDir });
 }
 
 /**
@@ -301,13 +301,12 @@ function resolveCliRuntimeFromAuthProfile(
  */
 function resolveNativeLoginCliRuntime(params: {
   provider: string;
-  cfg?: OpenClawConfig;
   agentDir?: string;
 }): string | undefined {
-  const cfg = params.cfg ?? {};
-  const facts = readPreparedProviderAuthFacts(
-    params.agentDir ?? resolveAgentDir(cfg, resolveDefaultAgentId(cfg)),
-  );
+  // Only an owned decision has a prepared generation to read. Unowned callers (fleet-wide
+  // policy scans, bare provider lookups) keep the implicit runtime policy without touching
+  // the roster or any plugin.
+  const facts = params.agentDir ? readPreparedProviderAuthFacts(params.agentDir) : undefined;
   if (!facts) {
     return undefined;
   }

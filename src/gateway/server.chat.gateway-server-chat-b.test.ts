@@ -2255,16 +2255,15 @@ describe("gateway server chat", () => {
             const projection = Promise.all([
               projector.projectCatalog(),
               buildModelsListResult({
-                context,
-                agentId,
-                params: { view: "configured" },
-                preloadedCatalog: {
-                  agentId,
+                source: {
+                  kind: "published",
+                  context,
                   config: persistedConfig,
                   snapshot: catalogSnapshot,
+                  projector,
                 },
-                preloadedOnly: true,
-                catalogProjector: projector,
+                agentId,
+                params: { view: "configured" },
               }),
             ]).then(([modelCatalog, metadata]) => ({
               modelCatalog,

@@ -159,7 +159,7 @@ export async function loadGatewayModelCatalog(
 export async function readPreparedGatewayModelCatalog(
   params?: LoadGatewayModelCatalogParams,
 ): Promise<PreparedGatewayModelCatalog | undefined> {
-  const { getPreparedModelCatalogOwnerSnapshot } =
+  const { getPreparedModelCatalogOwnerSnapshot, readPublishedPreparedModelCatalog } =
     await import("../agents/prepared-model-catalog.js");
   const config = (params?.getConfig ?? getRuntimeConfig)();
   const owner = getPreparedModelCatalogOwnerSnapshot({
@@ -173,7 +173,7 @@ export async function readPreparedGatewayModelCatalog(
     return undefined;
   }
   return {
-    entries: (owner.readFullModelCatalog?.() ?? owner.modelCatalog).entries,
+    entries: readPublishedPreparedModelCatalog(owner).modelCatalog.entries,
     pluginRegistry: owner.pluginRegistry,
   };
 }
@@ -182,24 +182,24 @@ export async function readPreparedGatewayModelCatalog(
 export async function readPreparedGatewayModelCatalogOwnerSnapshot(
   params?: LoadGatewayModelCatalogParams,
 ): Promise<PreparedGatewayModelCatalogSnapshot | undefined> {
-  const { getPublishedPreparedModelCatalogOwnerSnapshot } =
+  const { getPublishedPreparedModelCatalogOwnerSnapshot, readPublishedPreparedModelCatalog } =
     await import("../agents/prepared-model-catalog.js");
   const config = (params?.getConfig ?? getRuntimeConfig)();
-  const candidate = getPublishedPreparedModelCatalogOwnerSnapshot({
+  const published = getPublishedPreparedModelCatalogOwnerSnapshot({
     ...(params?.agentId ? { agentId: params.agentId } : {}),
     ...(params?.agentDir ? { agentDir: params.agentDir } : {}),
     config,
     ...(params?.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
   });
-  if (!candidate) {
+  if (!published) {
     return undefined;
   }
-  // The published owner is the fact: its completed full catalog when discovery has landed,
-  // otherwise its configured projection. Ordinary reads never wait for discovery.
-  const modelCatalog = candidate.readFullModelCatalog?.() ?? candidate.modelCatalog;
+  // Ordinary reads never wait for discovery: the completed catalog with its paired auth
+  // generation once discovery has landed, otherwise the configured facts.
+  const candidate = readPublishedPreparedModelCatalog(published);
   const owner = resolvePublishedModelCatalogOwner(candidate);
   return {
-    ...projectGatewayModelCatalogSnapshot({ ...owner, modelCatalog }),
+    ...projectGatewayModelCatalogSnapshot(owner),
     providerAuth: owner.providerAuth,
     authStore: owner.authStore,
     metadataSnapshot: owner.metadataSnapshot,

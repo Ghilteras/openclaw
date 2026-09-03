@@ -177,39 +177,44 @@ describe("prepared model catalog access", () => {
     expect(mocks.releaseSnapshot).not.toHaveBeenCalled();
   });
 
-  it("keeps read-only loads on the published catalog facts", async () => {
+  it("reads the completed catalog with its paired auth without starting discovery", async () => {
+    const discovered = { entries: [{ provider: "openai", id: "discovered", name: "Discovered" }] };
+    const discoveredAuth = {
+      authStore: fullSnapshot.authStore,
+      providerAuth: { openai: { mode: "oauth" as const } },
+    };
+    setPreparedModelFullCatalogAuth(discovered, discoveredAuth);
     const snapshot = {
       ...fullSnapshot,
       loadFullModelCatalog: vi.fn(),
-      readFullModelCatalog: vi.fn(() => fullSnapshot.modelCatalog),
+      readFullModelCatalog: vi.fn(() => discovered),
     };
     mocks.getSnapshot.mockReturnValue(snapshot);
     mocks.prepareSnapshot.mockResolvedValue(snapshot);
 
     await expect(
       loadPreparedModelCatalogOwnerSnapshot({ readOnly: true, refreshFullCatalog: true }),
-    ).resolves.toMatchObject({ modelCatalog: fullSnapshot.modelCatalog });
+    ).resolves.toMatchObject({
+      modelCatalog: discovered,
+      providerAuth: discoveredAuth.providerAuth,
+    });
     expect(snapshot.loadFullModelCatalog).not.toHaveBeenCalled();
-    expect(snapshot.readFullModelCatalog).not.toHaveBeenCalled();
+    expect(snapshot.readFullModelCatalog).toHaveBeenCalledOnce();
   });
 
-  it("keeps auth-only reads on the current catalog facts", async () => {
+  it("keeps read-only loads on the configured facts until discovery lands", async () => {
     const snapshot = {
       ...fullSnapshot,
       loadFullModelCatalog: vi.fn(),
-      readFullModelCatalog: vi.fn(() => fullSnapshot.modelCatalog),
+      readFullModelCatalog: vi.fn(() => undefined),
     };
     mocks.getSnapshot.mockReturnValue(snapshot);
     mocks.prepareSnapshot.mockResolvedValue(snapshot);
-    setPreparedModelFullCatalogAuth(snapshot.modelCatalog, {
-      authStore: fullSnapshot.authStore,
-      providerAuth: fullSnapshot.providerAuth,
-    });
 
     await expect(
       loadPreparedModelCatalogOwnerSnapshot({ readOnly: true, refreshFullCatalog: false }),
     ).resolves.toMatchObject({ modelCatalog: fullSnapshot.modelCatalog });
-    expect(snapshot.readFullModelCatalog).not.toHaveBeenCalled();
+    expect(snapshot.loadFullModelCatalog).not.toHaveBeenCalled();
   });
 
   it("does not await a stale full catalog for read-only request paths", async () => {

@@ -159,6 +159,7 @@ describe("resolveCliRuntimeExecutionProvider", () => {
     expect(
       resolveCliRuntimeExecutionProvider({
         cfg: {},
+        agentId: "main",
         provider: "anthropic",
         modelId: "opus-4.7",
       }),
@@ -261,9 +262,14 @@ describe("resolveCliRuntimeExecutionProvider", () => {
       openai: { mode: "oauth", runtime: "codex" },
     });
 
-    expect(resolveCliRuntimeExecutionProvider({ provider: "openai", modelId: "gpt-test" })).toBe(
-      "codex",
-    );
+    expect(
+      resolveCliRuntimeExecutionProvider({
+        cfg: {},
+        agentId: "main",
+        provider: "openai",
+        modelId: "gpt-test",
+      }),
+    ).toBe("codex");
   });
 
   it("matches a config order key through the same normalized lookup as profile selection", () => {
