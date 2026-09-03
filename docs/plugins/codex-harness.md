@@ -499,10 +499,24 @@ whether any individual file was fully loaded or truncated.
 
 ### Compaction
 
-Do not set `compaction.model` or `compaction.provider` on Codex-backed
-agents. Codex compacts through its native app-server thread state, so
-OpenClaw ignores those local summarizer overrides at runtime, and
-`openclaw doctor --fix` removes them when the agent uses Codex.
+Codex owns native thread token-pressure compaction and explicit `/compact`
+requests. Do not set `compaction.model` or `compaction.provider` to steer those
+paths: Codex compacts through its native app-server thread state, and
+`openclaw doctor --fix` removes those local summarizer overrides when the
+agent uses Codex.
+
+The opt-in
+[`maxActiveTranscriptBytes`](/concepts/compaction#active-transcript-byte-guard)
+guard is different. When the active SQLite transcript reaches that limit,
+OpenClaw performs required host-side semantic compaction before an ordinary or
+heartbeat turn. With the default legacy context engine, the built-in
+summarizer uses the active session model route; eligible failures can use the
+existing model fallback chain when model selection is not locked. Configured
+context engines use their own model settings, such as Lossless
+`summaryModel`. Treat this host model route as a separate billing and
+data-handling boundary from native Codex. A compaction-owning context engine
+is followed by native Codex compaction; a definite native rejection is retried
+before the next turn.
 
 An authored `models.providers.*.models[].contextTokens` cap is forwarded to
 Codex thread start and resume as `model_context_window`. Codex clamps the value

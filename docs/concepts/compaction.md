@@ -141,8 +141,19 @@ management may keep model context healthy while persisted transcript history
 keeps growing. Set a positive byte count or size string such as `"20mb"` to opt
 in; `0` or an unset value disables the guard. It does not split raw bytes; it
 asks the normal compaction pipeline to create a semantic summary. For Codex
-app-server sessions, the same threshold caps native rollout transcripts and
-oversized native threads restart fresh.
+app-server sessions, this is the host-owned exception to Codex's native
+token-pressure compaction boundary: OpenClaw compacts the active SQLite
+transcript before ordinary and heartbeat turns, while under-limit heartbeats
+continue to skip host token maintenance. The selected context engine
+determines the host step. The default legacy engine uses OpenClaw's built-in
+summarizer on the active session model route, with the existing fallback chain
+available to eligible failures when model selection is not locked; configured
+context engines use their own model settings. When that engine advertises
+compaction ownership, OpenClaw then requests native Codex compaction. A
+definite native rejection stays pending and must succeed before the next Codex
+turn starts. The same configured threshold also caps native rollout files;
+oversized native threads without a protected context-engine bootstrap
+projection restart fresh.
 
 <Warning>
 The byte guard applies to the active SQLite transcript history. Legacy JSONL

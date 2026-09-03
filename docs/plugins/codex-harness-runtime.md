@@ -504,12 +504,32 @@ bundle.
 
 ## Compaction and transcript mirror
 
-When the selected model uses the Codex harness, native thread compaction
-belongs to Codex app-server. OpenClaw does not run preflight compaction for
-Codex turns, replace Codex compaction with context-engine compaction, or fall
-back to OpenClaw or public OpenAI summarization when native compaction cannot
-be started. OpenClaw keeps a transcript mirror for channel history, search,
-`/new`, `/reset`, and future model or harness switching.
+When the selected model uses the Codex harness, native thread token-pressure
+compaction belongs to Codex app-server. OpenClaw does not replace that path
+with context-engine compaction or fall back to OpenClaw summarization when
+native compaction cannot be started. OpenClaw keeps a transcript mirror for
+channel history, search, `/new`, `/reset`, and future model or harness
+switching.
+
+The opt-in
+[`maxActiveTranscriptBytes`](/concepts/compaction#active-transcript-byte-guard)
+guard is a separate persisted-transcript safety boundary. When the active
+SQLite transcript reaches the configured limit, OpenClaw runs required
+host-side semantic compaction before an ordinary or heartbeat turn. Heartbeats
+still skip host token-pressure maintenance while the transcript is below the
+byte limit. This host step protects the transcript mirror; it does not change
+Codex's ownership of native token-pressure compaction.
+
+The byte-guard step uses the selected context engine. The default legacy
+engine delegates to OpenClaw's built-in summarizer and uses the active session
+model route; eligible failures can use the session's existing model fallback
+chain when model selection is not locked. Configured context engines use their
+own model settings, such as Lossless `summaryModel`. This means enabling the
+guard can send transcript content through a host-selected model even though
+Codex still owns the native thread. When a context engine advertises
+compaction ownership, OpenClaw follows a successful host compaction with
+native Codex compaction. A definite native rejection is recorded and retried
+before the next turn; it does not roll back the committed host summary.
 
 Explicit compaction requests, such as `/compact` or a plugin-requested manual
 compact operation, start native Codex compaction with `thread/compact/start`.
@@ -524,8 +544,8 @@ connections also detach the matching thread binding so later work cannot
 overlap an unconfirmed remote turn. Other turns on a retired connection fail
 and can retry on a fresh client. Client closure, request cancellation, or a
 failed compaction turn returns a failed operation. Automatic context-pressure
-compaction is Codex's job; OpenClaw only starts native compaction for manually
-requested triggers.
+compaction is Codex's job. Apart from the transcript-byte guard above,
+OpenClaw only starts native compaction for manually requested triggers.
 
 A standalone cold compact operation does not run prompt-build hooks or establish
 ordinary-turn configuration. It releases its subscription after the operation;
