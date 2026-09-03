@@ -313,6 +313,12 @@ build stamp is ignored.
 
 The hosted file is published from the public
 [`openclaw/catalog`](https://github.com/openclaw/catalog) GitHub repository.
+At publish time, it also hydrates model ids and metadata from models.dev for
+mapped providers. Manifest values remain authoritative, so hydration only
+fills undefined metadata and never supplies transport settings or prices; costs
+still come from each provider's pricing policy. Only rows with tool calling and
+text output are imported, and rows models.dev marks deprecated or retired are
+skipped.
 Its scheduled workflow checks OpenClaw's default-branch plugin manifests and
 public pricing sources every four hours; every catalog content change is
 preserved as a public commit. Provider-owned policies select complete price
