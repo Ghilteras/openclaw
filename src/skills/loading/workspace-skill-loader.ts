@@ -1,4 +1,3 @@
-// Workspace skill loading turns validated discovery candidates into source-aware skill entries.
 /* oxlint-disable max-lines -- Agent-specific discovery stays with the loader owner. */
 import fs from "node:fs";
 import path from "node:path";
@@ -664,7 +663,6 @@ export function loadWorkspaceSkills(
     opts?.eligibility,
   );
 }
-/** Loads agent-workspace skills first, then execution-directory OpenClaw skills. */
 export function loadMergedWorkspaceSkills(
   params: WorkspaceSkillRoots & WorkspaceSkillLoadOptions,
 ): SkillEntry[] {
