@@ -9,3 +9,18 @@ export function worktreeAllocationBlockedReason(
   }
   return status === "unavailable" ? t("newSession.worktreeCapacityUnavailable") : undefined;
 }
+
+export function resolveWorktreePlacementRestore(params: {
+  destinationAvailable: boolean;
+  repositoryReady: boolean;
+  worktreeAvailable: boolean;
+  allocationAvailable: boolean;
+}): "waiting" | "available" | "unavailable" {
+  if (!params.destinationAvailable) {
+    return "unavailable";
+  }
+  if (!params.repositoryReady) {
+    return "waiting";
+  }
+  return params.worktreeAvailable && params.allocationAvailable ? "available" : "unavailable";
+}
