@@ -168,6 +168,7 @@ describe("Reef federated prompt E2E", () => {
             sessionId: frame.sessionId,
             grantGeneration: frame.grantGeneration,
             allowAlways: false,
+            revoked: false,
           });
           return;
         }
@@ -189,6 +190,7 @@ describe("Reef federated prompt E2E", () => {
       sessionId: "session-1",
       grantGeneration: 0,
       allowAlways: false,
+      revoked: false,
     };
     expect(hostState.createMount(hostMount)).toBe(true);
     await hostFlow.sendFederation("guest", {
@@ -233,6 +235,14 @@ describe("Reef federated prompt E2E", () => {
     expect(guestState.getMount(hostMount.mountId)).toMatchObject({
       grantGeneration: 1,
       allowAlways: false,
+      revoked: true,
     });
+    await expect(
+      guestFlow.proposeFederatedPrompt(
+        guestState.getMount(hostMount.mountId)!,
+        "Try after revocation",
+      ),
+    ).rejects.toThrow("Only active guest Reef mounts can propose prompts");
+    expect(gatewayRequest).toHaveBeenCalledTimes(2);
   });
 });

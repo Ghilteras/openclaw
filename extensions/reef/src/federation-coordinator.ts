@@ -184,6 +184,7 @@ export class ReefFederationCoordinator {
     if (
       !mount ||
       mount.role !== "host" ||
+      mount.revoked ||
       mount.peer !== params.peer ||
       mount.peerKeyEpoch !== params.peerKeyEpoch ||
       mount.grantGeneration !== frame.grantGeneration

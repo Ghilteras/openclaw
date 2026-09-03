@@ -17,6 +17,7 @@ const mount: ReefFederationMount = {
   sessionId: "session-1",
   grantGeneration: 0,
   allowAlways: false,
+  revoked: false,
 };
 
 function promptFrame(

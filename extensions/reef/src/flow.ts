@@ -235,8 +235,8 @@ export class ReefMessageFlow {
 
   /** Propose one prompt against an exact mounted session authority. */
   async proposeFederatedPrompt(mount: ReefFederationMount, text: string): Promise<string> {
-    if (mount.role !== "guest") {
-      throw new Error("Only guest Reef mounts can propose prompts");
+    if (mount.role !== "guest" || mount.revoked) {
+      throw new Error("Only active guest Reef mounts can propose prompts");
     }
     const friend = this.options.trust.get(mount.peer);
     if (!friend || friend.safetyNumberChanged || friend.keyEpoch !== mount.peerKeyEpoch) {

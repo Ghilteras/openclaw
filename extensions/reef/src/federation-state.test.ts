@@ -27,6 +27,7 @@ const mount: ReefFederationMount = {
   sessionId: "session-1",
   grantGeneration: 0,
   allowAlways: false,
+  revoked: false,
 };
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -55,12 +56,14 @@ describe("Reef federation state", () => {
 
     expect(state.revoke(mount.mountId, 0)).toMatchObject({
       allowAlways: false,
+      revoked: true,
       grantGeneration: 1,
     });
     expect(state.allowAlways(mount.mountId, 0)).toBe(false);
     expect(state.applyRevocation(mount.mountId, 3)).toBe(true);
     expect(state.getMount(mount.mountId)).toMatchObject({
       allowAlways: false,
+      revoked: true,
       grantGeneration: 3,
     });
     expect(state.applyRevocation(mount.mountId, 2)).toBe(false);

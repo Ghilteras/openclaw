@@ -78,6 +78,7 @@ export async function handleReefCommand({
       sessionId: session.sessionId,
       grantGeneration: 0,
       allowAlways: false,
+      revoked: false,
     };
     active.federation.createMount(mount);
     await active.flow.sendFederation(peer, {
@@ -91,8 +92,8 @@ export async function handleReefCommand({
   }
   if (words[0] === "session" && words[1] === "prompt" && words[2] && words[3]) {
     const mount = active.federation.getMount(words[2]);
-    if (!mount || mount.role !== "guest") {
-      return { text: `Unknown guest Reef session mount ${words[2]}.` };
+    if (!mount || mount.role !== "guest" || mount.revoked) {
+      return { text: `Unknown active guest Reef session mount ${words[2]}.` };
     }
     const proposalId = await active.flow.proposeFederatedPrompt(mount, words.slice(3).join(" "));
     return { text: `Sent Reef prompt proposal ${proposalId}.` };
@@ -121,7 +122,7 @@ export async function handleReefCommand({
         ? mounts
             .map(
               (mount) =>
-                `${mount.mountId} ${mount.role} @${mount.peer} ${mount.sessionKey} generation=${mount.grantGeneration}${mount.allowAlways ? " allow-always" : " ask"}`,
+                `${mount.mountId} ${mount.role} @${mount.peer} ${mount.sessionKey} generation=${mount.grantGeneration}${mount.revoked ? " revoked" : mount.allowAlways ? " allow-always" : " ask"}`,
             )
             .join("\n")
         : "No Reef session mounts.",

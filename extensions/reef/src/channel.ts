@@ -394,6 +394,7 @@ export const reefPlugin: ChannelPlugin<ReefAccount> = {
               sessionId: frame.sessionId,
               grantGeneration: frame.grantGeneration,
               allowAlways: false,
+              revoked: false,
             });
             await ownerNotice({
               text: `Reef session mount ${frame.mountId} from @${peer} is ready.`,

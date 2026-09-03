@@ -17,6 +17,7 @@ export type ReefFederationMount = {
   sessionId: string;
   grantGeneration: number;
   allowAlways: boolean;
+  revoked: boolean;
 };
 
 export type ReefFederationProposal = {
@@ -80,6 +81,7 @@ export class ReefFederationState {
       revoked = {
         ...mount,
         allowAlways: false,
+        revoked: true,
         grantGeneration: mount.grantGeneration + 1,
       };
       return revoked;
@@ -103,7 +105,7 @@ export class ReefFederationState {
         return mount;
       }
       changed = true;
-      return { ...mount, grantGeneration: generation, allowAlways: false };
+      return { ...mount, grantGeneration: generation, allowAlways: false, revoked: true };
     });
     return changed;
   }
@@ -167,7 +169,7 @@ export class ReefFederationState {
         return existing;
       }
       const mount = validateMount(existing);
-      if (mount.grantGeneration !== expectedGeneration) {
+      if (mount.grantGeneration !== expectedGeneration || mount.revoked) {
         return mount;
       }
       changed = true;
@@ -201,7 +203,8 @@ function validateMount(value: ReefFederationMount): ReefFederationMount {
     typeof value.sessionId !== "string" ||
     !Number.isSafeInteger(value.grantGeneration) ||
     value.grantGeneration < 0 ||
-    typeof value.allowAlways !== "boolean"
+    typeof value.allowAlways !== "boolean" ||
+    typeof value.revoked !== "boolean"
   ) {
     throw new Error("invalid Reef federation mount");
   }

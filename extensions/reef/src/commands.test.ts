@@ -14,7 +14,12 @@ const mocks = vi.hoisted(() => {
       if (!mount) {
         return undefined;
       }
-      const revoked = { ...mount, allowAlways: false, grantGeneration: generation + 1 };
+      const revoked = {
+        ...mount,
+        allowAlways: false,
+        revoked: true,
+        grantGeneration: generation + 1,
+      };
       mounts.set(mountId, revoked);
       return revoked;
     }),
@@ -87,6 +92,7 @@ describe("Reef session commands", () => {
       sessionId: "session-1",
       grantGeneration: 0,
       allowAlways: false,
+      revoked: false,
     };
     mocks.mounts.set(mount.mountId, mount);
 
