@@ -438,7 +438,10 @@ async function runSkillExperienceReviewInner(
       cwd: workspaceDir,
     });
     const { listWritableWorkshopSkillSummaries } = await import("./workspace-skill-read.js");
-    const existingSkills = listWritableWorkshopSkillSummaries({ config });
+    const existingSkills = listWritableWorkshopSkillSummaries({
+      config,
+      agentId: foregroundPromptContext.agentId,
+    });
     const run = () =>
       runSkillWorkshopReview({
         reviewKind: "experience",
@@ -519,7 +522,7 @@ async function runSkillExperienceReviewInner(
         }
       : undefined;
   } catch (error) {
-    recordSkillExperienceReviewOutcome(workspaceDir, {
+    recordSkillExperienceReviewOutcome(foregroundPromptContext.agentId, workspaceDir, {
       attemptedAtMs,
       outcome: "failed",
       error: String(error).slice(0, 300),
@@ -528,7 +531,7 @@ async function runSkillExperienceReviewInner(
   } finally {
     clearAgentRunContext(runId);
   }
-  recordSkillExperienceReviewOutcome(workspaceDir, {
+  recordSkillExperienceReviewOutcome(foregroundPromptContext.agentId, workspaceDir, {
     attemptedAtMs,
     outcome,
     ...(proposalId ? { proposalId } : {}),

@@ -1,4 +1,5 @@
 // Workspace skill loading turns validated discovery candidates into source-aware skill entries.
+/* oxlint-disable max-lines -- Agent-specific discovery stays with the loader owner. */
 import fs from "node:fs";
 import path from "node:path";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
@@ -445,7 +446,11 @@ function loadSkillEntries(
     rejectHardlinks?: boolean;
   }): LoadedSkillRecord[] => loadSkillRootRecords({ ...params, config: opts?.config });
   const managedSkillsDir = opts?.managedSkillsDir ?? path.join(CONFIG_DIR, "skills");
-  const workshopSkillsDir = opts?.workshopSkillsDir ?? resolveWorkshopSkillsDir();
+  const workshopSkillsDir =
+    opts?.workshopSkillsDir ??
+    (opts?.config && opts.agentId
+      ? resolveWorkshopSkillsDir(opts.config, opts.agentId)
+      : undefined);
   const bundledSkillsDir = workspaceOnly
     ? undefined
     : (opts?.bundledSkillsDir ?? resolveBundledSkillsDir());
@@ -494,9 +499,10 @@ function loadSkillEntries(
   const managedSkills = workspaceOnly
     ? []
     : loadSkills({ dir: managedSkillsDir, source: "openclaw-managed" });
-  const workshopSkills = workspaceOnly
-    ? []
-    : loadSkills({ dir: workshopSkillsDir, source: "openclaw-workshop" });
+  const workshopSkills =
+    workspaceOnly || !workshopSkillsDir
+      ? []
+      : loadSkills({ dir: workshopSkillsDir, source: "openclaw-workshop" });
   const personalAgentsSkillsDir = osHomeDir
     ? path.resolve(osHomeDir, ".agents", "skills")
     : path.resolve(".agents", "skills");
@@ -658,7 +664,6 @@ export function loadWorkspaceSkills(
     opts?.eligibility,
   );
 }
-
 /** Loads agent-workspace skills first, then execution-directory OpenClaw skills. */
 export function loadMergedWorkspaceSkills(
   params: WorkspaceSkillRoots & WorkspaceSkillLoadOptions,
