@@ -34,7 +34,6 @@ const proofBuildId = proofIdentity.expectedRevisionSha
   : "phone-proof-local-artifact";
 const suite = createControlUiE2eSuite({
   name: "Control UI responsive login gate E2E",
-  startServer: () => startPhoneProofServer(proofBuildId),
   startServerBeforeBrowser: true,
   unavailableMessage: (executablePath) =>
     `Playwright Chromium is not installed or cannot start at ${executablePath}. Run \`pnpm --dir ui exec playwright install --with-deps chromium\`, or set OPENCLAW_UI_E2E_ALLOW_MISSING_CHROMIUM=1 only when intentionally skipping this lane.`,
@@ -55,6 +54,7 @@ suite.define(() => {
   ] as const)(
     "rearms one bounded build recovery after the visible refresh action with $serviceWorker service-worker state",
     async ({ serviceWorker, serviceWorkers }) => {
+      const proofServer = await startPhoneProofServer(proofBuildId);
       const context = await suite.browser.newContext({
         hasTouch: true,
         isMobile: true,
@@ -91,7 +91,7 @@ suite.define(() => {
       });
       await installPhoneRecoveryRequestObserver(
         page,
-        controlUiBundledGatewayUrl(suite.server.baseUrl),
+        controlUiBundledGatewayUrl(proofServer.baseUrl),
       );
       const retainedImageArtifactId = "artifact_phone_proof_generated_image";
       const retainedImagePath =
@@ -240,7 +240,7 @@ suite.define(() => {
         },
         retryable: false,
       };
-      const target = new URL("chat/main", suite.server.baseUrl);
+      const target = new URL("chat/main", proofServer.baseUrl);
 
       const observation: PhoneRecoveryObservation = {
         schemaVersion: 3,
@@ -590,6 +590,7 @@ suite.define(() => {
           `${JSON.stringify(observation, null, 2)}\n`,
         );
         await closeContext(context);
+        await proofServer.close();
       }
     },
   );
