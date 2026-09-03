@@ -138,17 +138,18 @@ export type PhoneRecoveryObservation = {
   };
 };
 
+function isPhoneProofRevision(
+  value: string | undefined,
+): value is PhoneRecoveryObservation["proofRevision"] {
+  return value === "base" || value === "head" || value === "local";
+}
+
 export function phoneProofIdentity(): Pick<
   PhoneRecoveryObservation,
   "expectedRevisionSha" | "proofRevision"
 > {
   const configuredRevision = process.env.OPENCLAW_PHONE_PROOF_REVISION?.trim();
-  if (
-    configuredRevision &&
-    configuredRevision !== "base" &&
-    configuredRevision !== "head" &&
-    configuredRevision !== "local"
-  ) {
+  if (configuredRevision !== undefined && !isPhoneProofRevision(configuredRevision)) {
     throw new Error("OPENCLAW_PHONE_PROOF_REVISION must be base, head, or local");
   }
   const proofRevision = configuredRevision ?? "local";
