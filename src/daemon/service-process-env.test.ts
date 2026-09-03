@@ -201,28 +201,26 @@ describe("resolveServiceManagerEnv", () => {
           expect(identities[1]).toBe(identities[0]);
 
           const names = ["PSModuleAnalysisCachePath", ...Object.keys(excluded)];
+          // CLR-only output avoids loading a serializer inside the inspection budget.
+          // Base64 preserves path encoding; '-' distinguishes unset from present-empty.
           const fields = names.map(
-            (name) => `${name} = [Environment]::GetEnvironmentVariable('${name}')`,
+            (name) =>
+              `$value = [Environment]::GetEnvironmentVariable('${name}'); if ($null -eq $value) { [Console]::Out.WriteLine('-') } else { [Console]::Out.WriteLine([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($value))) }`,
           );
           const observed = spawnSync(
             getWindowsPowerShellExePath(env),
-            [
-              "-NoProfile",
-              "-NonInteractive",
-              "-Command",
-              `[Console]::Out.Write((@{ ${fields.join("; ")} } | ConvertTo-Json -Compress))`,
-            ],
+            ["-NoProfile", "-NonInteractive", "-Command", fields.join("; ")],
             { env, encoding: "utf8", timeout: 1000, windowsHide: true, maxBuffer: 4096 },
           );
           expect(observed.error).toBeUndefined();
           expect(observed.status, observed.stderr).toBe(0);
           // Identity speed alone could pass with the host's default cache after dropping this key.
-          expect(JSON.parse(observed.stdout)).toEqual({
-            PSModuleAnalysisCachePath: cachePath,
-            BOUNDARY_APPLICATION: null,
-            OPENCLAW_GATEWAY_TOKEN: null,
-            NODE_OPTIONS: null,
-          });
+          expect(observed.stdout.trimEnd().split(/\r?\n/u)).toEqual([
+            Buffer.from(cachePath, "utf8").toString("base64"),
+            "-",
+            "-",
+            "-",
+          ]);
         } finally {
           await stopChildProcess(child, 5_000);
           await closed;

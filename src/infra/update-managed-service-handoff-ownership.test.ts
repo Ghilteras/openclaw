@@ -253,6 +253,9 @@ async function runOwnershipHelper(params: {
   const parent = spawn(process.execPath, ["-e", "process.stdin.resume()"], {
     stdio: ["pipe", "ignore", "ignore"],
   });
+  const parentClosed = new Promise<void>((resolve) => {
+    parent.once("close", () => resolve());
+  });
   const parentPid = parent.pid;
   const startIdentity = parentPid ? getFileLockProcessStartTime(parentPid) : null;
   if (!parentPid || startIdentity === null) {
@@ -269,22 +272,36 @@ async function runOwnershipHelper(params: {
       preloadPath,
       `const fs = require("node:fs");
 const childProcess = require("node:child_process");
+const { DatabaseSync } = require("node:sqlite");
 const originalSpawn = childProcess.spawn;
 const closedPath = ${JSON.stringify(runnerClosedPath)};
+let injected = false;
 childProcess.spawn = function(command, args, options) {
-  if (command !== process.execPath || !args.includes("--import") || !options.stdio.includes("ipc")) {
-    return originalSpawn.apply(this, arguments);
+  const child = originalSpawn.apply(this, arguments);
+  if (injected || command !== process.execPath || !args.includes("--import") || !options.stdio.includes("ipc")) {
+    return child;
   }
-  const runnerScript = 'const fs=require("node:fs");fs.closeSync(0);' +
-    'fs.writeFileSync(' + JSON.stringify(closedPath) + ',String(process.pid));' +
-    'setTimeout(() => process.exit(0),5000)';
-  const child = originalSpawn.call(this, command, ["-e", runnerScript], options);
-  const deadline = Date.now() + 5000;
-  const waitWord = new Int32Array(new SharedArrayBuffer(4));
-  while (!fs.existsSync(closedPath) && Date.now() < deadline) {
-    Atomics.wait(waitWord, 0, 0, 10);
-  }
-  if (!fs.existsSync(closedPath)) throw new Error("runner did not close stdin");
+  injected = true;
+  const input = child.stdin;
+  const write = input.write;
+  let leaseAtGate;
+  child.once("close", (code, signal) => {
+    fs.writeFileSync(closedPath, JSON.stringify({ pid: child.pid, code, signal, leaseAtGate }), { mode: 0o600 });
+  });
+  input.write = function(...writeArgs) {
+    input.write = write;
+    const db = new DatabaseSync(${JSON.stringify(helperParams.updateLeaseDatabasePath)}, { readOnly: true });
+    try {
+      leaseAtGate = db.prepare("SELECT owner, payload_json FROM managed_update_handoffs WHERE install_root = ?")
+        .get(${JSON.stringify(helperParams.updateLeaseKey)});
+    } finally {
+      db.close();
+    }
+    // Windows fs.closeSync(0) leaves stdin open. End the actual sender after
+    // lease binding, then let Node reject the original write and emit its error.
+    input.end();
+    return write.apply(this, writeArgs);
+  };
   return child;
 };
 `,
@@ -342,18 +359,14 @@ childProcess.spawn = function(command, args, options) {
   parent.stdin.end();
   await params.whileHelperRunning?.({ env, logPath });
   const result = await resultPromise;
-  if (params.runnerFault) {
-    const runnerPid = Number(await fs.readFile(runnerClosedPath, "utf8"));
-    try {
-      process.kill(runnerPid, "SIGKILL");
-    } catch {}
-  }
+  await parentClosed;
   return {
     result,
     env,
     logPath,
     stderr,
     updaterPath,
+    runnerClosedPath,
     leaseDatabasePath: String(helperParams.updateLeaseDatabasePath),
     leaseKey: String(helperParams.updateLeaseKey),
   };
@@ -538,16 +551,37 @@ describe("managed service update handoff state ownership and sentinel persistenc
 
   it("reclaims the exact runner lease and records failure when its stdin closes before the update gate", async () => {
     const { DatabaseSync } = await import("node:sqlite");
-    const { result, env, stderr, updaterPath, leaseDatabasePath, leaseKey } =
-      await runOwnershipHelper({
-        handoffId: "handoff-runner-closed-stdin",
-        metaHandoffId: "handoff-runner-closed-stdin",
-        runnerFault: "closed-stdin",
-      });
+    const {
+      result,
+      env,
+      stderr,
+      logPath,
+      updaterPath,
+      runnerClosedPath,
+      leaseDatabasePath,
+      leaseKey,
+    } = await runOwnershipHelper({
+      handoffId: "handoff-runner-closed-stdin",
+      metaHandoffId: "handoff-runner-closed-stdin",
+      runnerFault: "closed-stdin",
+    });
 
     expect(result).toEqual({ code: 1, signal: null });
     expect(stderr).not.toMatch(/Unhandled 'error' event|Error: write EPIPE/u);
     await expect(fs.access(updaterPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const runner = JSON.parse(await fs.readFile(runnerClosedPath, "utf8")) as {
+      pid: number;
+      leaseAtGate: { owner: string; payload_json: string };
+    };
+    expect(runner.pid).toBeGreaterThan(0);
+    expect(runner.leaseAtGate.owner).toBe("handoff-runner-closed-stdin");
+    expect(JSON.parse(runner.leaseAtGate.payload_json)).toMatchObject({
+      version: 2,
+      executor: { pid: runner.pid },
+      action: { kind: "update" },
+    });
+    await expect(fs.readFile(logPath, "utf8")).resolves.toContain("ERR_STREAM_WRITE_AFTER_END");
 
     const leaseDatabase = new DatabaseSync(leaseDatabasePath, { readOnly: true });
     try {
@@ -566,7 +600,7 @@ describe("managed service update handoff state ownership and sentinel persistenc
         status: "error",
         stats: {
           handoffId: "handoff-runner-closed-stdin",
-          reason: expect.stringMatching(/^managed-service-handoff-(?:helper|spawn)-failed$/u),
+          reason: "managed-service-handoff-helper-failed",
         },
       },
     });
