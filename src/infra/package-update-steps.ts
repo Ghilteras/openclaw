@@ -1078,7 +1078,7 @@ async function swapStagedNpmInstall(params: {
   let sourcePackageFingerprint: string | null = null;
   let sourcePackageRootIdentity: PackageRootIdentity | null = null;
   let parkedPackageRootIdentityVerified = false;
-  let parkedPackageRootCtimeNs: bigint | null = null;
+  let parkedPackageRootStats: BigIntStats | null = null;
   let parkedPackageMetadataFailure: string | null = null;
   let launcherBackupsVerified = true;
   const shims: Array<{
@@ -1239,10 +1239,13 @@ async function swapStagedNpmInstall(params: {
     rollback.push(async () => {
       await removePath(targetPackageRoot);
       if (hadPackage) {
-        if (parkedPackageRootCtimeNs !== null) {
+        if (parkedPackageRootStats !== null) {
           try {
             if (
-              (await fs.lstat(backupRoot, { bigint: true })).ctimeNs !== parkedPackageRootCtimeNs
+              !packageFingerprintStatsMatch(
+                parkedPackageRootStats,
+                await fs.lstat(backupRoot, { bigint: true }),
+              )
             ) {
               packageRollbackVerified = false;
               parkedPackageMetadataFailure =
@@ -1261,11 +1264,11 @@ async function swapStagedNpmInstall(params: {
       }
     });
     if (hadPackage) {
-      parkedPackageRootIdentityVerified = packageRootIdentitiesMatch(
-        sourcePackageRootIdentity,
-        await readPackageRootIdentity(backupRoot),
-      );
-      parkedPackageRootCtimeNs = (await fs.lstat(backupRoot, { bigint: true })).ctimeNs;
+      parkedPackageRootStats = await fs.lstat(backupRoot, { bigint: true });
+      parkedPackageRootIdentityVerified = packageRootIdentitiesMatch(sourcePackageRootIdentity, {
+        dev: parkedPackageRootStats.dev,
+        ino: parkedPackageRootStats.ino,
+      });
       packageRollbackVerified =
         sourcePackageFingerprint !== null &&
         parkedPackageRootIdentityVerified &&
