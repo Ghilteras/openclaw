@@ -105,6 +105,7 @@ baseline_version_expected="0"
 candidate_version=""
 installed_version=""
 candidate_install_mode="updater"
+HISTORICAL_MOBILE_PAIRING_CANDIDATE_SHA="ea806575e6450e4d1efdfc72c19f04be982a1b9b"
 start_seconds=""
 status_seconds=""
 healthz_seconds=""
@@ -1247,7 +1248,8 @@ resolve_candidate_install_mode() {
   candidate_install_mode="updater"
   if [ "$SCENARIO" = "mobile-pairing-reconnect" ] &&
     [ "$baseline_version" = "2026.7.1" ] &&
-    [ "$candidate_version" = "2026.8.1" ]; then
+    [ "$candidate_version" = "2026.8.1" ] &&
+    [ "${OPENCLAW_DOCKER_E2E_SELECTED_SHA:-}" = "$HISTORICAL_MOBILE_PAIRING_CANDIDATE_SHA" ]; then
     candidate_install_mode="historical-package-replacement"
   fi
 }

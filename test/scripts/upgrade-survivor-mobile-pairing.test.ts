@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -577,6 +577,12 @@ describe("upgrade survivor mobile pairing client", () => {
     expect(source).toContain('[ "$SCENARIO" = "mobile-pairing-reconnect" ]');
     expect(source).toContain('[ "$baseline_version" = "2026.7.1" ]');
     expect(source).toContain('[ "$candidate_version" = "2026.8.1" ]');
+    expect(source).toContain(
+      'HISTORICAL_MOBILE_PAIRING_CANDIDATE_SHA="ea806575e6450e4d1efdfc72c19f04be982a1b9b"',
+    );
+    expect(source).toContain(
+      '[ "${OPENCLAW_DOCKER_E2E_SELECTED_SHA:-}" = "$HISTORICAL_MOBILE_PAIRING_CANDIDATE_SHA" ]',
+    );
     expect(source).toContain('candidate_install_mode="historical-package-replacement"');
     expect(source).toContain(
       'npm install -g --prefix "$npm_prefix" "$update_spec" --no-fund --no-audit',
@@ -584,6 +590,46 @@ describe("upgrade survivor mobile pairing client", () => {
     expect(source).toContain('npm_prefix="$(dirname "$(dirname "$(dirname "$live_package")")")"');
     expect(source).not.toContain(".openclaw-mobile-stage");
     expect(source).not.toContain("mobile-backup");
+  });
+
+  it("passes candidate source provenance into the isolated package runner", () => {
+    const source = readFileSync("scripts/e2e/upgrade-survivor-docker.sh", "utf8");
+    expect(source).toContain(
+      '-e OPENCLAW_DOCKER_E2E_SELECTED_SHA="${OPENCLAW_DOCKER_E2E_SELECTED_SHA:-}"',
+    );
+  });
+
+  it("selects package replacement by the immutable 8.1 source SHA, not its version alone", () => {
+    const source = readFileSync(RUNNER_PATH, "utf8");
+    const functions = source.slice(
+      source.indexOf("resolve_candidate_install_mode()"),
+      source.indexOf("\ncandidate_update_spec()"),
+    );
+    const resolveMode = (selectedSha: string) =>
+      execFileSync(
+        "bash",
+        [
+          "-c",
+          `set -eu
+HISTORICAL_MOBILE_PAIRING_CANDIDATE_SHA=ea806575e6450e4d1efdfc72c19f04be982a1b9b
+SCENARIO=mobile-pairing-reconnect
+baseline_version=2026.7.1
+candidate_version=2026.8.1
+OPENCLAW_DOCKER_E2E_SELECTED_SHA="$1"
+${functions}
+resolve_candidate_install_mode
+printf '%s\\n' "$candidate_install_mode"
+`,
+          "resolve-mode",
+          selectedSha,
+        ],
+        { encoding: "utf8" },
+      ).trim();
+
+    expect(resolveMode("ea806575e6450e4d1efdfc72c19f04be982a1b9b")).toBe(
+      "historical-package-replacement",
+    );
+    expect(resolveMode("156596611a465eda8404f9fb19637c6f7756cb07")).toBe("updater");
   });
 
   it("installs the historical candidate into the live npm prefix with dependency siblings", () => {
