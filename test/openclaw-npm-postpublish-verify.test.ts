@@ -85,6 +85,18 @@ describe("parseOpenClawNpmPostpublishVerifyArgs", () => {
       "Unexpected openclaw npm postpublish verifier argument: extra",
     );
   });
+
+  it("binds every release-maintainer invocation to the validated frozen target root", () => {
+    const skill = readFileSync(".agents/skills/release-openclaw-maintainer/SKILL.md", "utf8");
+    const command = "node --import tsx scripts/openclaw-npm-postpublish-verify.ts";
+    const invocations = skill.split("\n").filter((line) => line.includes(command));
+
+    expect(invocations.length).toBeGreaterThan(0);
+    for (const invocation of invocations) {
+      expect(invocation).toContain("<validated-frozen-target-root>");
+    }
+    expect(skill).toContain("already proven equal to the immutable release candidate SHA");
+  });
 });
 
 function writeDistJavaScriptFiles(packageRoot: string, count: number): void {
