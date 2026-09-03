@@ -112,6 +112,7 @@ describe("resolveCronAgentConfig model policy preservation", () => {
         workspaceDir: metadataSnapshot.workspaceDir,
         config: cfg,
         providerAuth: {},
+        oauthRefreshProviderIds: [],
         authStore: { version: 1, profiles: {} },
         metadataSnapshot,
         modelCatalog: { entries: [], routeVariants: [] },

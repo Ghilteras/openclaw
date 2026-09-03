@@ -1,10 +1,26 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ModelsAuthLoginFlowOptions } from "../commands/models/auth.js";
 import {
   decideProviderLoginSessionAdoption,
-  providerChannelLoginRuntime,
+  formatProviderLoginComplete,
   type ProviderChannelLoginChoice,
   type ProviderLoginSessionEntry,
+  runProviderChannelLoginFlow,
 } from "./provider-auth-login-flow-runtime.js";
+
+const mocks = vi.hoisted(() => ({
+  runModelsAuthLoginFlowCore: vi.fn(async (_options: unknown) => ({
+    providerId: "xai",
+    methodId: "oauth",
+    modelAccess: "already-visible" as const,
+    authRefresh: "refreshed" as const,
+    profiles: [],
+  })),
+}));
+
+vi.mock("../commands/models/auth.js", () => ({
+  runModelsAuthLoginFlowCore: mocks.runModelsAuthLoginFlowCore,
+}));
 
 const choice: ProviderChannelLoginChoice = {
   choiceId: "xai-oauth",
@@ -23,88 +39,64 @@ const snapshot: ProviderLoginSessionEntry = {
   authProfileOverrideSource: "user",
 };
 
+const loginParams = {
+  choice,
+  agentId: "main",
+  config: {},
+  runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+  unsupportedPromptMessage: "Open Control UI → Models and choose Sign in.",
+};
+
 describe("provider channel login runtime", () => {
+  beforeEach(() => {
+    mocks.runModelsAuthLoginFlowCore.mockClear();
+  });
+
   it("fails closed when an offered provider asks chat for extra input", async () => {
     const sendMessage = vi.fn(async () => {});
+    mocks.runModelsAuthLoginFlowCore.mockImplementationOnce(async (options) => {
+      await (options as ModelsAuthLoginFlowOptions).prompter.text({ message: "Enter a secret" });
+      return { providerId: "xai", methodId: "oauth", profiles: [] };
+    });
 
-    await expect(
-      providerChannelLoginRuntime.runLoginFlow({
-        choice,
-        agentId: "main",
-        config: {},
-        runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
-        sendMessage,
-        unsupportedPromptMessage: "Open Control UI → Models and choose Sign in.",
-        runLoginFlow: async (options) => {
-          await options.prompter.text({ message: "Enter a secret" });
-          return { providerId: "xai", methodId: "oauth", profiles: [] };
-        },
-      }),
-    ).rejects.toThrow("Open Control UI");
+    await expect(runProviderChannelLoginFlow({ ...loginParams, sendMessage })).rejects.toThrow(
+      "Open Control UI",
+    );
     expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
       "Open Control UI → Models and choose Sign in.",
     );
   });
 
   it("passes the selected manifest owner to provider execution", async () => {
-    const runLoginFlow = vi.fn(async () => ({
-      providerId: "xai",
-      methodId: "oauth",
-      modelAccess: "already-visible" as const,
-      authRefresh: "refreshed" as const,
-      profiles: [],
-    }));
+    await runProviderChannelLoginFlow({ ...loginParams, sendMessage: vi.fn(async () => {}) });
 
-    await providerChannelLoginRuntime.runLoginFlow({
-      choice,
-      agentId: "main",
-      config: {},
-      runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
-      sendMessage: vi.fn(async () => {}),
-      unsupportedPromptMessage: "Open Control UI → Models and choose Sign in.",
-      runLoginFlow,
-    });
-
-    expect(runLoginFlow).toHaveBeenCalledWith(
+    expect(mocks.runModelsAuthLoginFlowCore).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "xai",
         method: "oauth",
         ownerPluginId: "xai",
         credentialOnly: true,
+        agent: "main",
       }),
     );
   });
 
   it("reports saved credentials when the running Gateway cannot refresh them", () => {
     expect(
-      providerChannelLoginRuntime.formatComplete(
-        choice,
-        false,
-        "already-visible",
-        "gateway-unreachable",
-      ),
+      formatProviderLoginComplete(choice, false, "already-visible", "gateway-unreachable"),
     ).toBe(
       "xAI (Grok) login complete. Your credential is saved, but this Gateway could not refresh its model catalog. Restart the Gateway, then use /models.",
     );
   });
 
   it("keeps model-access failure ahead of a later refresh failure", () => {
-    expect(
-      providerChannelLoginRuntime.formatComplete(choice, false, "failed", "gateway-unreachable"),
-    ).toBe(
+    expect(formatProviderLoginComplete(choice, false, "failed", "gateway-unreachable")).toBe(
       "xAI (Grok) login complete. Your credential is saved, but OpenClaw could not enable its models. Retry /login xai after the current config change finishes.",
     );
   });
 
   it("reports a rejected Gateway refresh without recommending a restart", () => {
-    expect(
-      providerChannelLoginRuntime.formatComplete(
-        choice,
-        false,
-        "already-visible",
-        "gateway-rejected",
-      ),
-    ).toBe(
+    expect(formatProviderLoginComplete(choice, false, "already-visible", "gateway-rejected")).toBe(
       "xAI (Grok) login complete. Your credential is saved, but this Gateway rejected the auth refresh. Check the Gateway logs, then use /models.",
     );
   });
