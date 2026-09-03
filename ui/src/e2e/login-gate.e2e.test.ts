@@ -32,7 +32,7 @@ type PhoneRecoveryObservation = {
   reloadRequired?: {
     actionCount: number;
     access: {
-      ariaLive: string | null;
+      ariaLive: string | null | undefined;
       disabled: boolean;
       height: number;
       insideFencedOutlet: boolean;
@@ -185,7 +185,7 @@ suite.define(() => {
   it.each([
     { serviceWorker: "normal", serviceWorkers: "allow" as const },
     { serviceWorker: "blocked", serviceWorkers: "block" as const },
-  ])(
+  ] as const)(
     "rearms one bounded build recovery after the visible refresh action with $serviceWorker service-worker state",
     async ({ serviceWorker, serviceWorkers }) => {
       const context = await suite.browser.newContext({
