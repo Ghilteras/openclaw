@@ -853,7 +853,9 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
     }
     observedEntries.push({ entryPath, stat });
     // ctime changes when ownership, ACLs, capabilities, or extended attributes
-    // change. The package root is checked separately before its rollback rename.
+    // change. Rename-based parking preserves descendant ctimes; copy fallback
+    // recovery is never marked verified. The root is checked separately before
+    // its rollback rename because that rename changes the root ctime.
     const portableMetadata = [
       Number(stat.mode & 0o7777n),
       stat.uid.toString(),
@@ -953,7 +955,8 @@ async function fingerprintPackageTree(packageRoot: string): Promise<string | nul
       }
       children.push(child.name);
     }
-    children.sort((left, right) => left.localeCompare(right));
+    // Fingerprints must not depend on the host locale or ICU configuration.
+    children.sort();
     for (const child of children) {
       if (
         !(await visit(
@@ -1072,6 +1075,7 @@ async function swapStagedNpmInstall(params: {
   let sourcePackageRootIdentity: PackageRootIdentity | null = null;
   let parkedPackageRootIdentityVerified = false;
   let parkedPackageRootCtimeNs: bigint | null = null;
+  let parkedPackageMetadataFailure: string | null = null;
   let launcherBackupsVerified = true;
   const shims: Array<{
     source: string;
@@ -1089,19 +1093,6 @@ async function swapStagedNpmInstall(params: {
         "rollback verification failed: package backup did not preserve filesystem identity",
       );
     }
-    if (parkedPackageRootCtimeNs !== null) {
-      try {
-        if ((await fs.lstat(backupRoot, { bigint: true })).ctimeNs !== parkedPackageRootCtimeNs) {
-          packageRollbackVerified = false;
-          messages.push("rollback verification failed: parked package metadata changed");
-        }
-      } catch (verificationError) {
-        packageRollbackVerified = false;
-        messages.push(
-          `rollback package-metadata verification failed: ${formatErrorMessage(verificationError)}`,
-        );
-      }
-    }
     for (const restore of rollback.toReversed()) {
       try {
         await restore();
@@ -1109,6 +1100,9 @@ async function swapStagedNpmInstall(params: {
         packageRollbackVerified = false;
         messages.push(`rollback failed: ${formatErrorMessage(restoreError)}`);
       }
+    }
+    if (parkedPackageMetadataFailure) {
+      messages.push(parkedPackageMetadataFailure);
     }
     try {
       const restoredVersion = await readPackageVersionIfPresent(targetPackageRoot);
@@ -1241,6 +1235,20 @@ async function swapStagedNpmInstall(params: {
     rollback.push(async () => {
       await removePath(targetPackageRoot);
       if (hadPackage) {
+        if (parkedPackageRootCtimeNs !== null) {
+          try {
+            if (
+              (await fs.lstat(backupRoot, { bigint: true })).ctimeNs !== parkedPackageRootCtimeNs
+            ) {
+              packageRollbackVerified = false;
+              parkedPackageMetadataFailure =
+                "rollback verification failed: parked package metadata changed";
+            }
+          } catch (verificationError) {
+            packageRollbackVerified = false;
+            parkedPackageMetadataFailure = `rollback package-metadata verification failed: ${formatErrorMessage(verificationError)}`;
+          }
+        }
         await movePathWithCopyFallback({
           from: backupRoot,
           sourceHardlinks: PACKAGE_MANAGER_SWAP_SOURCE_HARDLINKS,

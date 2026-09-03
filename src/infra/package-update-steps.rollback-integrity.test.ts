@@ -551,4 +551,47 @@ describe("package rollback tree integrity", () => {
       });
     },
   );
+
+  it("uses locale-independent ordering for package rollback fingerprints", async () => {
+    await withTestDir({ prefix: "openclaw-package-recovery-stable-order-" }, async (base) => {
+      const globalRoot = path.join(base, "prefix", "lib", "node_modules");
+      const packageRoot = path.join(globalRoot, "openclaw");
+      await writePackageRoot(packageRoot, "1.0.0");
+      await fs.writeFile(path.join(packageRoot, "dist", "alpha.js"), "alpha\n", "utf8");
+      await fs.writeFile(path.join(packageRoot, "dist", "zeta.js"), "zeta\n", "utf8");
+      const localeCompareSpy = vi
+        .spyOn(String.prototype, "localeCompare")
+        .mockImplementation(() => {
+          throw new Error("rollback fingerprint used locale collation");
+        });
+
+      try {
+        const result = await runGlobalPackageUpdateSteps({
+          installTarget: createNpmTarget(globalRoot),
+          installSpec: "openclaw@2.0.0",
+          packageName: "openclaw",
+          packageRoot,
+          runCommand: createRootRunner(globalRoot),
+          runStep: stageCandidatePackage,
+          postVerifyStep: async (candidateRoot) => ({
+            name: "openclaw doctor",
+            command: "openclaw doctor --non-interactive --fix",
+            cwd: candidateRoot,
+            durationMs: 0,
+            exitCode: 1,
+            stderrTail: "doctor rejected candidate",
+          }),
+          timeoutMs: 1000,
+        });
+
+        expect(result.afterVersion).toBe("1.0.0");
+        expect(result.recovery).toMatchObject({
+          serviceRestartSafe: false,
+          packageRollbackVerified: true,
+        });
+      } finally {
+        localeCompareSpy.mockRestore();
+      }
+    });
+  });
 });
