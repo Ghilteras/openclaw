@@ -21,6 +21,7 @@ import {
   MOBILE_PAIRING_NODE_PERMISSIONS,
   MOBILE_PAIRING_OPERATOR_CAPS,
   approveBaselineNodePairing,
+  assertGatewayHealth,
   buildConnectRequest,
   buildDeviceAuthCompatibilityPayloadV2,
   buildRedactedEvidence,
@@ -66,6 +67,12 @@ function bootstrapHello(nodeToken: string, operatorToken: string) {
 }
 
 describe("upgrade survivor mobile pairing client", () => {
+  it("requires the Gateway health RPC to report ok", () => {
+    expect(() => assertGatewayHealth({ ok: true })).not.toThrow();
+    expect(() => assertGatewayHealth({ ok: false })).toThrow(/health response invalid/);
+    expect(() => assertGatewayHealth({})).toThrow(/health response invalid/);
+  });
+
   it("uses the node approval CLI backend identity for pairing audits", () => {
     expect(MOBILE_PAIRING_AUDIT_CLIENT).toMatchObject({
       id: "gateway-client",

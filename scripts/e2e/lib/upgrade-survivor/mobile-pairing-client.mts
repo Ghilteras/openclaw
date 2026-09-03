@@ -734,6 +734,12 @@ export function validatePairingAudit(params: {
   };
 }
 
+export function assertGatewayHealth(value: unknown): void {
+  if (!isRecord(value) || value.ok !== true) {
+    throw new Error("Gateway health response invalid");
+  }
+}
+
 export function inspectBaselineNodePairing(
   value: unknown,
   deviceId: string,
@@ -948,9 +954,7 @@ async function verifyReconnect(params: {
       hello: operator.hello,
     });
     writePrivateJson(params.credentialsFile, params.credentials);
-    if (!isRecord(await request(operator.socket, "health"))) {
-      throw new Error("Gateway health response invalid");
-    }
+    assertGatewayHealth(await request(operator.socket, "health"));
     const nodeList = await request(operator.socket, "node.list");
     const nodes = Array.isArray(nodeList)
       ? nodeList
