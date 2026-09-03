@@ -293,7 +293,11 @@ export async function claimPendingAgentQuestionAnswer(params: {
       // Only this submission's receipt proves consumption; missing proof forbids replay.
       const answer = await state.answer?.catch(() => undefined);
       retainReservation = true;
-      if (!answer || answer.status === "pending") {
+      if (
+        !answer ||
+        answer.status === "pending" ||
+        (answer.status === "answered" && answer.resolutionId === undefined)
+      ) {
         throw new QuestionAnswerUnconfirmedError(error);
       }
       consumed = answer.status === "answered" && answer.resolutionId === resolutionId;

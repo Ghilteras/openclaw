@@ -350,7 +350,11 @@ describe("question dispatch ownership", () => {
             answers: { answers: { answer: ["same answer"] } },
           });
           hello.fail();
-          expect(await outcome).toBe(false);
+          if (resolutionId === undefined) {
+            expect(await outcome).toBeInstanceOf(QuestionAnswerUnconfirmedError);
+          } else {
+            expect(await outcome).toBe(false);
+          }
           expect(source.signal.aborted).toBe(false);
           expect(fixture.backingRun.signal.aborted).toBe(false);
           expect(fixture.requests.filter((frame) => frame.method === "question.resolve")).toEqual(

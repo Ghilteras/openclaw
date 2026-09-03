@@ -521,12 +521,16 @@ releases the input immediately; a cancelled or expired waiter proves non-consump
 If the receipt is missing, rejected, or still pending when the waiter settles,
 the host records the input as unconfirmed and non-replayable rather than sending
 it through ordinary steering again. This is routing ownership, not proof that the
-answer committed. Talk reports the uncertainty, and ACP records an intentional
-non-outcome without starting another turn. Backing-run abort, timeout, and error
-cleanup retain independent authority.
+answer committed. Channel replies, Gateway chat, Talk, and the TUI surface the
+uncertainty without starting another turn or cancelling independently accepted
+backing work. Notice delivery or source adoption failure does not release the
+input for replay. Backing-run abort, timeout, and error cleanup retain independent
+authority.
 
 Custom transports must preserve these request and response fields for lost-response
-recovery. `resolutionId` is an opaque 1–128-character correlation value, not permission
+recovery. A legacy receipt-less response remains unconfirmed; it does not prove
+that another submission answered the question. `resolutionId` is an opaque
+1–128-character correlation value, not permission
 to resolve a question or reuse closed-source authority. Ordinary waiters omit
 `includeResolutionId` (default `false`) and receive the existing response shape;
 question records, lookup results, and broadcast events never gain the receipt.

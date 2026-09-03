@@ -255,22 +255,22 @@ export function beginReplyMessageInjectionTarget(
     }
     acceptanceSettled = true;
     acceptance.resolve(accepted);
+    queueOptions?.onQueueAccepted?.(accepted);
   };
-  const callerOnQueueAccepted = queueOptions?.onQueueAccepted;
   const runtimeQueueOptions: ReplyBackendQueueMessageOptions = {
     ...queueOptions,
     onQueueAccepted: (accepted) => {
-      settleAcceptance(accepted);
-      callerOnQueueAccepted?.(accepted);
+      // Rejection is provisional until the outcome rules out an uncertain question
+      // dispatch. Forwarding false early would release the parked input for replay.
+      if (accepted) {
+        settleAcceptance(true);
+      }
     },
   };
   const failed = (error: unknown): ReplyMessageInjectionOutcome => {
     if (error instanceof QuestionAnswerUnconfirmedError) {
-      runtimeQueueOptions.onQueueAccepted?.(true);
-      return {
-        status: "accepted",
-        result: { transcriptCommit: "unconfirmed", errorMessage: error.message },
-      };
+      settleAcceptance(true);
+      return { status: "indeterminate", errorMessage: error.message };
     }
     settleAcceptance(false);
     return { status: "rejected", reason: "runtime_rejected", errorMessage: String(error) };
@@ -315,6 +315,22 @@ export async function finalizeReplyMessageInjectionAttempt(params: {
   const outcome = await params.attempt.outcome;
   if (outcome.status === "rejected") {
     return { status: "rejected" as const, outcome, targetRunId: params.attempt.targetRunId };
+  }
+  if (outcome.status === "indeterminate") {
+    let adoptionError: unknown;
+    try {
+      await params.onAdopted?.();
+    } catch (error) {
+      adoptionError = error;
+    }
+    // Unknown input retains custody but has no authority to abort independent
+    // backing work, including when the source's later adoption fails.
+    return {
+      status: "indeterminate" as const,
+      outcome,
+      targetRunId: params.attempt.targetRunId,
+      adoptionError,
+    };
   }
   recordAcceptedReplyMessageInjectionTarget(params.target, {
     inboundAudio: params.inboundAudio,

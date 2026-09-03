@@ -269,7 +269,7 @@ export async function runReplyAgent(
     messageInjectionDisposition === "none"
   ) {
     replyRunState.bindQueueDispositionToRunState(followupRun, replyOperationRunState);
-    await runActiveReplySteer({
+    const result = await runActiveReplySteer({
       followupRun,
       opts,
       providedReplyOperation,
@@ -289,7 +289,7 @@ export async function runReplyAgent(
         ? activeToolAuthorityFingerprint
         : undefined,
     });
-    return undefined;
+    return result === "handled" ? undefined : result;
   }
 
   const activeRunQueueAction = resolveActiveRunQueueAction({

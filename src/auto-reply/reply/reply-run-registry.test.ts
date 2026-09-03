@@ -2179,8 +2179,8 @@ describe("reply run registry", () => {
       await expect(attempt.acceptance).resolves.toBe(unconfirmed);
       if (unconfirmed) {
         await expect(attempt.outcome).resolves.toEqual({
-          status: "accepted",
-          result: { transcriptCommit: "unconfirmed", errorMessage: error.message },
+          status: "indeterminate",
+          errorMessage: error.message,
         });
         expect(onQueueAccepted).toHaveBeenCalledExactlyOnceWith(true);
       } else {

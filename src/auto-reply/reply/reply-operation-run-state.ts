@@ -5,7 +5,12 @@ type ReplyOperationAdmissionSnapshot =
   | { status: "accepted"; mode: "steer" | "followup" }
   | {
       status: "skipped";
-      reason: "active-run" | "aborted" | "lifecycle-invalidated" | "queue-cap";
+      reason:
+        | "active-run"
+        | "aborted"
+        | "lifecycle-invalidated"
+        | "queue-cap"
+        | "question-response-indeterminate";
     };
 
 export type ReplyOperationRunState = {

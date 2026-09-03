@@ -190,6 +190,7 @@ type ReplyMessageInjectionRejectionReason =
   | "runtime_rejected";
 
 export type ReplyMessageInjectionOutcome =
+  | { status: "indeterminate"; errorMessage: string }
   | { status: "accepted"; result?: ReplyBackendQueueMessageResult }
   | { status: "rejected"; reason: ReplyMessageInjectionRejectionReason; errorMessage?: string };
 
