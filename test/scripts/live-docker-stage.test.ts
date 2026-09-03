@@ -379,6 +379,10 @@ export function parseRegistryNpmSpec(spec: string) {
         );
         writeFileSync(path.join(root, "src", "agents", "agent-bundle-mcp-runtime.ts"), "\n");
         writeFileSync(
+          path.join(root, "src", "agents", "code-mode-namespaces.ts"),
+          'const reserved = ["ALL_TOOLS"];\n',
+        );
+        writeFileSync(
           path.join(root, "scripts", "e2e", "agent-bundle-mcp-tools-docker-client.ts"),
           "\n",
         );
@@ -419,6 +423,10 @@ export function parseRegistryNpmSpec(spec: string) {
           "\n",
         );
         writeFileSync(path.join(root, "src", "agents", "agent-bundle-mcp-manager-api.ts"), "\n");
+        writeFileSync(
+          path.join(root, "src", "agents", "code-mode-namespaces.ts"),
+          'const reserved = ["ALL_TOOLS", "catalog"];\n',
+        );
       }
       execFileSync("git", ["init", "-q", root]);
       execFileSync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
@@ -445,7 +453,7 @@ export function parseRegistryNpmSpec(spec: string) {
             'set -euo pipefail; source "$1"',
             'openclaw_resolve_frozen_upgrade_survivor_capabilities "$2"',
             'openclaw_resolve_frozen_core_harness_capabilities "$2"',
-            'printf "%s|%s|%s|%s|%s|%s|%s\\n" "$OPENCLAW_UPGRADE_SURVIVOR_EXEC_APPROVALS_MODE" "$OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_REQUEST_DIALECT" "$OPENCLAW_FROZEN_TARGET_ONBOARD_CASES" "$OPENCLAW_FROZEN_TARGET_ONBOARD_SESSION_MEMORY_HOOK_MODE" "$OPENCLAW_FROZEN_TARGET_AGENT_BUNDLE_MCP_MODE" "$OPENCLAW_FROZEN_TARGET_MCP_MEMORY_CONFIG_MODE" "$OPENCLAW_FROZEN_TARGET_SESSION_REPAIR_MODE"',
+            'printf "%s|%s|%s|%s|%s|%s|%s|%s\\n" "$OPENCLAW_UPGRADE_SURVIVOR_EXEC_APPROVALS_MODE" "$OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_REQUEST_DIALECT" "$OPENCLAW_FROZEN_TARGET_ONBOARD_CASES" "$OPENCLAW_FROZEN_TARGET_ONBOARD_SESSION_MEMORY_HOOK_MODE" "$OPENCLAW_FROZEN_TARGET_AGENT_BUNDLE_MCP_MODE" "$OPENCLAW_FROZEN_TARGET_MCP_CODE_MODE_CATALOG_MODE" "$OPENCLAW_FROZEN_TARGET_MCP_MEMORY_CONFIG_MODE" "$OPENCLAW_FROZEN_TARGET_SESSION_REPAIR_MODE"',
           ].join("; "),
           "test",
           frozenTargetCompatPath,
@@ -464,20 +472,20 @@ export function parseRegistryNpmSpec(spec: string) {
 
     const legacy = createSource("legacy");
     expect(run(legacy, "1").stdout.trim()).toBe(
-      "omitted|legacy|local-basic,remote-non-interactive,reset,channels,skills|interactive|legacy|agent|jsonl",
+      "omitted|legacy|local-basic,remote-non-interactive,reset,channels,skills|interactive|legacy|legacy|agent|jsonl",
     );
     expect(run(legacy, "0").stdout.trim()).toBe(
-      "required|current||required|current|current|sqlite",
+      "required|current||required|current|current|current|sqlite",
     );
 
     const modern = createSource("modern");
     expect(run(modern, "1").stdout.trim()).toBe(
-      "required|current||required|current|current|sqlite",
+      "required|current||required|current|current|current|sqlite",
     );
 
     const unknown = createSource("unknown");
     expect(run(unknown, "1").stdout.trim()).toBe(
-      "required|current||required|current|current|sqlite",
+      "required|current||required|current|current|current|sqlite",
     );
 
     const mismatched = run(legacy, "1", "e".repeat(40));

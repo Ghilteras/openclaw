@@ -60,6 +60,7 @@ openclaw_resolve_frozen_core_harness_capabilities() {
   export OPENCLAW_FROZEN_TARGET_ONBOARD_CASES="" \
     OPENCLAW_FROZEN_TARGET_ONBOARD_SESSION_MEMORY_HOOK_MODE="required" \
     OPENCLAW_FROZEN_TARGET_AGENT_BUNDLE_MCP_MODE="current" \
+    OPENCLAW_FROZEN_TARGET_MCP_CODE_MODE_CATALOG_MODE="current" \
     OPENCLAW_FROZEN_TARGET_MCP_MEMORY_CONFIG_MODE="current" \
     OPENCLAW_FROZEN_TARGET_SESSION_REPAIR_MODE="sqlite"
 
@@ -95,6 +96,16 @@ openclaw_resolve_frozen_core_harness_capabilities() {
   if git -C "$source_root" show "$OPENCLAW_SELECTED_SHA:src/agents/memory-search.ts" 2>/dev/null |
     grep -Fq 'cfg.agents?.defaults?.memorySearch'; then
     export OPENCLAW_FROZEN_TARGET_MCP_MEMORY_CONFIG_MODE="agent"
+  fi
+
+  # The selected release exposes ALL_TOOLS to code mode but predates the
+  # catalog global. Its fixture program must use that shipped global or exec
+  # throws before it can return the MCP result being proved.
+  if git -C "$source_root" show "$OPENCLAW_SELECTED_SHA:src/agents/code-mode-namespaces.ts" 2>/dev/null |
+    grep -Fq '"ALL_TOOLS"' &&
+    ! git -C "$source_root" show "$OPENCLAW_SELECTED_SHA:src/agents/code-mode-namespaces.ts" 2>/dev/null |
+      grep -Fq '"catalog"'; then
+    export OPENCLAW_FROZEN_TARGET_MCP_CODE_MODE_CATALOG_MODE="legacy"
   fi
 
   if ! git -C "$source_root" cat-file -e "$OPENCLAW_SELECTED_SHA:src/state/openclaw-agent-db-session-migrations.ts" 2>/dev/null &&
