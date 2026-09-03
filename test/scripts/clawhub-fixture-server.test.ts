@@ -87,7 +87,7 @@ function runPrepublishAssertion(
   baseUrl?: string,
   packageName?: string,
   version?: string,
-  securityMode?: "required" | "absent",
+  requestDialect?: "current" | "legacy",
   cwd = process.cwd(),
   attempts?: number | "complete",
   minimumAttempts?: number,
@@ -100,7 +100,7 @@ function runPrepublishAssertion(
       baseUrl ?? "",
       packageName ?? "",
       version ?? "",
-      ...(securityMode || attempts ? [securityMode ?? "required"] : []),
+      ...(requestDialect || attempts ? [requestDialect ?? "current"] : []),
       ...(attempts ? [String(attempts)] : []),
       ...(minimumAttempts ? [String(minimumAttempts)] : []),
     ],
@@ -187,6 +187,22 @@ describe("ClawHub fixture server", () => {
     expect(assertion.status).toBe(1);
     expect(assertion.stderr).toContain(
       "assert-prepublish-requests requires <base-url> <package-name> <version>",
+    );
+    const malformedDialect = spawnSync(
+      process.execPath,
+      [
+        SCRIPT_PATH,
+        "assert-prepublish-requests",
+        "http://127.0.0.1",
+        PACKAGE_NAME,
+        "1.0.0",
+        "mixed",
+      ],
+      { cwd: process.cwd(), encoding: "utf8", env: { ...process.env } },
+    );
+    expect(malformedDialect.status).toBe(1);
+    expect(malformedDialect.stderr).toContain(
+      "assert-prepublish-requests dialect must be current or legacy",
     );
     const emptyAssertion = runNoRequestsAssertion();
     expect(emptyAssertion.status).toBe(1);
@@ -401,7 +417,7 @@ ${runner.slice(boundary)}
         baseUrl,
         "@openclaw/whatsapp",
         version,
-        "required",
+        "current",
         isolatedCwd,
         "complete",
       ).status,
@@ -495,7 +511,7 @@ ${runner.slice(boundary)}
       baseUrl,
       "@openclaw/whatsapp",
       version,
-      "required",
+      "current",
       isolatedCwd,
       "complete",
       2,
@@ -522,7 +538,7 @@ ${runner.slice(boundary)}
       await response.arrayBuffer();
     }
     expect(
-      runPrepublishAssertion(baseUrl, "@openclaw/whatsapp", version, "required", isolatedCwd, 2)
+      runPrepublishAssertion(baseUrl, "@openclaw/whatsapp", version, "current", isolatedCwd, 2)
         .status,
     ).toBe(0);
     for (let attempt = 2; attempt < 4; attempt += 1) {
@@ -537,7 +553,7 @@ ${runner.slice(boundary)}
       baseUrl,
       "@openclaw/whatsapp",
       version,
-      "required",
+      "current",
       isolatedCwd,
       "complete",
       2,
@@ -550,7 +566,7 @@ ${runner.slice(boundary)}
       baseUrl,
       "@openclaw/whatsapp",
       version,
-      "required",
+      "current",
       isolatedCwd,
       "complete",
       2,
@@ -565,7 +581,7 @@ ${runner.slice(boundary)}
       baseUrl,
       "@openclaw/whatsapp",
       version,
-      "required",
+      "current",
       isolatedCwd,
       "complete",
       2,
@@ -589,7 +605,7 @@ ${runner.slice(boundary)}
       maximumBaseUrl,
       "@openclaw/whatsapp",
       version,
-      "required",
+      "current",
       isolatedCwd,
       "complete",
       2,
@@ -598,6 +614,38 @@ ${runner.slice(boundary)}
     expect(aboveMaximum.stderr).toContain(
       "expected 2-16 complete ClawHub artifact audit sequences",
     );
+
+    const { baseUrl: legacyBaseUrl } = await startFixtureServer(
+      "prepublish-artifacts",
+      [manifestPath],
+      isolatedCwd,
+    );
+    for (const requestPath of completeRequestPaths.filter(
+      (requestPath) => !requestPath.endsWith("/security"),
+    )) {
+      const response = await fetch(`${legacyBaseUrl}${requestPath}`);
+      expect(response.status).toBe(200);
+      await response.arrayBuffer();
+    }
+    const legacy = runPrepublishAssertion(
+      legacyBaseUrl,
+      "@openclaw/whatsapp",
+      version,
+      "legacy",
+      isolatedCwd,
+    );
+    expect(legacy.status, legacy.stderr).toBe(0);
+    expect(
+      runPrepublishAssertion(legacyBaseUrl, "@openclaw/whatsapp", version, "current", isolatedCwd)
+        .status,
+    ).toBe(1);
+    expect(
+      (await fetch(`${legacyBaseUrl}${whatsappPath}/versions/${version}/security`)).status,
+    ).toBe(200);
+    expect(
+      runPrepublishAssertion(legacyBaseUrl, "@openclaw/whatsapp", version, "legacy", isolatedCwd)
+        .status,
+    ).toBe(1);
     expect((await fetch(`${baseUrl}/api/v1/packages/%40openclaw%2Fai`)).status).toBe(404);
   });
 

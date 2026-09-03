@@ -884,6 +884,49 @@ function assertUpdateRunSelfUpgrade(summary: ReturnType<typeof createUpdateRunSe
 }
 
 describe("upgrade survivor assertions", () => {
+  it("omits the exec-approval fixture only in the resolved frozen-target mode", () => {
+    const root = mkdtempSync(join(tmpdir(), "openclaw-upgrade-survivor-exec-mode-"));
+    try {
+      const run = (mode: string | undefined, command: string) => {
+        const stateDir = join(root, mode ?? "default", "state");
+        const workspace = join(root, mode ?? "default", "workspace");
+        return {
+          result: spawnSync(process.execPath, [ASSERTIONS_PATH, command], {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              OPENCLAW_STATE_DIR: stateDir,
+              OPENCLAW_TEST_WORKSPACE_DIR: workspace,
+              OPENCLAW_UPGRADE_SURVIVOR_EXEC_APPROVALS_MODE: mode,
+            },
+          }),
+          stateDir,
+        };
+      };
+
+      const omittedSeed = run("omitted", "seed");
+      expect(omittedSeed.result.status, omittedSeed.result.stderr).toBe(0);
+      expect(() => readFileSync(join(omittedSeed.stateDir, "exec-approvals.json"), "utf8")).toThrow(
+        /ENOENT/,
+      );
+      expect(run("omitted", "assert-exec-approvals").result.status).toBe(0);
+
+      const requiredSeed = run(undefined, "seed");
+      expect(requiredSeed.result.status, requiredSeed.result.stderr).toBe(0);
+      expect(readFileSync(join(requiredSeed.stateDir, "exec-approvals.json"), "utf8")).toContain(
+        "survivor-used-command",
+      );
+
+      const malformed = run("legacy", "assert-exec-approvals").result;
+      expect(malformed.status).not.toBe(0);
+      expect(malformed.stderr).toContain(
+        "OPENCLAW_UPGRADE_SURVIVOR_EXEC_APPROVALS_MODE must be required or omitted",
+      );
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it.each([
     {
       name: "legacy default-only doctor export",

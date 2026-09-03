@@ -15,6 +15,11 @@ import {
 import { assertUpgradeVolumeMigrated, seedUpgradeVolume } from "./sqlite-volume.mjs";
 
 const command = process.argv[2];
+const execApprovalsMode = process.env.OPENCLAW_UPGRADE_SURVIVOR_EXEC_APPROVALS_MODE || "required";
+assertStrict.ok(
+  execApprovalsMode === "required" || execApprovalsMode === "omitted",
+  "OPENCLAW_UPGRADE_SURVIVOR_EXEC_APPROVALS_MODE must be required or omitted",
+);
 const SCENARIOS = new Set([
   "base",
   "acpx-openclaw-tools-bridge",
@@ -378,7 +383,9 @@ function seedState() {
   });
   // Volume imports start in per-agent JSON; other scenarios cover the older shared-store move.
   seedLegacySessionMetadata(stateDir, scenario === "sqlite-volume");
-  seedLegacyExecApprovalPolicy(stateDir);
+  if (execApprovalsMode === "required") {
+    seedLegacyExecApprovalPolicy(stateDir);
+  }
   if (scenario === "meeting-transcripts-sqlite") {
     seedLegacyMeetingTranscripts(stateDir);
   }
@@ -1640,10 +1647,12 @@ if (command === "list-scenarios") {
 } else if (command === "seed") {
   seedState();
 } else if (command === "assert-exec-approvals") {
-  assertExecApprovalPolicySurvived(
-    requireEnv("OPENCLAW_STATE_DIR"),
-    process.env.OPENCLAW_UPGRADE_SURVIVOR_ASSERT_STAGE || "survival",
-  );
+  if (execApprovalsMode === "required") {
+    assertExecApprovalPolicySurvived(
+      requireEnv("OPENCLAW_STATE_DIR"),
+      process.env.OPENCLAW_UPGRADE_SURVIVOR_ASSERT_STAGE || "survival",
+    );
+  }
 } else if (command === "seed-volume") {
   assert(getScenario() === "sqlite-volume", "seed-volume requires the sqlite-volume scenario");
   const stateDir = requireEnv("OPENCLAW_STATE_DIR");
