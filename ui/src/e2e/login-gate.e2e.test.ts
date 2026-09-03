@@ -134,6 +134,8 @@ suite.define(() => {
 
   it("rearms one bounded build recovery after the visible refresh action", async () => {
     const context = await suite.browser.newContext({
+      hasTouch: true,
+      isMobile: true,
       serviceWorkers: "block",
       viewport: { height: 844, width: 390 },
     });
@@ -177,16 +179,44 @@ suite.define(() => {
 
       await gateway.waitForRequest("connect");
       await gateway.rejectDeferred("connect", mismatch);
-      await page.getByRole("button", { name: /Server updated/u }).waitFor({ timeout: 10_000 });
+      const recovery = page.getByRole("button", { name: /Server updated/u });
+      await recovery.waitFor({ timeout: 10_000 });
+      expect(await recovery.count()).toBe(1);
       expect(await page.locator("openclaw-login-gate").count()).toBe(0);
+      expect(await page.locator("#control-ui-main").getAttribute("inert")).toBeNull();
       expect(await page.locator("openclaw-router-outlet").getAttribute("inert")).not.toBeNull();
+      const recoveryAccess = await recovery.evaluate((button) => {
+        const bounds = button.getBoundingClientRect();
+        const liveRegion = button.closest<HTMLElement>("[role='status']");
+        const outlet = document.querySelector("openclaw-router-outlet");
+        return {
+          ariaLive: liveRegion?.getAttribute("aria-live"),
+          disabled: (button as HTMLButtonElement).disabled,
+          height: bounds.height,
+          insideFencedOutlet: outlet?.contains(button) ?? false,
+          tabIndex: (button as HTMLButtonElement).tabIndex,
+          width: bounds.width,
+        };
+      });
+      expect(recoveryAccess).toEqual({
+        ariaLive: "polite",
+        disabled: false,
+        height: expect.any(Number),
+        insideFencedOutlet: false,
+        tabIndex: 0,
+        width: expect.any(Number),
+      });
+      expect(recoveryAccess.height).toBeGreaterThanOrEqual(44);
+      expect(recoveryAccess.width).toBeGreaterThanOrEqual(44);
+      await recovery.focus();
+      expect(await recovery.evaluate((button) => document.activeElement === button)).toBe(true);
       await page.screenshot({
         path: path.join(RECOVERY_ARTIFACT_DIR, "01-reload-required.png"),
         fullPage: true,
       });
       expect(await gateway.getRequests("terminal.open")).toHaveLength(0);
 
-      await page.getByRole("button", { name: /Server updated/u }).click();
+      await recovery.tap();
       await expect.poll(() => documentRequests.length).toBe(3);
       expect(documentRequests).toEqual([false, true, true]);
 
@@ -198,6 +228,8 @@ suite.define(() => {
 
       await page.locator("openclaw-app-shell").waitFor();
       expect(documentRequests).toEqual([false, true, true, true]);
+      expect(await page.getByRole("button", { name: /Server updated/u }).count()).toBe(0);
+      expect(await page.locator(".chat-header-session-menu__trigger").isVisible()).toBe(true);
       expect(
         await page.evaluate(() =>
           sessionStorage.getItem("openclaw.control-ui-e2e.build-rejection-loads"),

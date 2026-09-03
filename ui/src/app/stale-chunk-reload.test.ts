@@ -329,8 +329,12 @@ describe("retryStaleChunkReloadWhenReachable single-shot", () => {
 
   it("does not reload while the gateway is unreachable", async () => {
     const reload = vi.fn();
+    const storage = memoryStorage({ [GUARD_KEY]: "replacement-build" });
     stubDocumentFetch(new Response(null, { status: 503 }));
-    await expect(retryStaleChunkReloadWhenReachable({ reload, timeoutMs: 0 })).resolves.toBe(false);
+    await expect(
+      retryStaleChunkReloadWhenReachable({ reload, storage, timeoutMs: 0 }),
+    ).resolves.toBe(false);
+    expect(storage.getItem(GUARD_KEY)).toBe("replacement-build");
     expect(reload).not.toHaveBeenCalled();
   });
 });
