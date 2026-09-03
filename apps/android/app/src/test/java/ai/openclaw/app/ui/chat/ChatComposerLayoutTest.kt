@@ -21,8 +21,8 @@ import ai.openclaw.app.ui.design.ClawTheme
 import android.content.Context
 import android.provider.Settings
 import android.speech.SpeechRecognizer
-import android.view.KeyEvent
 import android.view.inspector.WindowInspector
+import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -36,6 +36,7 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
@@ -554,21 +555,26 @@ class ChatComposerLayoutTest {
     assertComposerControlsVisible(talkActive = true, thinkingLabel = "Ultra")
     model.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, nativeString("Context: \$detail", "24k / 200k · 12%")))
 
-    val priorWindows = composeRule.runOnIdle { WindowInspector.getGlobalWindowViews().toSet() }
     thinking.performClick()
-    composeRule.onNodeWithText("Ultra").assertIsDisplayed().assert(hasClickAction().not())
-    composeRule.onNodeWithText(nativeString("High")).assertIsDisplayed().assertHasClickAction()
-    assertEquals("Opening effort must not move or shrink the draft", editorBounds, editor.getUnclippedBoundsInRoot())
-    composeRule.runOnIdle {
-      val popup = WindowInspector.getGlobalWindowViews().single { it !in priorWindows }
-      assertTrue(popup.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ESCAPE)))
-      assertTrue(popup.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ESCAPE)))
-    }
+    composeRule.onNode(isDialog()).assertIsDisplayed()
     composeRule.onNode(isPopup()).assertDoesNotExist()
+    composeRule.onNodeWithText(nativeString("Effort")).assertIsDisplayed()
+    composeRule.onNodeWithText("Ultra").assertIsDisplayed().assert(hasClickAction().not())
+    composeRule
+      .onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo))
+      .assertIsDisplayed()
+      .assertIsEnabled()
+      .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Ultra"))
+    composeRule.onNodeWithText(nativeString("Faster")).assertIsDisplayed()
+    composeRule.onNodeWithText(nativeString("Smarter")).assertIsDisplayed()
+    composeRule.onNodeWithText(nativeString("Faster responses, higher usage of limits.")).assertIsDisplayed()
+    assertEquals("Opening effort must not move or shrink the draft", editorBounds, editor.getUnclippedBoundsInRoot())
+    composeRule.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss)).performSemanticsAction(SemanticsActions.Dismiss) { dismiss -> assertTrue(dismiss()) }
+    composeRule.onNode(isDialog()).assertDoesNotExist()
 
     model.performClick()
     composeRule.onNodeWithText(nativeString("Context: \$detail", "24k / 200k · 12%")).assertIsDisplayed()
-    composeRule.onNode(hasText(nativeString("Default")) and hasClickAction() and hasText(nativeString("Permissions")).not()).assertIsDisplayed().assertHasClickAction()
+    composeRule.onNodeWithText(nativeString("Default model")).assertIsDisplayed().assertHasClickAction()
     composeRule.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss)).performSemanticsAction(SemanticsActions.Dismiss) { dismiss -> assertTrue(dismiss()) }
     composeRule.onNode(isDialog()).assertDoesNotExist()
     assertEquals("Dismissing model selection must preserve the draft", editorBounds, editor.getUnclippedBoundsInRoot())
@@ -596,11 +602,96 @@ class ChatComposerLayoutTest {
   }
 
   @Test
+  fun fastModeBadgeBelongsToTheGaugeGeometry() {
+    showChat(viewportWidth = 360.dp, viewportHeight = { 640.dp })
+    composeRule.runOnIdle {
+      controller.handleGatewayEvent(
+        "sessions.changed",
+        """
+        {"reason":"patch","session":{
+          "key":"${AndroidScreenshotFixture.mainSessionKey}",
+          "thinkingLevel":"high",
+          "thinkingLevels":[{"id":"off","label":"off"},{"id":"high","label":"high"}],
+          "fastMode":true,"effectiveFastMode":true
+        }}
+        """.trimIndent(),
+      )
+    }
+
+    composeRule.onNodeWithContentDescription(nativeString("Thinking")).assertIsDisplayed()
+    val gauge = composeRule.onNodeWithTag("chat-thinking-gauge", useUnmergedTree = true).getUnclippedBoundsInRoot()
+    val badge = composeRule.onNodeWithTag("chat-fast-mode-badge", useUnmergedTree = true).getUnclippedBoundsInRoot()
+    val badgeCenterX = (badge.left.value + badge.right.value) / 2f
+    val badgeCenterY = (badge.top.value + badge.bottom.value) / 2f
+
+    assertTrue("The Fast mode badge center must stay inside the gauge: $badge in $gauge", badgeCenterX in gauge.left.value..gauge.right.value)
+    assertTrue("The Fast mode badge center must stay inside the gauge: $badge in $gauge", badgeCenterY in gauge.top.value..gauge.bottom.value)
+  }
+
+  @Test
+  fun effortSheetScrollsFastModeIntoViewOnAConstrainedViewport() {
+    showChat(viewportWidth = 320.dp, viewportHeight = { 320.dp }, fontScale = { 2f })
+    composeRule.runOnIdle {
+      controller.handleGatewayEvent(
+        "sessions.changed",
+        """
+        {"reason":"patch","session":{
+          "key":"${AndroidScreenshotFixture.mainSessionKey}",
+          "thinkingLevel":"high",
+          "thinkingLevels":[{"id":"off","label":"off"},{"id":"low","label":"low"},{"id":"high","label":"high"}]
+        }}
+        """.trimIndent(),
+      )
+    }
+
+    composeRule.onNodeWithContentDescription(nativeString("Thinking")).performClick()
+    composeRule
+      .onNodeWithText(nativeString("Faster responses, higher usage of limits."))
+      .performScrollTo()
+      .assertIsDisplayed()
+    composeRule.onNodeWithContentDescription(nativeString("Fast mode")).assertIsDisplayed()
+  }
+
+  @Test
+  fun modelSheetSeparatesPermissionActionStatusAndDefaultModel() {
+    showChat(viewportWidth = 360.dp, viewportHeight = { 640.dp })
+    updatePermissions(null, pending = false)
+    composeRule.onNodeWithContentDescription(nativeString("Model")).performClick()
+
+    composeRule
+      .onNodeWithText(nativeString("Policy default"), useUnmergedTree = true)
+      .assertTextEquals(nativeString("Policy default"))
+      .assert(hasClickAction().not())
+      .assert(hasAnyAncestor(hasClickAction()).not())
+    composeRule.onNodeWithText(nativeString("Default model")).assertIsDisplayed().assertHasClickAction()
+
+    composeRule.onNode(hasText(nativeString("Permissions")) and hasClickAction()).performClick()
+    composeRule.onNode(isPopup()).assertDoesNotExist()
+    composeRule.onNodeWithText(nativeString("Back")).assert(hasAnyAncestor(isDialog()))
+    composeRule.runOnIdle {
+      val owner =
+        WindowInspector
+          .getGlobalWindowViews()
+          .asReversed()
+          .firstNotNullOfOrNull { it.findViewTreeOnBackPressedDispatcherOwner() }
+      checkNotNull(owner).onBackPressedDispatcher.onBackPressed()
+    }
+    composeRule.onNodeWithText(nativeString("Back")).assertDoesNotExist()
+    composeRule.onNodeWithText(nativeString("Default model")).assertIsDisplayed()
+
+    composeRule.onNode(hasText(nativeString("Permissions")) and hasClickAction()).performClick()
+    composeRule.onNode(hasText(nativeString("Policy default")) and hasClickAction()).performClick()
+
+    composeRule.onNodeWithText(nativeString("Default model")).assertIsDisplayed().performClick()
+    composeRule.onNode(isDialog()).assertDoesNotExist()
+  }
+
+  @Test
   fun lockedModelPickerExplainsNativeOwnershipAndKeepsOtherControlsAvailable() {
     showChat(viewportWidth = 320.dp, viewportHeight = { 640.dp })
     val sessionKey = controller.sessionKey.value
     val model = composeRule.onNodeWithContentDescription(nativeString("Model"))
-    val defaultModel = hasText(nativeString("Default")) and hasClickAction() and hasText(nativeString("Permissions")).not()
+    val defaultModel = hasText(nativeString("Default model")) and hasClickAction()
 
     for ((runtimeId, label) in listOf("codex" to nativeString("Native Codex model"), "other" to nativeString("Locked session model"))) {
       composeRule.runOnIdle {
@@ -801,10 +892,10 @@ class ChatComposerLayoutTest {
     composeRule.onNodeWithContentDescription(nativeString("Model")).performClick()
     val permissions = composeRule.onNode(hasText(nativeString("Permissions")) and hasClickAction())
     permissions.assertIsEnabled().performClick()
-    composeRule.onNodeWithText(nativeString("PERMISSIONS")).assertIsDisplayed()
+    composeRule.onNodeWithText(nativeString("Back")).assert(hasAnyAncestor(isDialog()))
 
     updatePermissions("read-only", pending = true)
-    composeRule.onNodeWithText(nativeString("PERMISSIONS")).assertDoesNotExist()
+    composeRule.onNodeWithText(nativeString("Back")).assertDoesNotExist()
     permissions.assertIsNotEnabled()
     composeRule.onNodeWithText(nativeString("Applying permissions…"), useUnmergedTree = true).assertIsDisplayed()
 
@@ -854,11 +945,11 @@ class ChatComposerLayoutTest {
     composeRule.onNodeWithContentDescription(nativeString("Model")).assertIsEnabled().performClick()
     composeRule.onNode(hasText(nativeString("Permissions")) and hasClickAction()).assertIsNotEnabled()
     composeRule.onNodeWithText(nativeString("Update the Gateway to change session permissions.")).assertIsDisplayed()
-    composeRule.onNode(hasText(nativeString("Default")) and hasClickAction()).assertIsEnabled()
+    composeRule.onNode(hasText(nativeString("Default model")) and hasClickAction()).assertIsEnabled()
   }
 
   private fun updatePermissions(
-    mode: String,
+    mode: String?,
     pending: Boolean,
   ) {
     composeRule.runOnIdle {
@@ -869,7 +960,7 @@ class ChatComposerLayoutTest {
           ?.sessionId ?: "permission-layout-session"
       controller.handleGatewayEvent(
         "sessions.changed",
-        """{"reason":"patch","session":{"key":"$sessionKey","sessionId":"$sessionId","agentId":"main","permissionMode":"$mode","permissionModePending":$pending}}""",
+        """{"reason":"patch","session":{"key":"$sessionKey","sessionId":"$sessionId","agentId":"main","permissionMode":${mode?.let { "\"$it\"" } ?: "null"},"permissionModePending":$pending}}""",
       )
     }
   }
