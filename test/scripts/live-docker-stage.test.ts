@@ -357,12 +357,13 @@ export function parseRegistryNpmSpec(spec: string) {
     expect(malformed.stderr).toContain("invalid OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS");
   });
 
-  it("derives frozen upgrade-survivor capabilities from the selected source checkout", () => {
+  it("derives frozen harness capabilities from the selected source checkout", () => {
     const createSource = (kind: "legacy" | "modern" | "unknown") => {
       const root = tempDirs.make(`openclaw-frozen-source-${kind}-`);
       if (kind === "legacy") {
         mkdirSync(path.join(root, "src", "infra"), { recursive: true });
         mkdirSync(path.join(root, "src", "plugins"), { recursive: true });
+        mkdirSync(path.join(root, "src", "agents"), { recursive: true });
         writeFileSync(
           path.join(root, "src", "infra", "exec-approvals.ts"),
           'const EXEC_APPROVALS_FILE = "exec-approvals.json";\n',
@@ -371,10 +372,32 @@ export function parseRegistryNpmSpec(spec: string) {
           path.join(root, "src", "plugins", "clawhub.ts"),
           'import { fetchClawHubPackageArtifact } from "../infra/clawhub.js";\n',
         );
+        writeFileSync(
+          path.join(root, "src", "agents", "memory-search.ts"),
+          "const defaults = cfg.agents?.defaults?.memorySearch;\n",
+        );
+        mkdirSync(path.join(root, "src", "config"), { recursive: true });
+        mkdirSync(path.join(root, "src", "commands"), { recursive: true });
+        writeFileSync(path.join(root, "src", "config", "zod-schema.ts"), "lastRunAt: z.string(),\n");
+        writeFileSync(
+          path.join(root, "src", "commands", "doctor-session-transcripts.ts"),
+          'const backup = ".pre-doctor-branch-repair-";\n',
+        );
       } else if (kind === "modern") {
         mkdirSync(path.join(root, "src", "infra"), { recursive: true });
+        mkdirSync(path.join(root, "src", "agents"), { recursive: true });
+        mkdirSync(path.join(root, "src", "commands"), { recursive: true });
+        mkdirSync(path.join(root, "src", "config"), { recursive: true });
+        mkdirSync(path.join(root, "src", "state"), { recursive: true });
         writeFileSync(path.join(root, "src", "infra", "exec-approvals-sqlite.ts"), "\n");
         writeFileSync(path.join(root, "src", "infra", "clawhub-install-trust.ts"), "\n");
+        writeFileSync(path.join(root, "src", "agents", "memory-search.ts"), "\n");
+        writeFileSync(path.join(root, "src", "commands", "onboard-guided-consent.ts"), "\n");
+        writeFileSync(
+          path.join(root, "src", "config", "zod-schema.ts"),
+          "securityAcknowledgedAt: z.string(),\n",
+        );
+        writeFileSync(path.join(root, "src", "state", "openclaw-agent-db-session-migrations.ts"), "\n");
       }
       execFileSync("git", ["init", "-q", root]);
       execFileSync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
@@ -400,7 +423,8 @@ export function parseRegistryNpmSpec(spec: string) {
           [
             'set -euo pipefail; source "$1"',
             'openclaw_resolve_frozen_upgrade_survivor_capabilities "$2"',
-            'printf "%s %s\\n" "$OPENCLAW_UPGRADE_SURVIVOR_EXEC_APPROVALS_MODE" "$OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_REQUEST_DIALECT"',
+            'openclaw_resolve_frozen_core_harness_capabilities "$2"',
+            'printf "%s|%s|%s|%s|%s\\n" "$OPENCLAW_UPGRADE_SURVIVOR_EXEC_APPROVALS_MODE" "$OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_REQUEST_DIALECT" "$OPENCLAW_FROZEN_TARGET_ONBOARD_CASES" "$OPENCLAW_FROZEN_TARGET_MCP_MEMORY_CONFIG_MODE" "$OPENCLAW_FROZEN_TARGET_SESSION_REPAIR_MODE"',
           ].join("; "),
           "test",
           frozenTargetCompatPath,
@@ -418,14 +442,16 @@ export function parseRegistryNpmSpec(spec: string) {
       );
 
     const legacy = createSource("legacy");
-    expect(run(legacy, "1").stdout.trim()).toBe("omitted legacy");
-    expect(run(legacy, "0").stdout.trim()).toBe("required current");
+    expect(run(legacy, "1").stdout.trim()).toBe(
+      "omitted|legacy|local-basic,remote-non-interactive,reset,channels,skills|agent|jsonl",
+    );
+    expect(run(legacy, "0").stdout.trim()).toBe("required|current||current|sqlite");
 
     const modern = createSource("modern");
-    expect(run(modern, "1").stdout.trim()).toBe("required current");
+    expect(run(modern, "1").stdout.trim()).toBe("required|current||current|sqlite");
 
     const unknown = createSource("unknown");
-    expect(run(unknown, "1").stdout.trim()).toBe("required current");
+    expect(run(unknown, "1").stdout.trim()).toBe("required|current||current|sqlite");
 
     const mismatched = run(legacy, "1", "e".repeat(40));
     expect(mismatched.status).toBe(2);
