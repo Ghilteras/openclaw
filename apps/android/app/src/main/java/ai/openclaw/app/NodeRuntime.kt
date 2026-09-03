@@ -3393,6 +3393,9 @@ class NodeRuntime private constructor(
         }
         for ((stableId, endpoint) in plan.resolvedEndpoints) {
           if (secondaryOperatorSessions[stableId]?.endpoint == endpoint) continue
+          // A retained session may still be saving an accepted hello. Drain it before reading
+          // auth for its replacement, or the older write can overwrite the replacement token.
+          disconnectSecondaryGatewayConnection(stableId)?.disconnectAndJoin()
           val entry = entries.first { it.stableId == stableId }
           val auth = resolveGatewayConnectAuth(endpoint)
           val storedOperatorEntry = loadStoredRoleDeviceAuthEntry(endpoint, "operator")
@@ -3498,7 +3501,15 @@ class NodeRuntime private constructor(
     isCurrent: () -> Boolean = { true },
   ): Boolean {
     val intent = admitGatewayConnection(isCurrent) ?: return false
-    return gatewaySwitchMutex.withLock {
+    return connectGateway(endpoint, explicitAuth, intent)
+  }
+
+  private suspend fun connectGateway(
+    endpoint: GatewayEndpoint,
+    explicitAuth: GatewayConnectAuth?,
+    intent: () -> Boolean,
+  ): Boolean =
+    gatewaySwitchMutex.withLock {
       if (!intent()) return@withLock false
       val currentStableId =
         connectedEndpoint?.stableId
@@ -3506,7 +3517,12 @@ class NodeRuntime private constructor(
           ?: prefs.gatewayRegistry.activeStableId.value
       if (currentStableId != null && currentStableId != endpoint.stableId) {
         disconnectAndJoin()
+      } else {
+        drainIdleGatewaySessionTails()
       }
+      // Focus can promote a secondary operator to the primary session for the same gateway.
+      // Its accepted credentials must finish before either primary role reads them.
+      disconnectSecondaryGatewayConnection(endpoint.stableId)?.disconnectAndJoin()
       val started =
         synchronized(gatewayLifecycleIntentLock) {
           if (!intent()) {
@@ -3525,7 +3541,6 @@ class NodeRuntime private constructor(
       chat.restoreSelectedGatewayOfflineState()
       intent()
     }
-  }
 
   private fun autoConnectIfNeeded() {
     if (preferredGatewayReconnectSuppressed) return
@@ -4484,8 +4499,7 @@ class NodeRuntime private constructor(
         if (preferred == null) {
           setStandaloneGatewayStatus("Failed: no saved gateway endpoint")
         } else {
-          prepareGatewayTarget(preferred)
-          beginConnect(preferred, resolveGatewayConnectAuth(preferred), intent)
+          launchConnect(preferred, explicitAuth = null, intent = intent)
         }
         return@launchGatewayLifecycle
       }
@@ -4596,7 +4610,7 @@ class NodeRuntime private constructor(
 
   // Auth reset waits for claimed connection starts before disconnecting. Session calls stay outside
   // this monitor because GatewaySession invokes callbacks while holding its own lifecycle monitor.
-  private fun runGatewayConnectOperation(block: () -> Unit): Boolean {
+  private inline fun runGatewayConnectOperation(block: () -> Unit): Boolean {
     val claimed =
       synchronized(gatewayAuthLifecycleLock) {
         if (gatewayAuthResetInProgress) {
@@ -4762,22 +4776,7 @@ class NodeRuntime private constructor(
     explicitAuth: GatewayConnectAuth?,
     intent: () -> Boolean,
   ) {
-    launchGatewayLifecycle(intent) {
-      prepareGatewayTarget(endpoint)
-      beginConnect(endpoint, resolveGatewayConnectAuth(endpoint, explicitAuth), intent)
-    }
-  }
-
-  private fun prepareGatewayTarget(endpoint: GatewayEndpoint) {
-    if (connectedEndpoint?.stableId?.let { it != endpoint.stableId } == true) {
-      // Close both sockets before changing routes so stale callbacks cannot cross the handoff.
-      disconnect(retireRunState = true)
-    }
-    if (prefs.gatewayRegistry.entries.value
-        .any { it.stableId == endpoint.stableId }
-    ) {
-      prefs.gatewayRegistry.setActive(endpoint.stableId)
-    }
+    scope.launch { connectGateway(endpoint, explicitAuth, intent) }
   }
 
   internal fun resolveGatewayConnectAuth(
