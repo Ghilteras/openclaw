@@ -4395,6 +4395,7 @@ describe("scripts/test-projects full-suite sharding", () => {
   it("can skip the aggregate extension shard when CI runs dedicated extension shards", () => {
     withEnv(
       {
+        OPENCLAW_TEST_PROJECTS_LEAF_SHARDS: undefined,
         OPENCLAW_TEST_PROJECTS_PARALLEL: undefined,
         OPENCLAW_TEST_PROJECTS_SERIAL: "1",
         CI: "true",

@@ -94,9 +94,11 @@ describe("exec authorization renderer", () => {
   });
 
   it("renders dispatch-wrapper safe-bin commands without quote-all argv rendering", async () => {
+    const binDir = makeExecApprovalsTempDir();
+    const executable = makeExecutable(binDir, "rg");
     const plan = await planShellAuthorization({
       command: "env rg -n needle",
-      env: POSIX_ENV,
+      env: makePathEnv(binDir),
     });
 
     const command = renderOk(
@@ -107,7 +109,7 @@ describe("exec authorization renderer", () => {
       }),
     );
 
-    expect(command).toBe("rg -n needle");
+    expect(command).toBe(`${executable} -n needle`);
   });
 
   it("renders shell-wrapper payloads by preserving wrapper transport", async () => {

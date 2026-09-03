@@ -59,8 +59,8 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
     };
     unitPath = path.join(env.HOME!, ".config/systemd/user/openclaw-owned.service");
     environmentPath = path.join(stateDir, "gateway.systemd.env");
-    await fs.mkdir(path.dirname(unitPath), { recursive: true });
-    await fs.mkdir(stateDir);
+    await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
+    await fs.mkdir(stateDir, { mode: 0o700 });
   });
 
   afterEach(async () => {
@@ -195,7 +195,7 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
     const target = path.join(root, "alias-target");
     const replacement = path.join(root, "alias-replacement");
     await fs.rename(directory, target);
-    await fs.mkdir(replacement);
+    await fs.mkdir(replacement, { mode: artifact === "unit" ? 0o755 : 0o700 });
     await fs.symlink(target, directory);
     managerDefinition(unitPath, [], [], () =>
       fs.access(unitPath).then(
@@ -253,10 +253,14 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
         kind === "fragment" ? "service.d" : "owned.service.d",
         "operator.conf",
       );
-      await fs.mkdir(path.dirname(extra), { recursive: true });
-      await fs.writeFile(extra, "[Service]\nEnvironment=TOKEN=operator-secret-canary\n");
+      await fs.mkdir(path.dirname(extra), { recursive: true, mode: 0o755 });
+      await fs.writeFile(extra, "[Service]\nEnvironment=TOKEN=operator-secret-canary\n", {
+        mode: 0o644,
+      });
       if (kind !== "fragment") {
-        await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n");
+        await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n", {
+          mode: 0o644,
+        });
       }
       managerDefinition(kind === "fragment" ? extra : unitPath, kind === "fragment" ? [] : [extra]);
       const originalLstat = fs.lstat.bind(fs);
@@ -298,9 +302,11 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
       await fs.mkdir(path.dirname(shared), { recursive: true, mode: 0o755 });
       await fs.writeFile(shared, "[Service]\nTimeoutStopSec=30s\n", { mode: 0o644 });
       if (!firstInstall) {
-        await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n");
+        await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n", {
+          mode: 0o644,
+        });
       }
-      await fs.writeFile(environmentPath, "OPERATOR=unchanged\n");
+      await fs.writeFile(environmentPath, "OPERATOR=unchanged\n", { mode: 0o600 });
       managerDefinition(unitPath, [shared], [], async () =>
         firstInstall
           ? fs.stat(unitPath).then(
@@ -389,8 +395,8 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
     "preserves a concurrent %s change during first-load discovery",
     async (artifact) => {
       const shared = path.join(root, "service.d", "default.conf");
-      await fs.mkdir(path.dirname(shared));
-      await fs.writeFile(shared, "[Service]\nTimeoutStopSec=30s\n");
+      await fs.mkdir(path.dirname(shared), { mode: 0o755 });
+      await fs.writeFile(shared, "[Service]\nTimeoutStopSec=30s\n", { mode: 0o644 });
       managerDefinition(unitPath, [shared], [], () =>
         fs.stat(unitPath).then(
           () => true,
@@ -410,10 +416,10 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
           expect(await fs.readFile(environmentPath, "utf8")).toContain("replacement-secret-canary");
           if (artifact === "unit replacement") {
             const replacement = path.join(root, "operator-replacement");
-            await fs.writeFile(replacement, "OPERATOR=concurrent\n");
+            await fs.writeFile(replacement, "OPERATOR=concurrent\n", { mode: 0o644 });
             await rename(replacement, edited);
           } else {
-            await fs.writeFile(edited, "OPERATOR=concurrent\n");
+            await fs.writeFile(edited, "OPERATOR=concurrent\n", { mode: 0o600 });
           }
         }
       });
@@ -442,10 +448,12 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
         scenario === "unit-specific drop-in" ? "owned.service.d" : "service.d",
         "operator.conf",
       );
-      await fs.mkdir(path.dirname(extra));
-      await fs.writeFile(extra, "[Service]\nTimeoutStopSec=30s\n");
+      await fs.mkdir(path.dirname(extra), { mode: 0o755 });
+      await fs.writeFile(extra, "[Service]\nTimeoutStopSec=30s\n", { mode: 0o644 });
       if (existing) {
-        await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n");
+        await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n", {
+          mode: 0o644,
+        });
       }
       let published = false;
       managerDefinition(unitPath, [], [], async () => existing);
@@ -483,7 +491,7 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
   it.each(["uid", "gid", "mode"] as const)(
     "rejects changed %s between lstat and open",
     async (field) => {
-      await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n");
+      await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n", { mode: 0o644 });
       const open = fs.open.bind(fs);
       vi.spyOn(fs, "open").mockImplementation(async (...args) => {
         const handle = await open(...args);
@@ -510,9 +518,9 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
     "fingerprints a safe same-owner manager %s without snapshotting or restoring it",
     async (kind) => {
       const extra = path.join(root, "operator.conf");
-      await fs.writeFile(extra, "[Service]\nEnvironment=OWNER=first\n");
-      await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n");
-      await fs.writeFile(environmentPath, "OPERATOR=preserved\n");
+      await fs.writeFile(extra, "[Service]\nEnvironment=OWNER=first\n", { mode: 0o644 });
+      await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n", { mode: 0o644 });
+      await fs.writeFile(environmentPath, "OPERATOR=preserved\n", { mode: 0o600 });
       managerDefinition(kind === "fragment" ? extra : unitPath, kind === "fragment" ? [] : [extra]);
       await expect(readSystemdDefinitionMutationCapability(env)).resolves.toEqual({
         kind: "writable",
@@ -588,7 +596,7 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
     async ({ select, existed }) => {
       const target = select();
       const extra = path.join(root, "operator.conf");
-      await fs.writeFile(extra, "[Service]\nEnvironment=OWNER=first\n");
+      await fs.writeFile(extra, "[Service]\nEnvironment=OWNER=first\n", { mode: 0o644 });
       managerDefinition(extra);
       if (existed) {
         await fs.writeFile(target, "previous definition", { mode: 0o400 });
@@ -627,9 +635,9 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
     async ({ artifact, select, environmentExisted }) => {
       const previousUnit = "[Service]\nExecStart=/usr/bin/node /old/index.js gateway\n";
       const previousEnvironment = "OPERATOR=original\n";
-      await fs.writeFile(unitPath, previousUnit);
+      await fs.writeFile(unitPath, previousUnit, { mode: 0o644 });
       if (environmentExisted) {
-        await fs.writeFile(environmentPath, previousEnvironment);
+        await fs.writeFile(environmentPath, previousEnvironment, { mode: 0o600 });
       }
       const edited = select();
       const rename = fs.rename.bind(fs);
@@ -639,7 +647,7 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
         if (destination === unitPath && !changed) {
           changed = true;
           expect(await fs.readFile(environmentPath, "utf8")).toContain("replacement-secret-canary");
-          await fs.writeFile(edited, "OPERATOR=concurrent\n");
+          await fs.writeFile(edited, "OPERATOR=concurrent\n", { mode: 0o600 });
         }
       });
 
@@ -709,7 +717,7 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
   });
 
   it("cleans unpublished temporary files after a write failure", async () => {
-    await fs.writeFile(unitPath, "previous definition");
+    await fs.writeFile(unitPath, "previous definition", { mode: 0o644 });
     afterUnitTemporaryWrite(() => {
       throw new Error("write failed");
     });
@@ -725,9 +733,9 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
   it("rejects manager definition path changes during publication", async () => {
     const first = path.join(root, "first.conf");
     const second = path.join(root, "second.conf");
-    await fs.writeFile(first, "[Service]\nEnvironment=OWNER=first\n");
-    await fs.writeFile(second, "[Service]\nEnvironment=OWNER=second\n");
-    await fs.writeFile(unitPath, "original definition");
+    await fs.writeFile(first, "[Service]\nEnvironment=OWNER=first\n", { mode: 0o644 });
+    await fs.writeFile(second, "[Service]\nEnvironment=OWNER=second\n", { mode: 0o644 });
+    await fs.writeFile(unitPath, "original definition", { mode: 0o644 });
     managerDefinition(unitPath, [first]);
 
     await expect(
@@ -751,8 +759,10 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
   ])("rejects a manager definition with %s without publication", async (kind) => {
     const directory = path.join(root, "operator");
     const target = path.join(directory, "operator.conf");
-    await fs.mkdir(directory);
-    await fs.writeFile(target, "[Service]\nEnvironment=TOKEN=protected-secret-canary\n");
+    await fs.mkdir(directory, { mode: 0o755 });
+    await fs.writeFile(target, "[Service]\nEnvironment=TOKEN=protected-secret-canary\n", {
+      mode: 0o644,
+    });
     let extra = target;
     if (kind === "file symlink") {
       extra = path.join(root, "linked.conf");
@@ -819,10 +829,10 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
   });
 
   it.each(artifacts)("seals a foreign-owned $artifact before publication", async ({ select }) => {
-    await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n");
+    await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/node gateway\n", { mode: 0o644 });
     const protectedPath = select();
     if (protectedPath !== unitPath) {
-      await fs.writeFile(protectedPath, "protected-secret-canary\n");
+      await fs.writeFile(protectedPath, "protected-secret-canary\n", { mode: 0o600 });
     }
     const original = await fs.readFile(protectedPath);
     const originalLstat = fs.lstat.bind(fs);
@@ -848,10 +858,10 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
   ])("rejects a symlinked $artifact without changing its target", async ({ select, fresh }) => {
     const file = select();
     if (file !== unitPath && !fresh) {
-      await fs.writeFile(unitPath, "[Service]\n");
+      await fs.writeFile(unitPath, "[Service]\n", { mode: 0o644 });
     }
     const target = path.join(root, "operator-target");
-    await fs.writeFile(target, "operator-secret-canary\n");
+    await fs.writeFile(target, "operator-secret-canary\n", { mode: 0o600 });
     await fs.symlink(target, file);
 
     await expect(readSystemdDefinitionMutationCapability(env)).resolves.toEqual({
@@ -869,8 +879,8 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
 
   it("publishes the unit, backup, and generated environment without chmod or secret disclosure", async () => {
     const previous = "[Service]\nExecStart=/usr/bin/node /old/index.js gateway\n";
-    await fs.writeFile(unitPath, previous);
-    await fs.writeFile(environmentPath, "OPERATOR_SECRET=preserved-canary\n");
+    await fs.writeFile(unitPath, previous, { mode: 0o644 });
+    await fs.writeFile(environmentPath, "OPERATOR_SECRET=preserved-canary\n", { mode: 0o600 });
     const chmod = vi.spyOn(fs, "chmod");
 
     await stage();
@@ -890,9 +900,11 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
   it("publishes only the environment selected by the effective service state dir", async () => {
     const effectiveStateDir = path.join(root, "effective-state");
     const effectiveEnvironmentPath = path.join(effectiveStateDir, "gateway.systemd.env");
-    await fs.mkdir(effectiveStateDir);
-    await fs.writeFile(environmentPath, "CALLER_SECRET=caller-canary\n");
-    await fs.writeFile(effectiveEnvironmentPath, "OPERATOR_SECRET=preserved-canary\n");
+    await fs.mkdir(effectiveStateDir, { mode: 0o700 });
+    await fs.writeFile(environmentPath, "CALLER_SECRET=caller-canary\n", { mode: 0o600 });
+    await fs.writeFile(effectiveEnvironmentPath, "OPERATOR_SECRET=preserved-canary\n", {
+      mode: 0o600,
+    });
 
     await stage({ OPENCLAW_STATE_DIR: effectiveStateDir });
 
@@ -910,8 +922,11 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
     await fs.writeFile(
       unitPath,
       `[Service]\nExecStart=/usr/bin/node gateway\nEnvironmentFile=${environmentPath}\n`,
+      { mode: 0o644 },
     );
-    await fs.writeFile(environmentPath, "OPENCLAW_GATEWAY_TOKEN=retired-secret-canary\n");
+    await fs.writeFile(environmentPath, "OPENCLAW_GATEWAY_TOKEN=retired-secret-canary\n", {
+      mode: 0o600,
+    });
     managerDefinition(unitPath, [], [[environmentPath, false]]);
 
     await stageSystemdService({
@@ -941,13 +956,13 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
       const other = { ...env };
       if (retarget) {
         await fs.rename(directory, original);
-        await fs.mkdir(replacement);
+        await fs.mkdir(replacement, { mode: shared.includes("environment") ? 0o700 : 0o755 });
         await fs.symlink(original, directory);
       } else if (shared === "environment") {
         other.OPENCLAW_SYSTEMD_UNIT = "openclaw-secondary";
       } else {
         other.OPENCLAW_STATE_DIR = path.join(root, "other-state");
-        await fs.mkdir(other.OPENCLAW_STATE_DIR);
+        await fs.mkdir(other.OPENCLAW_STATE_DIR, { mode: 0o700 });
         if (shared === "directory alias") {
           other.HOME = path.join(root, "home-alias");
           await fs.symlink(env.HOME!, other.HOME);
@@ -965,7 +980,8 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
         }
         events.push("first-finish");
       });
-      await firstStarted;
+      // A rejected first writer never reaches entered(); surface it before waiting on contention.
+      await Promise.race([firstStarted, first]);
       const open = fs.open.bind(fs);
       let contended = false;
       vi.spyOn(fs, "open").mockImplementation(async (...args) => {
@@ -1026,7 +1042,8 @@ describe.skipIf(process.platform === "win32")("systemd definition mutation owner
       entered();
       await barrier;
     });
-    await firstStarted;
+    // Preserve the first writer's failure instead of hanging until the test timeout.
+    await Promise.race([firstStarted, first]);
 
     const startedAt = Date.now();
     try {

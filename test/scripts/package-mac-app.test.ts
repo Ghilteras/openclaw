@@ -1423,7 +1423,7 @@ describe("package-mac-app plist stamping", () => {
     writeFileSync(
       corepackPath,
       [
-        "#!/usr/bin/env bash",
+        "#!/bin/bash",
         "set -euo pipefail",
         'printf \'%s|%s\\n\' "$PWD" "$*" >> "$OPENCLAW_TEST_LOG"',
         'if [[ "${1:-}" == "pnpm" && "${2:-}" == "--version" ]]; then',
@@ -1440,7 +1440,7 @@ describe("package-mac-app plist stamping", () => {
       ROOT_DIR=${JSON.stringify(tempRoot)}
       OPENCLAW_TEST_LOG=${JSON.stringify(logPath)}
       export OPENCLAW_TEST_LOG
-      PATH=${JSON.stringify(`${toolsDir}:/usr/bin:/bin`)}
+      PATH=${JSON.stringify(toolsDir)}
       ${helperBlock}
       run_pnpm install --frozen-lockfile --config.node-linker=hoisted
       run_pnpm build
@@ -1519,17 +1519,11 @@ describe("package-mac-app plist stamping", () => {
     const helperBlock = getPackageManagerHelperBlock();
     const tempRoot = tempDirs.make("openclaw-package-pnpm-root-");
     const toolsDir = tempDirs.make("openclaw-package-pnpm-tools-");
-    // Hosts with a system corepack in /usr/bin (plus a cached pnpm) would satisfy
-    // the detection this test needs to fail; an empty cache with network disabled
-    // keeps "corepack pnpm is unavailable" true everywhere.
-    const corepackHome = tempDirs.make("openclaw-package-corepack-home-");
 
     const result = runHelper(`
       set -euo pipefail
       ROOT_DIR=${JSON.stringify(tempRoot)}
-      PATH=${JSON.stringify(`${toolsDir}:/usr/bin:/bin`)}
-      export COREPACK_HOME=${JSON.stringify(corepackHome)}
-      export COREPACK_ENABLE_NETWORK=0
+      PATH=${JSON.stringify(toolsDir)}
       ${helperBlock}
       run_pnpm build
     `);

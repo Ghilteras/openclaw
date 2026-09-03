@@ -2370,7 +2370,7 @@ describe("stageSystemdService", () => {
     const nodeEnvFilePath = path.join(stateDir, "node.systemd.env");
 
     try {
-      await fs.mkdir(stateDir, { recursive: true });
+      await fs.mkdir(stateDir, { recursive: true, mode: 0o700 });
       await run({ env, stateDir, unitPath, envFilePath, nodeEnvFilePath });
     } finally {
       await fs.rm(tempHomeRoot, { recursive: true, force: true });
@@ -2396,7 +2396,7 @@ describe("stageSystemdService", () => {
 
   it("removes legacy gateway version metadata without restarting the service", async () => {
     await withStageFixture(async ({ env, unitPath }) => {
-      await fs.mkdir(path.dirname(unitPath), { recursive: true });
+      await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
       await fs.writeFile(
         unitPath,
         [
@@ -2411,7 +2411,7 @@ describe("stageSystemdService", () => {
           "Environment=OPENCLAW_GATEWAY_PORT=18789",
           "",
         ].join("\n"),
-        "utf8",
+        { encoding: "utf8", mode: 0o644 },
       );
       execFileMock.mockImplementationOnce(systemctlUserSuccess("daemon-reload"));
 
@@ -2446,8 +2446,8 @@ describe("stageSystemdService", () => {
         "Environment=OPENCLAW_SERVICE_VERSION=2026.7.1-2",
         "",
       ].join("\n");
-      await fs.mkdir(path.dirname(unitPath), { recursive: true });
-      await fs.writeFile(unitPath, previous, "utf8");
+      await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
+      await fs.writeFile(unitPath, previous, { encoding: "utf8", mode: 0o644 });
       execFileMock.mockImplementationOnce(systemctlUserSuccess("daemon-reload"));
 
       await expect(refreshLegacySystemdServiceMetadata(env, 5_000)).resolves.toBe(false);
@@ -2484,8 +2484,8 @@ describe("stageSystemdService", () => {
         ...environment,
         "",
       ].join("\n");
-      await fs.mkdir(path.dirname(unitPath), { recursive: true });
-      await fs.writeFile(unitPath, previous, "utf8");
+      await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
+      await fs.writeFile(unitPath, previous, { encoding: "utf8", mode: 0o644 });
 
       await expect(refreshLegacySystemdServiceMetadata(env, 5_000)).resolves.toBe(false);
 
@@ -2507,8 +2507,8 @@ describe("stageSystemdService", () => {
         "Environment=OPENCLAW_SERVICE_VERSION=2026.7.1-2",
         "",
       ].join("\n");
-      await fs.mkdir(path.dirname(unitPath), { recursive: true });
-      await fs.writeFile(unitPath, previous, "utf8");
+      await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
+      await fs.writeFile(unitPath, previous, { encoding: "utf8", mode: 0o644 });
       assertNoSystemSystemdOwnershipMock.mockRejectedValueOnce(new Error("system ownership"));
 
       await expect(refreshLegacySystemdServiceMetadata(env, 5_000)).rejects.toThrow(
@@ -2532,8 +2532,8 @@ describe("stageSystemdService", () => {
         "Environment=OPENCLAW_SERVICE_VERSION=2026.7.1-2",
         "",
       ].join("\n");
-      await fs.mkdir(path.dirname(unitPath), { recursive: true });
-      await fs.writeFile(unitPath, previous, "utf8");
+      await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
+      await fs.writeFile(unitPath, previous, { encoding: "utf8", mode: 0o644 });
       assertNoSystemSystemdOwnershipMock
         .mockResolvedValueOnce()
         .mockResolvedValueOnce()
@@ -2551,8 +2551,8 @@ describe("stageSystemdService", () => {
   it("blocks before mutating user files when the same system unit owns the name", async () => {
     await withStageFixture(async ({ env, unitPath, envFilePath }) => {
       const previous = "[Unit]\nDescription=Existing user gateway\n";
-      await fs.mkdir(path.dirname(unitPath), { recursive: true });
-      await fs.writeFile(unitPath, previous, "utf8");
+      await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
+      await fs.writeFile(unitPath, previous, { encoding: "utf8", mode: 0o644 });
       mockSystemctlStatusOk();
       assertNoSystemSystemdOwnershipMock.mockRejectedValueOnce(
         new Error("system scope owns openclaw-gateway-stage-test.service"),
@@ -2599,9 +2599,9 @@ describe("stageSystemdService", () => {
     await withStageFixture(async ({ env, unitPath, envFilePath }) => {
       const previous = "[Unit]\nDescription=Previous gateway\n";
       const previousEnv = "OPENCLAW_GATEWAY_TOKEN=previous-token\n";
-      await fs.mkdir(path.dirname(unitPath), { recursive: true });
-      await fs.writeFile(unitPath, previous, "utf8");
-      await fs.writeFile(envFilePath, previousEnv, "utf8");
+      await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
+      await fs.writeFile(unitPath, previous, { encoding: "utf8", mode: 0o644 });
+      await fs.writeFile(envFilePath, previousEnv, { encoding: "utf8", mode: 0o600 });
       await Promise.all([fs.chmod(unitPath, 0o400), fs.chmod(envFilePath, 0o400)]);
       mockSystemctlStatusOk();
       assertNoSystemSystemdOwnershipMock
@@ -2710,7 +2710,7 @@ describe("stageSystemdService", () => {
         "OPENAI_API_KEY=stale-managed\nOPERATOR_API_KEY=operator-owned\n",
         { encoding: "utf8", mode: 0o600 },
       );
-      await fs.mkdir(path.dirname(unitPath), { recursive: true });
+      await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
       await fs.writeFile(
         unitPath,
         [
@@ -2719,7 +2719,7 @@ describe("stageSystemdService", () => {
           `EnvironmentFile=-${envFilePath}`,
           "Environment=OPENCLAW_SERVICE_MANAGED_ENV_KEYS=OPENAI_API_KEY",
         ].join("\n"),
-        "utf8",
+        { encoding: "utf8", mode: 0o644 },
       );
       mockSystemctlStatusOk();
 
@@ -2745,7 +2745,7 @@ describe("stageSystemdService", () => {
         encoding: "utf8",
         mode: 0o600,
       });
-      await fs.mkdir(path.dirname(unitPath), { recursive: true });
+      await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
       await fs.writeFile(
         unitPath,
         [
@@ -2756,7 +2756,7 @@ describe("stageSystemdService", () => {
           "Environment=OPENCLAW_GATEWAY_PORT=18789",
           "Environment=OPENCLAW_SERVICE_MANAGED_ENV_KEYS=OPENAI_API_KEY",
         ].join("\n"),
-        "utf8",
+        { encoding: "utf8", mode: 0o644 },
       );
 
       const command = await readSystemdServiceExecStart(env);
@@ -2964,7 +2964,7 @@ describe("stageSystemdService", () => {
 
   it("sanitizes file-backed managed values out of the backup unit on re-stage", async () => {
     await withStageFixture(async ({ env, unitPath }) => {
-      await fs.mkdir(path.dirname(unitPath), { recursive: true });
+      await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
       await fs.writeFile(
         unitPath,
         [
@@ -3016,7 +3016,7 @@ describe("stageSystemdService", () => {
 
   it("protects tokenless gateway units and backups from legacy credentials", async () => {
     await withStageFixture(async ({ env, unitPath }) => {
-      await fs.mkdir(path.dirname(unitPath), { recursive: true });
+      await fs.mkdir(path.dirname(unitPath), { recursive: true, mode: 0o755 });
       await fs.writeFile(
         unitPath,
         [
@@ -3056,7 +3056,7 @@ describe("stageSystemdService", () => {
       const backupPath = `${unitPath}.bak`;
       const previous =
         "[Service]\nEnvironment=OPENCLAW_GATEWAY_TOKEN=legacy-token CUSTOM_SETTING=kept\n";
-      await fs.mkdir(path.dirname(backupPath), { recursive: true });
+      await fs.mkdir(path.dirname(backupPath), { recursive: true, mode: 0o755 });
       await fs.writeFile(backupPath, previous, { encoding: "utf8", mode: 0o640 });
       await fs.chmod(backupPath, 0o640);
       mockSystemctlStatusOk();
@@ -3347,7 +3347,7 @@ describe("systemd service install and uninstall", () => {
     const nodeEnvFilePath = path.join(stateDir, "node.systemd.env");
 
     try {
-      await fs.mkdir(stateDir, { recursive: true });
+      await fs.mkdir(stateDir, { recursive: true, mode: 0o700 });
       await run({ env, unitPath, nodeEnvFilePath });
     } finally {
       await fs.rm(tempHomeRoot, { recursive: true, force: true });
@@ -3407,9 +3407,11 @@ describe("systemd service install and uninstall", () => {
     async ({ directive, shouldWarn }) => {
       await withNodeSystemdFixture(async ({ env, unitPath }) => {
         const dropInPath = path.join(`${unitPath}.d`, "operator.conf");
-        await fs.mkdir(path.dirname(dropInPath), { recursive: true });
-        await fs.writeFile(dropInPath, `[Service]\n${directive}\n`);
-        await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/openclaw node run\n");
+        await fs.mkdir(path.dirname(dropInPath), { recursive: true, mode: 0o755 });
+        await fs.writeFile(dropInPath, `[Service]\n${directive}\n`, { mode: 0o644 });
+        await fs.writeFile(unitPath, "[Service]\nExecStart=/usr/bin/openclaw node run\n", {
+          mode: 0o644,
+        });
         mockSystemdManagerSnapshot({
           programArguments: ["/usr/bin/openclaw", "node", "run"],
           workingDirectory: "/tmp",

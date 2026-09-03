@@ -14,6 +14,7 @@ import {
 import { parseAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import { parseSqliteSessionFileMarker } from "openclaw/plugin-sdk/session-store-runtime";
 import { appendSessionTranscriptMessageByIdentity } from "openclaw/plugin-sdk/session-transcript-runtime";
+import * as tempPath from "openclaw/plugin-sdk/temp-path";
 import {
   afterAll,
   afterEach,
@@ -1119,7 +1120,7 @@ describe("active-memory plugin", () => {
   });
 
   it("cleans the transient workspace when SQLite recall cleanup retries are exhausted", async () => {
-    const mkdtempSpy = vi.spyOn(fs, "mkdtemp");
+    const workspaceSpy = vi.spyOn(tempPath, "tempWorkspace");
     hoisted.cleanupSessionLifecycleArtifacts.mockRejectedValue(
       new Error("session store remains busy"),
     );
@@ -1128,12 +1129,11 @@ describe("active-memory plugin", () => {
 
     expect(result).toBeUndefined();
     expect(hoisted.cleanupSessionLifecycleArtifacts).toHaveBeenCalledTimes(3);
-    expect(mkdtempSpy).toHaveBeenCalledWith(expect.stringMatching(/openclaw-active-memory-$/));
-    const tempWorkspaceDir = expectDefined(
-      await mkdtempSpy.mock.results[0]?.value,
-      "active-memory temp workspace",
+    const workspaceDir = requireNonEmptyString(
+      (await workspaceSpy.mock.results[0]?.value)?.dir,
+      "expected transient recall workspace",
     );
-    await expectPathMissing(tempWorkspaceDir);
+    await expectPathMissing(workspaceDir);
     expect(api.logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("failed to clean up recall session"),
     );
@@ -5822,16 +5822,25 @@ describe("active-memory plugin", () => {
   });
 
   it("keeps subagent transcripts off disk by default by using a temp session file", async () => {
-    const mkdtempSpy = vi.spyOn(fs, "mkdtemp");
+    const workspaceSpy = vi.spyOn(tempPath, "tempWorkspace");
 
-    await runPromptBuild({ prompt: "what wings should i order? temp transcript path" });
+    const result = await runPromptBuild({
+      prompt: "what wings should i order? temp transcript path",
+    });
 
-    expect(mkdtempSpy).toHaveBeenCalledWith(expect.stringMatching(/openclaw-active-memory-$/));
-    const tempWorkspaceDir = expectDefined(
-      await mkdtempSpy.mock.results[0]?.value,
-      "active-memory temp workspace",
+    const workspaceDir = requireNonEmptyString(
+      (await workspaceSpy.mock.results[0]?.value)?.dir,
+      "expected transient recall workspace",
     );
-    await expectPathMissing(tempWorkspaceDir);
+    const sessionFile = requireNonEmptyString(
+      lastEmbeddedRunParams().sessionFile,
+      "expected test transcript artifact",
+    );
+    await expectPathMissing(workspaceDir);
+    await expectPathMissing(sessionFile);
+    expect(hoisted.cleanupSessionLifecycleArtifacts).toHaveBeenCalledTimes(1);
+    expect(hoisted.sessionStore[lastEmbeddedSessionKey()]).toBeUndefined();
+    expectPrependContextContains(result, "lemon pepper wings");
   });
 
   it("persists subagent transcripts in a separate directory when enabled", async () => {
