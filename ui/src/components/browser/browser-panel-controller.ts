@@ -217,7 +217,13 @@ export class BrowserPanelController implements ReactiveController {
 
   private async refreshView(targetId: string, epoch = this.operations.epoch): Promise<void> {
     const client = this.operations.captureClient();
-    if (!client || !this.operations.isLive(epoch, client) || this.activeTargetId !== targetId) {
+    const gatewayClient = this.activeClient;
+    if (
+      !client ||
+      !gatewayClient ||
+      !this.operations.isLive(epoch, client) ||
+      this.activeTargetId !== targetId
+    ) {
       return;
     }
     if (this.clearUnavailableView()) {
@@ -239,8 +245,8 @@ export class BrowserPanelController implements ReactiveController {
         return;
       }
       const dataUrl = await fetchBrowserScreenshotDataUrl({
+        client: gatewayClient,
         resourceBasePath: this.host.resourceBasePath,
-        authToken: this.host.authToken,
         path: shot.path,
       });
       if (!current()) {

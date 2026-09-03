@@ -3,7 +3,6 @@ import { css, html, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
 import type { RouteId } from "../../../app-route-paths.ts";
 import { applicationContext, type ApplicationContext } from "../../../app/context.ts";
-import { resolveControlUiAuthToken } from "../../../app/control-ui-auth.ts";
 import { isBrowserPanelAvailable } from "../../../app/panel-availability.ts";
 import { browserTabKey, readBrowserTabTarget } from "../../../components/browser/browser-target.ts";
 import { icons } from "../../../components/icons.ts";
@@ -177,11 +176,6 @@ class OpenClawBrowserTabCard extends OpenClawLitElement {
       tab: preview,
       revision,
       resourceBasePath: context.resourceBasePath,
-      authToken: resolveControlUiAuthToken({
-        hello: snapshot.hello,
-        settings: { token: context.gateway.connection.token },
-        password: context.gateway.connection.password,
-      }),
     }).then((src) => {
       if (this.requestIdentity === identity) {
         this.thumbnailSrc = src;

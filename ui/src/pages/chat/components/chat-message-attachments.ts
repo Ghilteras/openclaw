@@ -319,14 +319,20 @@ function resolveAttachmentSource(
   attachment: AttachmentItem["attachment"],
   options: ImageRenderOptions,
 ) {
-  const { resourceBasePath, authToken, onRequestUpdate, resolveArtifactDownload, connectionEpoch } =
-    options;
+  const {
+    resourceBasePath,
+    onRequestUpdate,
+    resolveAssistantMedia,
+    resolveArtifactDownload,
+    connectionEpoch,
+  } = options;
   const assistantAvailability = resolveAssistantAttachmentAvailability(
     attachment.url,
     options.localMediaPreviewRoots ?? [],
     resourceBasePath,
-    authToken,
     onRequestUpdate,
+    resolveAssistantMedia,
+    connectionEpoch,
   );
   if (assistantAvailability.status !== "available") {
     return {
@@ -339,8 +345,8 @@ function resolveAttachmentSource(
               retryAssistantAttachmentAvailability(
                 attachment.url,
                 resourceBasePath,
-                authToken,
                 onRequestUpdate,
+                connectionEpoch,
               )
           : undefined,
     };
@@ -382,7 +388,7 @@ function resolveAttachmentSource(
     source: {
       src,
       playback,
-      authToken: localSource ? (authToken ?? null) : null,
+      authToken: null,
       sizeBytes: assistantAvailability.sizeBytes ?? attachment.sizeBytes,
       durationMs: assistantAvailability.durationMs ?? attachment.durationMs,
       width: assistantAvailability.width ?? attachment.width,

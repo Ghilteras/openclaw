@@ -62,6 +62,7 @@ export function renderChatDetailSlot(params: {
         connectionEpoch: params.chat.connectionEpoch,
         localMediaPreviewRoots: params.chat.localMediaPreviewRoots ?? [],
         resourceBasePath: params.chat.resourceBasePath,
+        resolveAssistantMedia: params.chat.resolveAssistantMedia,
         resolveArtifactDownload: params.chat.resolveArtifactDownload,
       }}
       .basePath=${params.chat.basePath ?? ""}

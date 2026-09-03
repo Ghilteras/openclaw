@@ -8,7 +8,7 @@ import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import { asNullableRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
 import { readStringValue } from "@openclaw/normalization-core/string-coerce";
 import { GatewayRequestError, type GatewayBrowserClient } from "../../api/gateway.ts";
-import { buildAssistantMediaUrl } from "../../app/assistant-media.ts";
+import { buildAssistantMediaUrl, resolveAssistantMedia } from "../../app/assistant-media.ts";
 import { t } from "../../i18n/index.ts";
 import type { BrowserRoute } from "./browser-target.ts";
 
@@ -371,14 +371,15 @@ export async function inspectBrowserElementAt(
  * same one chat history uses for local media previews).
  */
 export async function fetchBrowserScreenshotDataUrl(params: {
+  client: GatewayBrowserClient;
   resourceBasePath: string;
-  authToken: string | null;
   path: string;
 }): Promise<string> {
-  const headers = new Headers({ Accept: "image/*" });
-  if (params.authToken) {
-    headers.set("Authorization", `Bearer ${params.authToken}`);
+  const capability = await resolveAssistantMedia(params.client, params.path);
+  if (!capability.available) {
+    throw new Error(capability.reason);
   }
+  const headers = new Headers({ Accept: "image/*" });
   const controller = new AbortController();
   const timeout = setTimeout(
     () =>
@@ -389,12 +390,15 @@ export async function fetchBrowserScreenshotDataUrl(params: {
   );
   let blob: Blob;
   try {
-    const res = await fetch(buildAssistantMediaUrl(params.path, params.resourceBasePath), {
-      method: "GET",
-      headers,
-      credentials: "same-origin",
-      signal: controller.signal,
-    });
+    const res = await fetch(
+      buildAssistantMediaUrl(params.path, params.resourceBasePath, capability.mediaTicket),
+      {
+        method: "GET",
+        headers,
+        credentials: "same-origin",
+        signal: controller.signal,
+      },
+    );
     if (!res.ok) {
       // A response stream can take indefinitely to cancel; release it without
       // delaying the stable HTTP error or defeating the request deadline.

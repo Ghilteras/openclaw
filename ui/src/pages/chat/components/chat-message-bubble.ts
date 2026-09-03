@@ -42,6 +42,7 @@ import type { MessageActionDetails } from "./chat-message-markdown.ts";
 import {
   projectMessageMedia,
   schedulePairingQrExpiryRefresh,
+  type AssistantMediaResolver,
   type ArtifactDownloadResolver,
 } from "./chat-message-media.ts";
 import {
@@ -231,6 +232,7 @@ export function renderGroupedMessage(
     localMediaPreviewRoots?: readonly string[];
     connectionEpoch?: number;
     assistantAttachmentAuthToken?: string | null;
+    resolveAssistantMedia?: AssistantMediaResolver;
     resolveArtifactDownload?: ArtifactDownloadResolver;
     onRequestOpenImage?: () => number;
     onOpenImage?: (item: ImageLightboxItem, requestVersion?: number) => void;
@@ -280,6 +282,7 @@ export function renderGroupedMessage(
     onRequestUpdate: opts.onRequestUpdate,
     onRequestOpenImage: opts.onRequestOpenImage,
     onOpenImage: opts.onOpenImage,
+    resolveAssistantMedia: opts.resolveAssistantMedia,
     resolveArtifactDownload: opts.resolveArtifactDownload,
   };
   const displayMarkdown = resolveMessageDisplayMarkdown(message, normalizedMessage);

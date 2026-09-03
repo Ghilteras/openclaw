@@ -68,7 +68,6 @@ export function loadBrowserTabThumbnail(params: {
   tab: BrowserTabTarget;
   revision: string;
   resourceBasePath: string;
-  authToken: string | null;
 }): Promise<string | undefined> {
   const key = browserTabKey(params.tab);
   let cache = thumbnails.get(params.client);
@@ -95,8 +94,8 @@ export function loadBrowserTabThumbnail(params: {
         params.tab.targetId,
       );
       const image = await fetchBrowserScreenshotDataUrl({
+        client: params.client,
         resourceBasePath: params.resourceBasePath,
-        authToken: params.authToken,
         path: capture.path,
       });
       images.delete(key);
