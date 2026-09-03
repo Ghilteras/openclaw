@@ -856,8 +856,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
         },
       },
     });
-    let harness!: ReturnType<typeof createStartedThreadHarness>;
-    harness = createStartedThreadHarness(
+    const harness: ReturnType<typeof createStartedThreadHarness> = createStartedThreadHarness(
       async (method) => {
         if (method === "thread/resume") {
           return threadStartResult("thread-1");
@@ -874,9 +873,9 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
               },
             },
           });
-          for (const method of ["item/started", "item/completed"] as const) {
+          for (const notificationMethod of ["item/started", "item/completed"] as const) {
             await harness.notify({
-              method,
+              method: notificationMethod,
               params: {
                 threadId: "thread-1",
                 turnId: "compact-turn-1",
@@ -983,8 +982,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
         sessionFile,
         pendingNativeCompactionBinding("thread-a", workspaceDir),
       );
-      let harness!: ReturnType<typeof createStartedThreadHarness>;
-      harness = createStartedThreadHarness(
+      const harness: ReturnType<typeof createStartedThreadHarness> = createStartedThreadHarness(
         async (method, rawParams) => {
           const request = requireRecord(rawParams, `${method} params`);
           const threadId = readStringValue(request.threadId);
@@ -1085,9 +1083,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
       }
 
       await expect(
-        runCodexAppServerAttempt(params, {
-          ...(owner === "supervision" ? { pluginConfig } : {}),
-        }),
+        runCodexAppServerAttempt(params, owner === "supervision" ? { pluginConfig } : {}),
       ).rejects.toMatchObject({ name: expectedName });
       expect(harness.requests.some(({ method }) => method === "thread/start")).toBe(false);
       expect(harness.requests.some(({ method }) => method === "turn/start")).toBe(false);
@@ -1143,8 +1139,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
         },
       };
       const clientStarts: unknown[] = [];
-      let harness!: ReturnType<typeof createStartedThreadHarness>;
-      harness = createStartedThreadHarness(
+      const harness: ReturnType<typeof createStartedThreadHarness> = createStartedThreadHarness(
         async (method, rawParams) => {
           const request = requireRecord(rawParams, `${method} params`);
           const threadId = readStringValue(request.threadId);
@@ -1217,8 +1212,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
       modelProvider: nativeThread.modelProvider,
     });
     const clientStarts: unknown[] = [];
-    let harness!: ReturnType<typeof createStartedThreadHarness>;
-    harness = createStartedThreadHarness(
+    const harness: ReturnType<typeof createStartedThreadHarness> = createStartedThreadHarness(
       async (method, rawParams) => {
         const request = requireRecord(rawParams, `${method} params`);
         const threadId = readStringValue(request.threadId);
@@ -1313,8 +1307,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
       },
     });
     const clientStarts: unknown[] = [];
-    let harness!: ReturnType<typeof createStartedThreadHarness>;
-    harness = createStartedThreadHarness(
+    const harness: ReturnType<typeof createStartedThreadHarness> = createStartedThreadHarness(
       async (method, rawParams) => {
         const request = requireRecord(rawParams, `${method} params`);
         const threadId = readStringValue(request.threadId);
