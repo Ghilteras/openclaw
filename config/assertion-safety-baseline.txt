@@ -218,7 +218,7 @@ extensions/codex/src/app-server/sandbox-exec-server/json-rpc.ts	3
 extensions/codex/src/app-server/sandbox-exec-server/processes.ts	1
 extensions/codex/src/app-server/sandbox-guard.ts	2
 extensions/codex/src/app-server/scheduled-app-authority.ts	5
-extensions/codex/src/app-server/session-binding.ts	4
+extensions/codex/src/app-server/session-binding.ts	2
 extensions/codex/src/app-server/shared-client.ts	4
 extensions/codex/src/app-server/side-question.ts	8
 extensions/codex/src/app-server/startup-binding.ts	2
@@ -3527,7 +3527,7 @@ src/plugins/runtime/runtime-web-channel-plugin.ts	1
 src/plugins/schema-validator.ts	6
 src/plugins/sdk-alias.ts	3
 src/plugins/services.ts	1
-src/plugins/session-catalog-history-import.ts	2
+src/plugins/session-catalog-history-import.ts	1
 src/plugins/setup-registry-loader-state.ts	1
 src/plugins/setup-registry.ts	12
 src/plugins/slots.ts	3
