@@ -349,8 +349,7 @@ describe("bootstrapApplication", () => {
     const previousSettings = loadSettings();
     const previousUrl = window.location.href;
     window.history.replaceState({}, "", "/settings/appearance");
-    const sessionPathBuilder = deferred<void>();
-    const runtime = bootstrapApplication({ sessionPathBuilderReady: sessionPathBuilder.promise });
+    const runtime = bootstrapApplication();
     const route = runtime.router.getRoute("appearance");
     if (!route) {
       throw new Error("expected the appearance route");
@@ -360,10 +359,10 @@ describe("bootstrapApplication", () => {
 
     try {
       const start = runtime.start();
-      // The warm-up does not wait for the session-url chunk the router start needs.
+      // The warm-up is synchronous with start(); the router starts only after the
+      // awaited startup steps, so the page chunks are already in flight by then.
       expect(component).toHaveBeenCalledOnce();
       expect(routerStart).not.toHaveBeenCalled();
-      sessionPathBuilder.resolve();
       await start;
 
       const match = runtime.router.getState().matches[0];
@@ -381,7 +380,7 @@ describe("bootstrapApplication", () => {
     const previousUrl = window.location.href;
     saveSettings({ ...previousSettings, sessionKey: "", lastActiveSessionKey: "" });
     window.history.replaceState({}, "", "/chat");
-    const runtime = bootstrapApplication({ sessionPathBuilderReady: Promise.resolve() });
+    const runtime = bootstrapApplication();
     const route = runtime.router.getRoute("chat");
     if (!route) {
       throw new Error("expected the chat route");
@@ -405,7 +404,7 @@ describe("bootstrapApplication", () => {
     const previousSettings = loadSettings();
     const previousUrl = window.location.href;
     window.history.replaceState({}, "", "/settings/appearance");
-    const runtime = bootstrapApplication({ sessionPathBuilderReady: Promise.resolve() });
+    const runtime = bootstrapApplication();
     const preloadLocation = vi.spyOn(runtime.router, "preloadLocation");
 
     try {
