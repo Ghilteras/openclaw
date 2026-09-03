@@ -7,6 +7,7 @@ import { createNodeWorkerTunnelManager } from "./node-worker-tunnel.js";
 import * as nodeSupport from "./node-worker-tunnel.test-support.js";
 import { REQUEST, seedActivePlacement } from "./placement-dispatch-test-fixtures.js";
 import { createHarness } from "./placement-dispatch-test-harness.js";
+import { FORCED_WORKER_ABANDONMENT_ERROR } from "./placement-record.js";
 import { createWorkerSessionPlacementStore } from "./placement-store.js";
 import { createWorkerSessionPlacementGate } from "./placement-worker-gate.js";
 import * as support from "./service.test-support.js";
@@ -162,9 +163,6 @@ describe("offline device abandonment with retained physical cleanup", () => {
       };
       vi.mocked(harness.environments.get).mockImplementation(service.get);
       vi.mocked(harness.environments.destroy).mockImplementation(service.destroy);
-      vi.mocked(harness.environments.retireAbandonedNodeEnvironment).mockImplementation(
-        service.retireAbandonedNodeEnvironment,
-      );
       vi.mocked(harness.environments.stopTunnel).mockImplementation(service.stopTunnel);
       await tunnels.start({
         environmentId,
@@ -203,7 +201,7 @@ describe("offline device abandonment with retained physical cleanup", () => {
           { environmentId, ownerEpoch: attached.ownerEpoch, sessionId: "different-session" },
           { environmentId, ownerEpoch: attached.ownerEpoch + 1, sessionId: active.sessionId },
         ]) {
-          await expect(service.retireAbandonedNodeEnvironment(binding)).rejects.toThrow(
+          await expect(service.destroy(binding.environmentId, binding)).rejects.toThrow(
             "owner changed before retirement",
           );
         }
@@ -331,7 +329,13 @@ describe("offline device abandonment with retained physical cleanup", () => {
             },
           });
         }
-        expect(service.get(environmentId)?.state).toBe("destroyed");
+        expect(service.get(environmentId)).toMatchObject({
+          state: "failed",
+          leaseId: null,
+          nodeDeviceId: null,
+          attachedSessionIds: [],
+          lastError: FORCED_WORKER_ABANDONMENT_ERROR,
+        });
         expect(destroy).toHaveBeenCalledOnce();
         if (replacement && replacementClaim) {
           expect(support.testState.store.get(replacementId)).toMatchObject({

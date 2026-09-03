@@ -32,7 +32,10 @@ import type { NodeWorkerTunnelManager } from "./node-worker-tunnel.js";
 import type { WorkerSessionPlacementGate } from "./placement-worker-gate.js";
 import type { WorkerNodePortalCarrier } from "./portal-node-carrier.js";
 import { createWorkerProviderLifecycle } from "./provider-lifecycle.js";
-import type { WorkerProviderLifecycleInputOptions } from "./provider-lifecycle.types.js";
+import type {
+  WorkerEnvironmentAbandonment,
+  WorkerProviderLifecycleInputOptions,
+} from "./provider-lifecycle.types.js";
 import type { WorkerEnvironmentState } from "./state.js";
 import type {
   WorkerEnvironmentRecord,
@@ -650,9 +653,8 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
         }),
       );
     },
-    destroy: async (environmentId: string) =>
-      environmentAccess.project(await providerLifecycle.destroy(environmentId)),
-    retireAbandonedNodeEnvironment: providerLifecycle.retireAbandonedNodeEnvironment,
+    destroy: async (environmentId: string, abandonment?: WorkerEnvironmentAbandonment) =>
+      environmentAccess.project(await providerLifecycle.destroy(environmentId, { abandonment })),
     destroyUnattached: async (environmentId: string) =>
       environmentAccess.project(
         await providerLifecycle.destroy(environmentId, { requireUnattached: true }),

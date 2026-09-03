@@ -27,7 +27,6 @@ import { createWorkerProvisionCancellation } from "./provider-provisioning-cance
 import {
   normalizeWorkerMachineOptions,
   requireProviderOperationTimeoutMs,
-  requireWorkerAllocation,
   requireWorkerLease,
   requireWorkerLeaseStatus,
   resolveWorkerLeaseTransportError,
@@ -41,22 +40,8 @@ import { boundedWorkerError as boundedError } from "./worker-error.js";
 const ORPHANED_LEASE_ERROR = "Worker provider no longer recognizes the lease";
 
 export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOptions) {
-  const { store, callBootstrap, callProvider, inState, move, saveError, serviceError, withLock } =
-    options;
+  const { store, callBootstrap, callProvider, inState, move, saveError, serviceError } = options;
   const { commitReady, ensurePendingCredential } = options.credentialBroker;
-
-  const {
-    requireCurrentOwner,
-    stopOwner,
-    destroyLease,
-    beginDrain,
-    beginDestroy,
-    finishProvenDestroy,
-    retireAbandonedNodeEnvironment,
-  } = createWorkerProviderOwnerLifecycle({
-    ...options,
-    finishDestroy: (record) => finishDestroy(record),
-  });
 
   function requireWorkerProfile(value: unknown): WorkerProfile {
     const error = validateCloudWorkerProfileSettings(value);
@@ -65,11 +50,6 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
     }
     return value as WorkerProfile;
   }
-
-  const lifecycleLease = (record: WorkerEnvironmentRecord, leaseId: string) => ({
-    leaseId,
-    profile: requireWorkerProfile(record.profileSnapshot.settings),
-  });
 
   const identityResolverFor = (
     record: WorkerEnvironmentRecord,
@@ -95,6 +75,18 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
     }
     throw serviceError("provider_not_found", `Worker provider is unavailable: ${providerId}`);
   };
+
+  const {
+    requireCurrentOwner,
+    stopOwner,
+    destroyLease,
+    beginDrain,
+    beginDestroy,
+    finishProvenDestroy,
+    lifecycleLease,
+    finishDestroy,
+    destroy,
+  } = createWorkerProviderOwnerLifecycle({ ...options, providerFor, requireWorkerProfile });
 
   const listMachineOptions = async (profileId: string) => {
     const profile = options.getConfig().cloudWorkers?.profiles?.[profileId];
@@ -435,55 +427,6 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
     }
   };
 
-  const cancelRequested = (record: WorkerEnvironmentRecord) =>
-    move(record, "failed", { lastError: "Provisioning canceled before provider allocation" });
-
-  const finishDestroy = async (record: WorkerEnvironmentRecord, provider?: WorkerProvider) => {
-    let r = record;
-    if (r.state === "requested") {
-      return cancelRequested(requireCurrentOwner(r));
-    }
-    // Fence local authority even when the provider is unavailable. stopOwner preserves
-    // shared/unknown-host stop acknowledgements before releasing their attachments.
-    r = await stopOwner(r, "provider-destroying");
-    r = r.nodeDeviceId !== null && r.sharedHost === false ? r : beginDrain(r);
-    const owningProvider = provider ?? providerFor(r.providerId);
-    let leaseId = r.leaseId;
-    if (!leaseId) {
-      let allocation: Awaited<ReturnType<WorkerProvider["resolveAllocation"]>>;
-      try {
-        allocation = requireWorkerAllocation(
-          await callProvider(r.environmentId, () => {
-            requireCurrentOwner(r);
-            return owningProvider.resolveAllocation(
-              requireWorkerProfile(r.profileSnapshot.settings),
-              r.provisionOperationId,
-            );
-          }),
-        );
-      } catch (error) {
-        saveError(requireCurrentOwner(r), error);
-        throw serviceError("provider_failure", "Worker allocation resolution failed");
-      }
-      // Publish only the cleanup identity, never a fabricated transport or admission receipt.
-      r = move(requireCurrentOwner(r), "draining", { ...allocation, lastError: r.lastError });
-      leaseId = allocation.leaseId;
-    }
-    // A dedicated provider's destroy result proves physical teardown even if its node is
-    // offline. Shared hosts retain the machine, so they still require the exact worker stop.
-    const providerOwnsMachine = r.nodeDeviceId !== null && r.sharedHost === false;
-    const destroying = providerOwnsMachine ? r : beginDestroy(r);
-    try {
-      await destroyLease(destroying, owningProvider, lifecycleLease(destroying, leaseId));
-    } catch (error) {
-      saveError(requireCurrentOwner(destroying), error);
-      throw serviceError("provider_failure", "Worker provider operation failed");
-    }
-    return await finishProvenDestroy(
-      providerOwnsMachine ? await stopOwner(destroying, "provider-destroyed") : destroying,
-    );
-  };
-
   const reconcileRecord = async (
     initialRecord: WorkerEnvironmentRecord,
     signal?: AbortSignal,
@@ -697,37 +640,9 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
     resumeProvision,
   });
 
-  const destroy = async (
-    environmentId: string,
-    destroyOptions: { requireUnattached?: boolean } = {},
-  ) => {
-    const stopping = options.isStopping();
-    if (stopping) {
-      throw serviceError("invalid_state", "Worker environment service is stopping");
-    }
-    return withLock(environmentId, async () => {
-      let record = store.get(environmentId);
-      if (!record) {
-        throw serviceError("environment_not_found", `Unknown worker environment: ${environmentId}`);
-      }
-      if (inState(record, "destroyed", "failed", "orphaned")) {
-        return record;
-      }
-      if (destroyOptions.requireUnattached && record.attachedSessionIds.length > 0) {
-        throw serviceError(
-          "invalid_state",
-          "Attached cloud workers must be stopped through sessions.reclaim",
-        );
-      }
-      record = store.requestDestroy({ environmentId, state: record.state });
-      return finishDestroy(record);
-    });
-  };
-
   return {
     createWithProfile,
     destroy,
-    retireAbandonedNodeEnvironment,
     identityResolverFor,
     listMachineOptions,
     providerFor,

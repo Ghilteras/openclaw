@@ -113,8 +113,7 @@ describe("worker provider node teardown", () => {
       try {
         const credential = support.testState.store.getCredential(environmentId);
         await expect(
-          service.retireAbandonedNodeEnvironment({
-            environmentId,
+          service.destroy(environmentId, {
             sessionId: "session-destroyed",
             ownerEpoch: attached.ownerEpoch,
           }),

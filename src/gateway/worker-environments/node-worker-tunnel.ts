@@ -419,9 +419,11 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
           });
           const result = await raceNodeWorkerOperation(operation, signal);
           if (!result.ok) {
-            throw new Error(
-              `node worker environment stop failed (${result.error?.code ?? "UNAVAILABLE"})`,
-            );
+            const code = result.error?.code ?? "UNAVAILABLE";
+            const message = `node worker environment stop failed (${code})`;
+            throw RETRYABLE_TRANSPORT_CODES.has(code)
+              ? new WorkerTunnelOwnerDisconnectedError(message)
+              : new Error(message);
           }
         }
       } finally {
@@ -460,7 +462,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
       // source of the retired scope; bundle metadata is not cleanup authority.
       const record = options.getEnvironment(environmentId);
       if (record?.nodeDeviceId && (ownerEpoch === undefined || record.ownerEpoch === ownerEpoch)) {
-        if (reason) {
+        if (reason === "provider-destroying" || reason === "provider-destroyed") {
           // Provider teardown owns the whole dedicated machine. No remote session tuple is
           // needed for local transfer cleanup; durable ownership remains until its proof.
           operations.push(options.workspaceTransfer.close(environmentId));
@@ -471,16 +473,19 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
           const sessionId = record.attachedSessionIds[0];
           if (sessionId) {
             operations.push(
-              stopEnvironmentOwner({
-                deviceId: record.nodeDeviceId,
-                environmentId,
-                ownerEpoch: record.ownerEpoch,
-                sessionId,
-                executionMode:
-                  record.profileSnapshot.executionMode === "remote-exec"
-                    ? "remote-exec"
-                    : "worker-turn",
-              }),
+              stopEnvironmentOwner(
+                {
+                  deviceId: record.nodeDeviceId,
+                  environmentId,
+                  ownerEpoch: record.ownerEpoch,
+                  sessionId,
+                  executionMode:
+                    record.profileSnapshot.executionMode === "remote-exec"
+                      ? "remote-exec"
+                      : "worker-turn",
+                },
+                reason,
+              ),
             );
           }
         }
