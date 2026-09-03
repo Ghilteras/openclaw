@@ -10,6 +10,8 @@ minimumReleaseAgeStrict: true
 
 # Trusted Codex runtimes are outside the dependency cooldown.
 minimumReleaseAgeExclude:
+  # GHSA-58mr-gqgx-xq4g / GHSA-qw65-cvwx-89v3 security fix; remove after 2026-09-09.
+  - "fast-uri@4.1.4"
   - "@openai/codex"
   - "@openai/codex-*"
 
@@ -29,7 +31,7 @@ overrides:
   "@aws-sdk/xml-builder": 3.972.40
   "@hono/node-server": 2.1.1
   axios: 1.19.0
-  fast-uri: 4.1.2
+  fast-uri: 4.1.4
   follow-redirects: 1.16.0
   defu: 6.1.7
   fast-xml-parser: 5.11.0
