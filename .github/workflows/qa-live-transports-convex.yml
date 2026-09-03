@@ -85,6 +85,15 @@ on:
         required: true
         default: main
         type: string
+      expected_sha:
+        description: Exact SHA the selected ref must resolve to
+        required: true
+        type: string
+      run_slack:
+        description: Run only the Slack live lane
+        required: true
+        default: true
+        type: boolean
       run_buzz:
         description: Run the Buzz live lane (requires a pooled Buzz credential)
         required: false
@@ -152,7 +161,11 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         with:
           script: |
-            if (context.eventName === "schedule" || (process.env.EXPECTED_SHA ?? "") !== "") {
+            if (
+              context.eventName === "schedule" ||
+              (context.eventName !== "workflow_dispatch" &&
+                (process.env.EXPECTED_SHA ?? "") !== "")
+            ) {
               core.info("Trusted scheduled or reusable QA run; actor permission check is only required for manual dispatch.");
               core.setOutput("authorized", "true");
               return;
