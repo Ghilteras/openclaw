@@ -141,7 +141,7 @@ describe("gateway update action", () => {
             channel: "telegram",
             to: "123",
             accountId: "primary",
-            ...(threadId !== undefined ? { threadId } : {}),
+            threadId,
           },
           note: "Requested update",
           timeoutMs: 1_200_000,
