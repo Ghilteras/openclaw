@@ -24,7 +24,7 @@ import type {
 
 const CAPTURE_INTERVAL_MS = 5_000;
 
-type ActiveCapture<TSession extends MeetingSessionRecord> = {
+type ActiveCapture = {
   closing: boolean;
   descriptor: TranscriptSessionDescriptor;
   finalCaptureError?: string;
@@ -33,7 +33,6 @@ type ActiveCapture<TSession extends MeetingSessionRecord> = {
   initializationWarned: boolean;
   polling: boolean;
   runCapture(task: () => Promise<void>): Promise<void>;
-  session: TSession;
   timer?: ReturnType<typeof setInterval>;
   utteranceCount: number;
 };
@@ -98,7 +97,7 @@ export function createMeetingDurableTranscriptBridge<
   const store = new TranscriptsStore(path.join(stateDir, "transcripts"), {
     env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
   });
-  const captures = new Map<string, ActiveCapture<TSession>>();
+  const captures = new Map<string, ActiveCapture>();
   const pendingSubscribers = new Map<string, Subscriber>();
   const subscribers = new Map<string, Subscriber>();
   const lifecycleTasks = new KeyedAsyncQueue();
@@ -144,18 +143,17 @@ export function createMeetingDurableTranscriptBridge<
           );
           return await result;
         };
-        const active: ActiveCapture<TSession> = {
+        const active: ActiveCapture = {
           closing: false,
           descriptor,
           initialized: false,
           initializationWarned: false,
           polling: false,
           runCapture,
-          session,
           utteranceCount: 0,
         };
         captures.set(session.id, active);
-        // Start and stop share runLifecycle(session.id), so teardown cannot mark
+        // Start and stop share lifecycleTasks, so teardown cannot mark
         // this published capture closing while initialization awaits.
         const initialize = async () => {
           if (active.initialized) {

@@ -1,8 +1,3 @@
-/**
- * transcripts built-in tool.
- *
- * Manages live capture, manual import, summarization, and process-local transcript sessions.
- */
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { Type } from "typebox";

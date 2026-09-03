@@ -1,7 +1,6 @@
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { summarizeStringEntries } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
-// Discord plugin module implements transcripts source behavior.
 import type {
   TranscriptSourceProvider,
   TranscriptOccupancyWatchRequest,

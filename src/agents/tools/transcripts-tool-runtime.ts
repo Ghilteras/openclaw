@@ -87,23 +87,17 @@ export async function readTranscriptSummary(params: {
     maxUtterances: params.config.maxUtterances,
   });
   const agentId = params.session.metadata?.agentId;
-  try {
-    if (params.cfg) {
-      const modeled = await summarizeTranscriptsWithModel({
-        cfg: params.cfg,
-        agentId:
-          typeof agentId === "string" && agentId.trim()
-            ? agentId
-            : resolveDefaultAgentId(params.cfg),
-        session: params.session,
-        utterances,
-      });
-      if (modeled) {
-        return modeled;
-      }
+  if (params.cfg) {
+    const modeled = await summarizeTranscriptsWithModel({
+      cfg: params.cfg,
+      agentId:
+        typeof agentId === "string" && agentId.trim() ? agentId : resolveDefaultAgentId(params.cfg),
+      session: params.session,
+      utterances,
+    });
+    if (modeled) {
+      return modeled;
     }
-  } catch {
-    // Historical captures may have no resolvable agent; they still get notes.
   }
   // Heuristic notes are the deterministic base; model inference is an enhancement
   // so an unavailable model never loses the captured meeting notes.
