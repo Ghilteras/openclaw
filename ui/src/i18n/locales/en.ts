@@ -5664,7 +5664,7 @@ export const en: TranslationMap & {
       coding: "Coding",
       catalogViewOptions: "View options",
       catalogCreateUnavailable:
-        "New sessions are unavailable for {catalog} with this agent. Check its model and runtime settings.",
+        "Starting new sessions is not supported by {catalog}. Choose another session source.",
       hideFromSidebar: "Hide from sidebar",
       sectionHidden: "{section} hidden.",
       sectionHiddenRecovery: "Show it again in Settings > Appearance > Sidebar.",

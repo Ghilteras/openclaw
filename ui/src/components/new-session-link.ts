@@ -26,7 +26,7 @@ export function renderNewSessionLink(params: {
       href=${disabled ? nothing : href}
       aria-label=${params.label}
       aria-disabled=${disabled ? "true" : nothing}
-      tabindex=${disabled ? "-1" : nothing}
+      tabindex=${disabled ? "0" : nothing}
       @contextmenu=${(event: MouseEvent) => {
         // Section menus must not replace the browser's Open Link in New Tab actions.
         event.stopPropagation();

@@ -1,12 +1,12 @@
-import { mkdir } from "node:fs/promises";
-import path from "node:path";
 import { expect, it } from "vitest";
 import {
   defaultControlUiFeatureMethods,
   installMockGateway,
 } from "../test-helpers/control-ui-e2e.ts";
+import { createControlUiSessionRow as sessionRow } from "../test-helpers/control-ui-session-fixtures.ts";
 import { createControlUiE2eSuite, tooltipTitleText } from "./control-ui-e2e-suite.test-support.ts";
-import { sessionRow, sessionsListResponse } from "./session-management.test-support.ts";
+import { sessionsListResponse } from "./session-management.test-support.ts";
+import { captureSidebarUiProof } from "./sidebar-customization.test-support.ts";
 
 const suite = createControlUiE2eSuite({ name: "Sidebar section column alignment" });
 
@@ -60,7 +60,10 @@ suite.define(() => {
                   capabilities: {
                     continueSession: false,
                     archive: false,
-                    ...(creatable ? { createSession: { model: "openai/gpt-5.6-luna" } } : {}),
+                    // Model-chat creation does not enable the native-terminal action.
+                    ...(creatable
+                      ? { startTerminal: true }
+                      : { createSession: { model: "openai/gpt-5.6-luna" } }),
                   },
                   hosts: [
                     {
@@ -68,6 +71,7 @@ suite.define(() => {
                       label: `Local ${label}`,
                       kind: "gateway",
                       connected: true,
+                      canStartTerminal: creatable,
                       sessions: Array.from({ length: count }, (_, index) => ({
                         threadId: `${id}-${index}`,
                         name: `${label} thread ${index}`,
@@ -98,37 +102,28 @@ suite.define(() => {
           }
           const codex = page.locator('[data-session-section="catalog:codex"]');
           await codex.locator(".sidebar-recent-sessions__head").hover();
-          const artifactDir = process.env.OPENCLAW_UI_E2E_ARTIFACT_DIR?.trim();
-          if (artifactDir) {
-            await mkdir(artifactDir, { recursive: true });
-            await page.screenshot({
-              path: path.join(
-                artifactDir,
-                `sidebar-section-alignment-${hasTouch ? "touch" : "mouse"}.png`,
-              ),
-              animations: "disabled",
-              fullPage: true,
-            });
-            await page.locator(".sidebar-sessions").screenshot({
-              path: path.join(
-                artifactDir,
-                `sidebar-label-count-${hasTouch ? "touch" : "mouse"}.png`,
-              ),
-              animations: "disabled",
-            });
-          }
+          await captureSidebarUiProof(
+            suite,
+            page,
+            `sidebar-alignment-${hasTouch ? "touch" : "mouse"}.png`,
+          );
           const geometry = await page.evaluate(
             (expectedSections) =>
               expectedSections.map(({ id }) => {
                 const header = document.querySelector(
                   `[data-session-section="${id}"] .sidebar-recent-sessions__head`,
                 );
-                const measure = (selector: string) => {
+                const measure = (selector: string, textOnly = false) => {
                   const element = header?.querySelector(selector);
                   if (!element) {
                     return null;
                   }
-                  const rect = element.getBoundingClientRect();
+                  const range = document.createRange();
+                  range.selectNodeContents(element);
+                  // The label box can flex wider than its text and hide the actual gap.
+                  const rect = textOnly
+                    ? range.getBoundingClientRect()
+                    : element.getBoundingClientRect();
                   return { left: rect.left, right: rect.right, center: rect.left + rect.width / 2 };
                 };
                 return {
@@ -136,7 +131,7 @@ suite.define(() => {
                   countText: header
                     ?.querySelector(".sidebar-session-group-count")
                     ?.textContent?.trim(),
-                  label: measure(".sidebar-recent-sessions__label-text"),
+                  label: measure(".sidebar-recent-sessions__label-text", true),
                   count: measure(".sidebar-session-group-count"),
                   menu: measure('.sidebar-session-group-actions[aria-haspopup="menu"]'),
                   add: measure(".sidebar-new-session, .sidebar-session-catalog-new"),
@@ -168,7 +163,6 @@ suite.define(() => {
           const claudeAdd = claude.locator(".sidebar-session-catalog-new");
           expect(await claudeAdd.getAttribute("aria-disabled")).toBe("true");
           expect(await claudeAdd.getAttribute("href")).toBeNull();
-          expect(await claudeAdd.getAttribute("tabindex")).toBe("-1");
           if (hasTouch) {
             const bounds = await claudeAdd.boundingBox();
             if (!bounds) {
@@ -185,23 +179,30 @@ suite.define(() => {
           await expect
             .poll(() => tooltipTitleText(claudeAdd))
             .toBe(
-              "New sessions are unavailable for Claude Code with this agent. Check its model and runtime settings.",
+              "Starting new sessions is not supported by Claude Code. Choose another session source.",
             );
-          if (artifactDir) {
-            await page.emulateMedia({ colorScheme: "dark" });
-            await page.screenshot({
-              path: path.join(
-                artifactDir,
-                `sidebar-disabled-add-${hasTouch ? "touch" : "mouse"}.png`,
-              ),
-              animations: "disabled",
-              fullPage: true,
-            });
+          await captureSidebarUiProof(
+            suite,
+            page,
+            `sidebar-disabled-${hasTouch ? "touch" : "mouse"}.png`,
+          );
+          if (!hasTouch) {
+            await page.mouse.move(800, 700);
+            await claude.locator("[data-session-catalog-view-menu]").focus();
+            await page.keyboard.press("Tab");
+            expect(await claudeAdd.evaluate((element) => element === document.activeElement)).toBe(
+              true,
+            );
+            await claude
+              .locator("openclaw-tooltip[open] .tooltip-content")
+              .waitFor({ state: "visible" });
+            await page.keyboard.press("Enter");
           }
           const originalUrl = page.url();
           await claudeAdd.dispatchEvent("click");
           expect(page.url()).toBe(originalUrl);
           expect(await gateway.getRequests("sessions.create")).toEqual([]);
+          expect(await gateway.getRequests("sessions.catalog.startTerminal")).toEqual([]);
         },
       );
     },

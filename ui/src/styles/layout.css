@@ -1398,12 +1398,6 @@ openclaw-settings-save-indicator:empty {
   text-align: left;
 }
 
-.sidebar-session-group-toggle .sidebar-recent-sessions__label-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .sidebar-session-group-toggle__lead {
   position: relative;
   display: inline-grid;
@@ -1643,9 +1637,10 @@ a.sidebar-session-group-actions {
   color: var(--muted);
 }
 
+/* Shrink long marquee labels, but keep counts beside the text on short labels. */
 .sidebar-session-group-toggle > .sidebar-recent-sessions__label-text {
   min-width: 0;
-  flex: 1 1 0;
+  flex: 0 1 auto;
 }
 
 /* Flex, not grid: WebKit does not re-run a grid flex-item's intrinsic sizing
