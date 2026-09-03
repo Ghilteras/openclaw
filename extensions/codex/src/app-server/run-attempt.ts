@@ -1,5 +1,6 @@
 import type { EmbeddedRunAttemptParamsV2 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { EmbeddedRunAttemptResult } from "./attempt-terminal.js";
+import { maybeCompactCodexAppServerSession } from "./compact.js";
 import { activateCodexAttemptTurn } from "./run-attempt-active-turn.js";
 import { cleanupCodexAttempt } from "./run-attempt-cleanup.js";
 import { prepareCodexAttemptConnection } from "./run-attempt-connection.js";
@@ -18,12 +19,48 @@ import { prepareCodexAttemptTurnRequest } from "./run-attempt-turn-request.js";
 import { startCodexAttemptTurn } from "./run-attempt-turn-start.js";
 import { createCodexAttemptTurnState } from "./run-attempt-turn-state.js";
 import type { CodexRunAttemptOptions } from "./run-attempt-types.js";
+import { isSameCodexAppServerThreadOwner } from "./thread-ownership.js";
+
+async function retryPendingCodexNativeCompaction(
+  connection: Awaited<ReturnType<typeof prepareCodexAttemptConnection>>,
+): Promise<void> {
+  const pendingBinding = connection.mutable.startupBinding;
+  if (pendingBinding?.nativeCompactionRetryPending !== true) {
+    return;
+  }
+  await maybeCompactCodexAppServerSession(connection.params, {
+    bindingStore: connection.bindingStore,
+    pluginConfig: connection.options.pluginConfig,
+    ...(connection.options.clientFactory
+      ? { clientFactory: connection.options.clientFactory }
+      : {}),
+    allowNonManualNativeRequest: true,
+    nativeCompactionRequest: "after_context_engine",
+  });
+  const currentBinding = connection.bindingStore.read(connection.bindingIdentity);
+  connection.mutable.startupBinding = currentBinding;
+  connection.mutable.startupContextTokens = undefined;
+  if (
+    currentBinding?.nativeCompactionRetryPending === true &&
+    isSameCodexAppServerThreadOwner(currentBinding, pendingBinding)
+  ) {
+    throw new Error(
+      "Codex native compaction retry remains pending before turn/start. Retry the turn after native compaction becomes available.",
+    );
+  }
+}
 
 export async function runCodexAppServerAttempt(
   params: EmbeddedRunAttemptParamsV2,
   options: CodexRunAttemptOptions,
 ): Promise<EmbeddedRunAttemptResult> {
   const connection = await prepareCodexAttemptConnection({ params, options });
+  try {
+    await retryPendingCodexNativeCompaction(connection);
+  } catch (error) {
+    connection.params.abortSignal?.removeEventListener("abort", connection.abortFromUpstream);
+    throw error;
+  }
   const runtime = await prepareCodexAttemptRuntime(connection);
   const attemptTools = await prepareCodexAttemptTools(runtime);
   const attemptContext = await prepareCodexAttemptContext(runtime, attemptTools);

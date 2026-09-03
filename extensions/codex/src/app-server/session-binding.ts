@@ -922,6 +922,10 @@ export function createCodexAppServerBindingStore(
                 threadId: mutation.threadId,
               });
             }
+            if (active && binding.threadId !== active.binding.threadId) {
+              const { nativeCompactionRetryPending: _pending, ...replacement } = binding;
+              binding = replacement;
+            }
             return {
               result: true,
               next: {

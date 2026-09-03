@@ -724,11 +724,24 @@ async function compactCodexNativeThread(
               if (error instanceof CodexAppServerRpcError) {
                 // A server rejection proves native history was untouched; an
                 // ambiguous transport failure must never restore stale context.
+                const threadNotFound = isCodexThreadNotFoundError(error);
+                const rejectedAfterContextEngine =
+                  options.allowNonManualNativeRequest === true &&
+                  options.nativeCompactionRequest !== "required_preflight" &&
+                  !threadNotFound;
                 await options.bindingStore.mutate(bindingIdentity, {
                   kind: "set",
-                  binding,
+                  binding: {
+                    ...binding,
+                    nativeCompactionRetryPending:
+                      !threadNotFound &&
+                      (rejectedAfterContextEngine ||
+                        binding.nativeCompactionRetryPending === true)
+                        ? true
+                        : undefined,
+                  },
                 });
-                compactionRequestDefinitelyRejected = !isCodexThreadNotFoundError(error);
+                compactionRequestDefinitelyRejected = !threadNotFound;
               }
               // Retirement can acquire this same generation lease.
               return { started: true as const, accepted: false as const, error };
@@ -945,26 +958,31 @@ async function clearContextEngineProjectionBeforeNativeCompaction(params: {
   binding: CodexAppServerThreadBinding;
 }): Promise<void> {
   const contextEngineBinding = params.binding.contextEngine;
-  if (!contextEngineBinding?.projection) {
+  const previousProjection = contextEngineBinding?.projection;
+  if (!previousProjection && params.binding.nativeCompactionRetryPending !== true) {
     return;
   }
   // Native Codex compaction mutates the thread history outside the projection
-  // guard. Clear only the projection marker so the next turn reprojects context.
+  // guard. Clear the projection and retry marker before the request; only a
+  // definite server rejection may restore them.
   await params.bindingStore.mutate(params.identity, {
     kind: "patch",
     threadId: params.binding.threadId,
     patch: {
-      contextEngine: {
-        ...contextEngineBinding,
-        projection: undefined,
-      },
+      contextEngine: contextEngineBinding
+        ? { ...contextEngineBinding, projection: undefined }
+        : undefined,
+      nativeCompactionRetryPending: undefined,
     },
   });
+  if (!previousProjection) {
+    return;
+  }
   embeddedAgentLog.info("cleared codex context-engine projection before native compaction", {
     sessionId: params.sessionId,
     threadId: params.binding.threadId,
-    previousEpoch: contextEngineBinding.projection.epoch,
-    previousFingerprint: contextEngineBinding.projection.fingerprint,
+    previousEpoch: previousProjection.epoch,
+    previousFingerprint: previousProjection.fingerprint,
   });
 }
 
