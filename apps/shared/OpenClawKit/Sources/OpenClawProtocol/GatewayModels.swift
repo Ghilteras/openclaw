@@ -22841,6 +22841,7 @@ public struct UpdateHoldResult: Codable, Sendable {
 }
 
 public struct UpdateRunParams: Codable, Sendable {
+    public let requester: [String: AnyCodable]?
     public let sessionkey: String?
     public let deliverycontext: [String: AnyCodable]?
     public let note: String?
@@ -22850,6 +22851,7 @@ public struct UpdateRunParams: Codable, Sendable {
     public let target: [String: AnyCodable]?
 
     public init(
+        requester: [String: AnyCodable]? = nil,
         sessionkey: String? = nil,
         deliverycontext: [String: AnyCodable]? = nil,
         note: String? = nil,
@@ -22858,6 +22860,7 @@ public struct UpdateRunParams: Codable, Sendable {
         timeoutms: Int? = nil,
         target: [String: AnyCodable]? = nil)
     {
+        self.requester = requester
         self.sessionkey = sessionkey
         self.deliverycontext = deliverycontext
         self.note = note
@@ -22868,6 +22871,7 @@ public struct UpdateRunParams: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case requester
         case sessionkey = "sessionKey"
         case deliverycontext = "deliveryContext"
         case note
