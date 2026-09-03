@@ -116,6 +116,44 @@ describe("skill collection review boundary", () => {
     }
   });
 
+  it("records duplicate declared names independently by directory", async () => {
+    const testState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-skill-collection-review-duplicate-name-lifecycle-",
+    });
+    const skillsRoot = resolveWorkshopSkillsDir({}, "main", testState.env);
+    try {
+      await writeDeclaredSkill(skillsRoot, "first", "shared", "Shared procedure", "# First\n");
+      await writeDeclaredSkill(skillsRoot, "second", "shared", "Shared procedure", "# Second\n");
+      const result = await runSkillCollectionReviewForAgent({
+        config: { skills: { workshop: { autonomous: { mode: "auto" } } } },
+        agentId: "main",
+        job: createReviewJob("skill-review-duplicate-name-lifecycle"),
+        env: testState.env,
+        runTurn: async () => {
+          await fs.writeFile(
+            path.join(skillsRoot, "first", "SKILL.md"),
+            "---\nname: shared\ndescription: Shared procedure\n---\n\n# First updated\n",
+          );
+          await fs.rm(path.join(skillsRoot, "second"), { recursive: true });
+          return { status: "ok", summary: "reviewed", outputText: "DROP shared: duplicate" };
+        },
+      });
+
+      expect(result.status).toBe("ok");
+      expect(listSkillCollectionReviewOutcomes("main", { env: testState.env })[0]).toMatchObject({
+        kept: [],
+        written: ["shared"],
+        dropped: [{ name: "shared", reason: "duplicate" }],
+      });
+      expect(
+        dispatchCommittedSkillChangeBestEffort.mock.calls.map(([change]) => change.action),
+      ).toEqual(["updated", "removed"]);
+    } finally {
+      await testState.cleanup();
+    }
+  });
+
   it("restores an existing skill when a new support file has critical content", async () => {
     const testState = await createOpenClawTestState({
       layout: "state-only",

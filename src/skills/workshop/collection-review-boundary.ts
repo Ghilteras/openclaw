@@ -100,7 +100,7 @@ export async function runSkillCollectionReviewForAgent(params: {
         for (const skill of before) {
           assertCurrent(lease);
           beforeArtifacts.set(
-            skill.name,
+            path.relative(skillsRoot, skill.baseDir),
             await snapshotCommittedSkillArtifactBestEffort({
               skillDir: skill.baseDir,
               skillKey: skill.name,
@@ -179,26 +179,41 @@ export async function runSkillCollectionReviewForAgent(params: {
           }
         }
         const dropReasons = parseDropReasons(turnResult.outputText);
-        const beforeByName = new Map(before.map((skill) => [skill.name, skill]));
         assertCurrent(lease);
         const finalSkills = await resolveReviewSkills(params.config, params.agentId, params.env);
-        const finalByName = new Map(finalSkills.map((skill) => [skill.name, skill]));
+        const beforeByDir = new Map(
+          before.map((skill) => [path.relative(skillsRoot, skill.baseDir), skill]),
+        );
+        const finalByDir = new Map(
+          finalSkills.map((skill) => [path.relative(skillsRoot, skill.baseDir), skill]),
+        );
+        const dropReasonsByDir = new Map(
+          before.map((skill) => {
+            const relativeDir = path.relative(skillsRoot, skill.baseDir);
+            return [relativeDir, dropReasons.get(skill.name) ?? "no reason given"];
+          }),
+        );
         const result: SkillCollectionReviewResult = {
           backupId: backup.manifest.id,
           kept: before
-            .filter((skill) => finalByName.get(skill.name)?.treeHash === skill.treeHash)
+            .filter(
+              (skill) =>
+                finalByDir.get(path.relative(skillsRoot, skill.baseDir))?.treeHash ===
+                skill.treeHash,
+            )
             .map((skill) => skill.name),
           written: finalSkills
             .filter((skill) => {
-              const previous = beforeByName.get(skill.name);
+              const previous = beforeByDir.get(path.relative(skillsRoot, skill.baseDir));
               return !previous || previous.treeHash !== skill.treeHash;
             })
             .map((skill) => skill.name),
           dropped: before
-            .filter((skill) => !finalByName.has(skill.name))
+            .filter((skill) => !finalByDir.has(path.relative(skillsRoot, skill.baseDir)))
             .map((skill) => ({
               name: skill.name,
-              reason: dropReasons.get(skill.name) ?? "no reason given",
+              reason:
+                dropReasonsByDir.get(path.relative(skillsRoot, skill.baseDir)) ?? "no reason given",
             })),
         };
         assertCurrent(lease);
@@ -216,7 +231,7 @@ export async function runSkillCollectionReviewForAgent(params: {
         assertCurrent(lease);
         clearSkillUsageForRemovedSkills(
           before
-            .filter((skill) => !finalByName.has(skill.name))
+            .filter((skill) => !finalByDir.has(path.relative(skillsRoot, skill.baseDir)))
             .map((skill) => canonicalizePath(skill.filePath)),
           stateOptions,
         );
@@ -242,6 +257,7 @@ export async function runSkillCollectionReviewForAgent(params: {
                   before,
                   beforeArtifacts,
                   finalSkills,
+                  skillsRoot,
                   assertCurrent: () => assertCurrent(lease),
                 })
               : [],
@@ -259,6 +275,7 @@ export async function runSkillCollectionReviewForAgent(params: {
                 before,
                 beforeArtifacts,
                 finalSkills,
+                skillsRoot,
                 assertCurrent: () => assertCurrent(lease),
               })
             : [],
@@ -288,22 +305,27 @@ async function collectReviewChanges(params: {
   before: readonly (ReviewSkill & { treeHash: string })[];
   beforeArtifacts: ReadonlyMap<string, PluginHookSkillArtifact | undefined>;
   finalSkills: readonly (ReviewSkill & { treeHash: string })[];
+  skillsRoot: string;
   assertCurrent: () => void;
 }): Promise<ReviewChange[]> {
-  const beforeByName = new Map(params.before.map((skill) => [skill.name, skill]));
-  const finalByName = new Map(params.finalSkills.map((skill) => [skill.name, skill]));
-  const names = new Set([...beforeByName.keys(), ...finalByName.keys()]);
+  const beforeByDir = new Map(
+    params.before.map((skill) => [path.relative(params.skillsRoot, skill.baseDir), skill]),
+  );
+  const finalByDir = new Map(
+    params.finalSkills.map((skill) => [path.relative(params.skillsRoot, skill.baseDir), skill]),
+  );
+  const relativeDirs = new Set([...beforeByDir.keys(), ...finalByDir.keys()]);
   const changes: ReviewChange[] = [];
-  for (const name of [...names].toSorted()) {
-    const before = beforeByName.get(name);
-    const after = finalByName.get(name);
+  for (const relativeDir of [...relativeDirs].toSorted()) {
+    const before = beforeByDir.get(relativeDir);
+    const after = finalByDir.get(relativeDir);
     if (before && after && before.treeHash === after.treeHash) {
       continue;
     }
     params.assertCurrent();
     changes.push({
       action: before ? (after ? "updated" : "removed") : "created",
-      before: params.beforeArtifacts.get(name),
+      before: params.beforeArtifacts.get(relativeDir),
       after: after
         ? await snapshotCommittedSkillArtifactBestEffort({
             skillDir: after.baseDir,
