@@ -118,15 +118,19 @@ export class DraftRepositoryController {
       this.baseRefOverride = preference?.baseRef || undefined;
       this.worktreeNameValue = preference?.worktreeName ?? "";
     }
+    const baseRefChanged = (this.baseRefOverride ?? "") !== previousBaseRef;
     if (!this.matchesCurrentRepo()) {
       // Retire the old folder's RPC before it can consume the new preference.
       this.invalidate();
     } else if (this.repositoryValue.kind === "checking") {
-      if ((this.baseRefOverride ?? "") !== previousBaseRef) {
+      if (baseRefChanged) {
         this.load();
       }
     } else {
       this.adoptResolvedRepository(this.repositoryValue);
+      if (baseRefChanged) {
+        this.refreshAllocationStatus();
+      }
     }
   }
 

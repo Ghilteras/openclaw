@@ -288,6 +288,46 @@ describe("DraftPlaceState repository selection", () => {
     expect(state.worktreeName).toBe("my-checkout");
   });
 
+  it("refreshes allocation when delayed identity preferences replace the base ref", async () => {
+    const { state, request, readPreference } = createRepositoryFixture({ workspaceGit: true });
+    const savedBaseAllocation = createDeferred<WorktreesBranchesResult>();
+    request.mockImplementation(async (method, params) => {
+      if (method !== "worktrees.branches") {
+        return {};
+      }
+      if (params?.includeRepositoryStatus) {
+        return { repositoryStatus: "git", branches: [], defaultBranch: "main" };
+      }
+      return params?.baseRef === "saved-branch"
+        ? savedBaseAllocation.promise
+        : { branches: [], allocationStatus: "available" };
+    });
+
+    state.adoptAgentDefaults();
+    await vi.waitFor(() =>
+      expect(state.repository).toMatchObject({ kind: "git", allocationStatus: "available" }),
+    );
+
+    readPreference.mockReturnValue({ worktree: true, baseRef: "saved-branch" });
+    state.adoptAgentDefaults();
+
+    expect(state.baseRef).toBe("saved-branch");
+    expect(state.repository).toMatchObject({ kind: "git", allocationStatus: "unavailable" });
+    expect(request).toHaveBeenLastCalledWith("worktrees.branches", {
+      repoRoot: "/workspace",
+      includeAllocationStatus: true,
+      baseRef: "saved-branch",
+    });
+
+    savedBaseAllocation.resolve({ branches: [], allocationStatus: "insufficient-space" });
+    await vi.waitFor(() =>
+      expect(state.repository).toMatchObject({
+        kind: "git",
+        allocationStatus: "insufficient-space",
+      }),
+    );
+  });
+
   it.each([false, true])(
     "adopts a preference arriving during repository discovery without overwriting user edits (%s)",
     async (edited) => {
