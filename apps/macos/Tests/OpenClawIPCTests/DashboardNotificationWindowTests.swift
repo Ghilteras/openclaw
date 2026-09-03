@@ -460,13 +460,14 @@ extension DashboardWindowOwnershipTests {
 
     private func waitForQueuedToggles(_ manager: DashboardManager) async throws -> DashboardWindowController {
         let deadline = ContinuousClock.now + .seconds(5)
-        while ContinuousClock.now < deadline {
+        while true {
             if let controller = manager._testController(), controller.isWindowOpen,
                let commands = try? await controller.webView.evaluateJavaScript("window.commandEvents") as? [String],
                commands.filter({ $0 == "toggle" }).count == 2
             {
                 return controller
             }
+            guard ContinuousClock.now < deadline else { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         throw URLError(.timedOut)
@@ -480,15 +481,17 @@ extension DashboardWindowOwnershipTests {
 
     private func waitForDashboard(_ controller: DashboardWindowController, path: String) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
-        while ContinuousClock.now < deadline {
+        while true {
             if controller.canDeliverNativeCommands, !controller.webView.isLoading,
                controller.webView.url?.path == path
             {
                 return
             }
+            guard ContinuousClock.now < deadline else { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(controller.canDeliverNativeCommands)
+        #expect(!controller.webView.isLoading)
         #expect(controller.webView.url?.path == path)
         throw URLError(.timedOut)
     }
