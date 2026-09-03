@@ -114,6 +114,7 @@ async function withRewriteFixture(
     rewrite: (event: unknown, seq?: number) => void;
     scope: { agentId: string; sessionId: string; sessionKey: string; env: NodeJS.ProcessEnv };
   }) => void | Promise<void>,
+  events: readonly unknown[] = rewriteEvents,
 ) {
   await withOpenClawTestState({ label: "exact-rewrite" }, async (state) => {
     const scope = {
@@ -125,7 +126,7 @@ async function withRewriteFixture(
     const owner = openOpenClawAgentDatabase(scope);
     const { db } = owner;
     runOpenClawAgentWriteTransaction((database) => {
-      appendTranscriptEventsInTransaction(database, scope, rewriteEvents);
+      appendTranscriptEventsInTransaction(database, scope, events);
     }, scope);
     const snapshot = () => ({
       raw: db
@@ -397,6 +398,163 @@ describe("SQLite exact transcript rewrite", () => {
 });
 
 describe("SQLite exact transcript suffix replacement", () => {
+  it("replaces a retained suffix without routing rows through forward indexing", async () => {
+    await withRewriteFixture(({ db, snapshot, scope }) => {
+      const retainedAnswer = {
+        ...rewriteEvents[2],
+        parentId: "root",
+      };
+      runOpenClawAgentWriteTransaction((database) => {
+        replaceSqliteTranscriptSuffixInTransaction(database, scope, rewriteEvents, [
+          rewriteEvents[0],
+          retainedAnswer,
+        ]);
+      }, scope);
+
+      expect(snapshot()).toMatchObject({
+        raw: [expect.objectContaining({ seq: 0 }), expect.objectContaining({ seq: 1 })],
+        identities: [expect.objectContaining({ seq: 0 }), expect.objectContaining({ seq: 1 })],
+        active: [
+          expect.objectContaining({ event_seq: 0 }),
+          expect.objectContaining({ event_seq: 1 }),
+        ],
+        search: [expect.objectContaining({ message_id: "answer", text: "answer" })],
+      });
+      expect(sessionTranscriptIndexNeedsReconcile(db, scope.sessionId)).toBe(false);
+    });
+  });
+
+  it("preserves the established idempotency owner across retained suffix rows", async () => {
+    const duplicateKeyEvents = [
+      rewriteEvents[0],
+      {
+        type: "message",
+        id: "first",
+        parentId: "root",
+        message: { role: "assistant", content: "first", idempotencyKey: "retry" },
+      },
+      { type: "custom", id: "removed", parentId: "first" },
+      {
+        type: "message",
+        id: "owner",
+        parentId: "removed",
+        message: { role: "assistant", content: "owner", idempotencyKey: "retry" },
+      },
+    ] as const;
+    await withRewriteFixture(({ db, scope }) => {
+      db.prepare(
+        "UPDATE transcript_events SET created_at = CASE seq WHEN 1 THEN 101 WHEN 3 THEN 303 ELSE created_at END WHERE session_id = ?",
+      ).run(scope.sessionId);
+      db.prepare(
+        "UPDATE transcript_event_identities SET message_idempotency_key = NULL, created_at = 101 WHERE session_id = ? AND event_id = ?",
+      ).run(scope.sessionId, "first");
+      db.prepare(
+        "UPDATE transcript_event_identities SET message_idempotency_key = ?, created_at = 303 WHERE session_id = ? AND event_id = ?",
+      ).run("retry", scope.sessionId, "owner");
+
+      runOpenClawAgentWriteTransaction((database) => {
+        replaceSqliteTranscriptSuffixInTransaction(database, scope, duplicateKeyEvents, [
+          duplicateKeyEvents[0],
+          duplicateKeyEvents[1],
+          { ...duplicateKeyEvents[3], parentId: "first" },
+        ]);
+      }, scope);
+
+      expect(
+        db
+          .prepare(
+            "SELECT event_id, message_idempotency_key, created_at FROM transcript_event_identities WHERE session_id = ? AND event_id IN ('first', 'owner') ORDER BY event_id",
+          )
+          .all(scope.sessionId),
+      ).toEqual([
+        { event_id: "first", message_idempotency_key: null, created_at: 101 },
+        { event_id: "owner", message_idempotency_key: "retry", created_at: 303 },
+      ]);
+      expect(
+        db
+          .prepare(
+            "SELECT seq, created_at FROM transcript_events WHERE session_id = ? AND seq IN (1, 2) ORDER BY seq",
+          )
+          .all(scope.sessionId),
+      ).toEqual([
+        { seq: 1, created_at: 101 },
+        { seq: 2, created_at: 303 },
+      ]);
+    }, duplicateKeyEvents);
+  });
+
+  it("reserves a retained idempotency owner when a new duplicate precedes it", async () => {
+    const duplicateKeyEvents = [
+      rewriteEvents[0],
+      { type: "custom", id: "removed", parentId: "root" },
+      {
+        type: "message",
+        id: "owner",
+        parentId: "removed",
+        message: { role: "assistant", content: "owner", idempotencyKey: "retry" },
+      },
+    ] as const;
+    await withRewriteFixture(({ db, scope }) => {
+      runOpenClawAgentWriteTransaction((database) => {
+        replaceSqliteTranscriptSuffixInTransaction(database, scope, duplicateKeyEvents, [
+          duplicateKeyEvents[0],
+          {
+            type: "message",
+            id: "new",
+            parentId: "root",
+            message: { role: "assistant", content: "new", idempotencyKey: "retry" },
+          },
+          { ...duplicateKeyEvents[2], parentId: "new" },
+        ]);
+      }, scope);
+
+      expect(
+        db
+          .prepare(
+            "SELECT event_id, message_idempotency_key FROM transcript_event_identities WHERE session_id = ? AND event_id IN ('new', 'owner') ORDER BY event_id",
+          )
+          .all(scope.sessionId),
+      ).toEqual([
+        { event_id: "new", message_idempotency_key: null },
+        { event_id: "owner", message_idempotency_key: "retry" },
+      ]);
+    }, duplicateKeyEvents);
+  });
+
+  it("promotes a retained duplicate when its prior idempotency owner is removed", async () => {
+    const duplicateKeyEvents = [
+      rewriteEvents[0],
+      {
+        type: "message",
+        id: "owner",
+        parentId: "root",
+        message: { role: "assistant", content: "owner", idempotencyKey: "retry" },
+      },
+      {
+        type: "message",
+        id: "duplicate",
+        parentId: "owner",
+        message: { role: "assistant", content: "duplicate", idempotencyKey: "retry" },
+      },
+    ] as const;
+    await withRewriteFixture(({ db, scope }) => {
+      runOpenClawAgentWriteTransaction((database) => {
+        replaceSqliteTranscriptSuffixInTransaction(database, scope, duplicateKeyEvents, [
+          duplicateKeyEvents[0],
+          { ...duplicateKeyEvents[2], parentId: "root" },
+        ]);
+      }, scope);
+
+      expect(
+        db
+          .prepare(
+            "SELECT event_id, message_idempotency_key FROM transcript_event_identities WHERE session_id = ? AND event_id = ?",
+          )
+          .get(scope.sessionId, "duplicate"),
+      ).toEqual({ event_id: "duplicate", message_idempotency_key: "retry" });
+    }, duplicateKeyEvents);
+  });
+
   it("preserves generation while updating raw, identity, active, and FTS rows", async () => {
     await withRewriteFixture(({ db, snapshot, scope }) => {
       const before = snapshot();

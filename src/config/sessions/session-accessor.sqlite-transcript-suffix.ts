@@ -1,12 +1,15 @@
 import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
 import type { OpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import type { TranscriptEvent } from "./session-accessor.sqlite-contract.js";
-import { readTranscriptStorageRows } from "./session-accessor.sqlite-read.js";
+import {
+  readTranscriptEventId,
+  readTranscriptStorageRows,
+} from "./session-accessor.sqlite-read.js";
 import { getSessionKysely, type ResolvedTranscriptScope } from "./session-accessor.sqlite-scope.js";
 import { touchTranscriptMutationInTransaction } from "./session-accessor.sqlite-transcript-state.js";
 import {
   canonicalizeTranscriptEventMedia,
-  appendTranscriptEventsInTransaction,
+  insertTranscriptRowsWithoutProjectionInTransaction,
   readEventTimestamp,
   scheduleTranscriptProjectionReconcile,
 } from "./session-accessor.sqlite-transcript-store.js";
@@ -120,15 +123,47 @@ export function replaceSqliteTranscriptSuffixInTransaction(
     storedRows.map((row) => row.seq),
     storedRows.map((row) => row.createdAt),
   );
-  const nextCreatedAt = next.map((event, index) =>
-    index < prefixLength
-      ? (storedRows[index]?.createdAt ?? Date.now())
-      : (readEventTimestamp(event) ?? Date.now()),
+  const storedCreatedAtByEventId = new Map(
+    expected.flatMap((event, index) => {
+      const eventId = readTranscriptEventId(event);
+      const createdAt = storedRows[index]?.createdAt;
+      return eventId && createdAt !== undefined ? [[eventId, createdAt] as const] : [];
+    }),
   );
+  const nextCreatedAt = next.map((event, index) => {
+    if (index < prefixLength) {
+      return storedRows[index]?.createdAt ?? Date.now();
+    }
+    const eventId = readTranscriptEventId(event);
+    return (
+      (eventId ? storedCreatedAtByEventId.get(eventId) : undefined) ??
+      readEventTimestamp(event) ??
+      Date.now()
+    );
+  });
   const nextProjection = prepareTranscriptIndexProjection(next, nextSeqByIndex, nextCreatedAt);
 
-  // Replace raw and identity suffix rows without touching generation or mutation time yet.
+  // Preserve the suffix's established retry owner before replacing identity rows.
   const db = getSessionKysely(database.db);
+  const suffixIdentityKeys = new Map(
+    executeSqliteQuerySync(
+      database.db,
+      db
+        .selectFrom("transcript_event_identities")
+        .select(["event_id", "message_idempotency_key"])
+        .where("session_id", "=", resolved.sessionId)
+        .where("seq", ">=", startSeq),
+    ).rows.map((row) => [row.event_id, row.message_idempotency_key]),
+  );
+  const retainedIdempotencyKeys = new Set(
+    next.slice(prefixLength).flatMap((event) => {
+      const eventId = readTranscriptEventId(event);
+      const key = eventId ? suffixIdentityKeys.get(eventId) : undefined;
+      return key ? [key] : [];
+    }),
+  );
+
+  // Replace raw and identity suffix rows without touching generation or mutation time yet.
   executeSqliteQuerySync(
     database.db,
     db
@@ -143,10 +178,26 @@ export function replaceSqliteTranscriptSuffixInTransaction(
       .where("session_id", "=", resolved.sessionId)
       .where("seq", ">=", startSeq),
   );
-  appendTranscriptEventsInTransaction(database, resolved, next.slice(prefixLength), {
-    scheduleProjectionReconcile: false,
-    touchMutation: false,
-  });
+  insertTranscriptRowsWithoutProjectionInTransaction(
+    database,
+    resolved.sessionId,
+    next.slice(prefixLength).map((event, index) => {
+      const seq = startSeq + index;
+      const createdAt = nextCreatedAt[prefixLength + index] ?? Date.now();
+      const eventId = readTranscriptEventId(event);
+      const retainedIdempotencyKey = eventId ? suffixIdentityKeys.get(eventId) : undefined;
+      if (retainedIdempotencyKey) {
+        return {
+          event,
+          seq,
+          createdAt,
+          messageIdempotencyKey: retainedIdempotencyKey,
+        };
+      }
+      return { event, seq, createdAt };
+    }),
+    retainedIdempotencyKeys,
+  );
 
   // Repair healthy derived rows inline; preserve dirty-state ownership for the worker.
   if (projectionIsHealthy) {

@@ -112,6 +112,40 @@ function createTranscriptIdentityInserter(
   );
 }
 
+/** Inserts exact transcript rows without mutating the forward-only projection. */
+export function insertTranscriptRowsWithoutProjectionInTransaction(
+  database: OpenClawAgentDatabase,
+  sessionId: string,
+  rows: readonly {
+    event: TranscriptEvent;
+    seq: number;
+    createdAt: number;
+    messageIdempotencyKey?: string | null;
+  }[],
+  reservedMessageIdempotencyKeys: ReadonlySet<string> = new Set(),
+): void {
+  const insertEvent = createTranscriptEventInserter(database, sessionId);
+  const insertIdentity = createTranscriptIdentityInserter(database, sessionId, false);
+  for (const row of rows) {
+    const event = canonicalizeTranscriptEventMedia(row.event);
+    insertEvent({ seq: row.seq, eventJson: JSON.stringify(event), createdAt: row.createdAt });
+    const identity = readTranscriptEventIdentity(event);
+    if (!identity) {
+      continue;
+    }
+    if ("messageIdempotencyKey" in row) {
+      identity.messageIdempotencyKey = row.messageIdempotencyKey ?? null;
+    } else if (
+      identity.messageIdempotencyKey &&
+      (reservedMessageIdempotencyKeys.has(identity.messageIdempotencyKey) ||
+        readIdempotencyKeyOwner(database, sessionId, identity.messageIdempotencyKey))
+    ) {
+      identity.messageIdempotencyKey = null;
+    }
+    insertIdentity({ ...identity, seq: row.seq, createdAt: row.createdAt });
+  }
+}
+
 export function appendTranscriptEventInTransaction(
   database: OpenClawAgentDatabase,
   scope: ResolvedTranscriptScope,
