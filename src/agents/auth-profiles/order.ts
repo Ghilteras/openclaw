@@ -78,7 +78,10 @@ function listProfilesCompatibleWithAuthProvider(params: {
   provider: string;
   providerAuthKey: string;
 }): string[] {
-  if (params.providerAuthKey !== OPENAI_PROVIDER_ID) {
+  if (
+    params.providerAuthKey !== OPENAI_PROVIDER_ID &&
+    params.providerAuthKey === normalizeProviderId(params.provider)
+  ) {
     return listProfilesForProvider(params.store, params.provider);
   }
   return Object.entries(params.store.profiles)
