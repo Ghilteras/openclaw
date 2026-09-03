@@ -723,6 +723,262 @@ jobs:
           output_dir=".artifacts/qa-e2e/telegram-live-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           scenario_args=()
 
+          if [[ "${INPUT_SCENARIO}" == "issue-137037-model-reload" ]]; then
+            proof_dir="${output_dir}/issue-137037"
+            mkdir -p "${proof_dir}"
+
+            cat >"${proof_dir}/mock-catalog-server.mjs" <<'NODE'
+          import fs from "node:fs";
+          import http from "node:http";
+          import path from "node:path";
+          import { setTimeout as delay } from "node:timers/promises";
+          import { fileURLToPath } from "node:url";
+
+          const root = path.dirname(fileURLToPath(import.meta.url));
+          const controlPath = path.join(root, "catalog-control.json");
+          const enteredPath = path.join(root, "catalog-entered");
+          const countPath = path.join(root, "catalog-count");
+          const port = Number(process.env.MOCK_PORT);
+          const requestLog = process.env.MOCK_REQUEST_LOG;
+
+          function readHold() {
+            try {
+              return JSON.parse(fs.readFileSync(controlPath, "utf8")).hold === true;
+            } catch {
+              return false;
+            }
+          }
+
+          function writeJson(response, status, body) {
+            response.writeHead(status, {
+              "cache-control": "no-store",
+              "content-type": "application/json",
+            });
+            response.end(JSON.stringify(body));
+          }
+
+          const server = http.createServer((request, response) => {
+            void (async () => {
+              const url = new URL(request.url ?? "/", "http://127.0.0.1");
+              if (request.method === "GET" && url.pathname === "/health") {
+                writeJson(response, 200, { ok: true });
+                return;
+              }
+              if (request.method === "GET" && url.pathname === "/v1/models") {
+                let count = 0;
+                try {
+                  count = Number.parseInt(fs.readFileSync(countPath, "utf8"), 10) || 0;
+                } catch {}
+                fs.writeFileSync(countPath, `${count + 1}\n`);
+                fs.writeFileSync(enteredPath, `${Date.now()}\n`);
+                while (readHold()) {
+                  await delay(10);
+                }
+                writeJson(response, 200, {
+                  object: "list",
+                  data: [{ id: "gpt-5.6-luna", object: "model", owned_by: "openclaw-e2e" }],
+                });
+                return;
+              }
+              if (requestLog) {
+                fs.appendFileSync(
+                  requestLog,
+                  `${JSON.stringify({ method: request.method, pathname: url.pathname })}\n`,
+                );
+              }
+              writeJson(response, 500, {
+                error: { message: "unexpected model-generation request" },
+              });
+            })().catch((error) => {
+              writeJson(response, 500, { error: { message: String(error) } });
+            });
+          });
+
+          server.listen(port, "127.0.0.1", () => {
+            console.log(`mock-openai listening on http://127.0.0.1:${port}`);
+          });
+          for (const signal of ["SIGINT", "SIGTERM"]) {
+            process.on(signal, () => server.close(() => process.exit(0)));
+          }
+          NODE
+
+            cat >"${proof_dir}/catalog-control.mjs" <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          import { setTimeout as delay } from "node:timers/promises";
+          import { fileURLToPath } from "node:url";
+
+          const command = process.argv[2];
+          const root = path.dirname(fileURLToPath(import.meta.url));
+          const controlPath = path.join(root, "catalog-control.json");
+          const enteredPath = path.join(root, "catalog-entered");
+          const countPath = path.join(root, "catalog-count");
+          const configPath = process.env.OPENCLAW_CONFIG_PATH;
+          if (!configPath) throw new Error("OPENCLAW_CONFIG_PATH is required");
+
+          const writeControl = (hold) =>
+            fs.writeFileSync(controlPath, `${JSON.stringify({ hold })}\n`);
+          const waitFor = async (predicate, label, timeoutMs) => {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+              if (predicate()) return;
+              await delay(10);
+            }
+            throw new Error(`timed out waiting for ${label}`);
+          };
+          const patchConfig = async (mutator, timeoutMs) => {
+            const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+            const logPath = config.logging?.file;
+            const logStart = logPath && fs.existsSync(logPath) ? fs.statSync(logPath).size : 0;
+            mutator(config);
+            const tempPath = `${configPath}.issue-137037.tmp`;
+            fs.writeFileSync(tempPath, `${JSON.stringify(config, null, 2)}\n`);
+            fs.renameSync(tempPath, configPath);
+            await waitFor(
+              () => {
+                if (!logPath || !fs.existsSync(logPath)) return false;
+                const text = fs.readFileSync(logPath, "utf8").slice(logStart);
+                return /config (?:hot reload|change) applied/u.test(text);
+              },
+              "Gateway config reload",
+              timeoutMs,
+            );
+          };
+
+          if (command === "arm") {
+            fs.rmSync(enteredPath, { force: true });
+            fs.writeFileSync(countPath, "0\n");
+            writeControl(true);
+            await patchConfig((config) => {
+              config.agents.defaults.modelPolicy = { allow: ["openai/*"] };
+            }, 1_500);
+          } else if (command === "reload-release") {
+            await waitFor(() => fs.existsSync(enteredPath), "held model catalog request", 2_000);
+            let reloadError;
+            try {
+              await patchConfig((config) => {
+                const replacement = {
+                  id: "gpt-5.6-luna",
+                  name: "GPT-5.6 Luna",
+                  api: "openai-responses",
+                  contextWindow: 128000,
+                };
+                config.models.providers.openai.models = [
+                  ...config.models.providers.openai.models.filter(
+                    (model) => model.id !== replacement.id,
+                  ),
+                  replacement,
+                ];
+                config.agents.defaults.model = { primary: "openai/gpt-5.6-luna" };
+                config.agents.defaults.models["openai/gpt-5.6-luna"] = {};
+                config.agents.entries.main.model = { primary: "openai/gpt-5.6-luna" };
+              }, 600);
+            } catch (error) {
+              reloadError = error;
+            } finally {
+              writeControl(false);
+            }
+            if (reloadError) throw reloadError;
+          } else {
+            throw new Error(`unknown command: ${command}`);
+          }
+          NODE
+
+            cat >"${proof_dir}/scenario.json" <<JSON
+          {
+            "actions": [
+              { "type": "send", "atMs": 0, "text": "/model" },
+              {
+                "type": "command",
+                "atMs": 1000,
+                "argv": ["node", "${proof_dir}/catalog-control.mjs", "arm"],
+                "cwd": "repo",
+                "timeoutMs": 5000
+              },
+              {
+                "type": "click",
+                "atMs": 2200,
+                "messageText": "Current:",
+                "buttonText": "Browse providers",
+                "timeoutMs": 5000
+              },
+              {
+                "type": "command",
+                "atMs": 2250,
+                "argv": ["node", "${proof_dir}/catalog-control.mjs", "reload-release"],
+                "cwd": "repo",
+                "timeoutMs": 5000
+              }
+            ],
+            "health": { "intervalMs": 100, "timeoutMs": 1000 }
+          }
+          JSON
+
+            export TELEGRAM_E2E_SKILL_DIR="$PWD/.agents/skills/telegram-e2e-userbot"
+            node "${TELEGRAM_E2E_SKILL_DIR}/scripts/telegram-test-doctor.mjs" \
+              >"${proof_dir}/doctor.json"
+            E2E_MOCK_SERVER_PATH="${proof_dir}/mock-catalog-server.mjs" \
+              node "${TELEGRAM_E2E_SKILL_DIR}/scripts/run-mock-sut-user-e2e.mjs" \
+                --gateway-port 19931 \
+                --mock-port 19934 \
+                --dm \
+                --timeout-ms 15000 \
+                --scenario "${proof_dir}/scenario.json" \
+                --record "${proof_dir}/events.ndjson" \
+                --output "${proof_dir}/summary.json" \
+              | tee "${proof_dir}/runner.log"
+
+            PROOF_DIR="${proof_dir}" node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+
+          const root = process.env.PROOF_DIR;
+          const summary = JSON.parse(fs.readFileSync(path.join(root, "summary.json"), "utf8"));
+          if (summary.recordingComplete !== true) throw new Error("recording did not complete");
+          const texts = summary.sutRevisionTexts ?? [];
+          if (!texts.some((text) => text.includes("Current:"))) {
+            throw new Error("initial model summary was not observed");
+          }
+          if (!texts.some((text) => text.includes("Select a provider:"))) {
+            throw new Error("replacement provider menu edit was not observed");
+          }
+          if (texts.some((text) => /generic error|error occurred/iu.test(text))) {
+            throw new Error("Telegram displayed a generic error");
+          }
+          const revisions = (summary.timeline ?? []).filter(
+            (event) => event.isSut === true && ["message", "edit"].includes(event.kind),
+          );
+          const counts = new Map();
+          for (const event of revisions) {
+            if (event.botApiMessageId == null) continue;
+            counts.set(event.botApiMessageId, (counts.get(event.botApiMessageId) ?? 0) + 1);
+          }
+          if (![...counts.values()].some((count) => count >= 2)) {
+            throw new Error("model menu was not edited in place");
+          }
+          if ((summary.scenario?.gatewayActions ?? []).some((action) => action.status !== "completed")) {
+            throw new Error("one or more scenario actions failed");
+          }
+          const catalogCount = Number.parseInt(
+            fs.readFileSync(path.join(root, "catalog-count"), "utf8"),
+            10,
+          );
+          if (catalogCount < 2) throw new Error("replacement catalog was not reacquired");
+          const requests = fs.readFileSync(path.join(root, "mock-openai-requests.ndjson"), "utf8");
+          if (requests.trim()) throw new Error("native command unexpectedly invoked the model");
+          const gatewayLog = fs.readFileSync(path.join(root, "gateway.log"), "utf8");
+          if (!/config (?:hot reload|change) applied/u.test(gatewayLog)) {
+            throw new Error("Gateway reload was not observed");
+          }
+          NODE
+
+            if ss -ltn | grep -Eq ':(19931|19934)[[:space:]]'; then
+              echo "Telegram proof ports remain in use." >&2
+              exit 1
+            fi
+            exit 0
+          fi
+
           if [[ -n "${INPUT_SCENARIO// }" ]]; then
             IFS=',' read -r -a raw_scenarios <<<"${INPUT_SCENARIO}"
             for raw in "${raw_scenarios[@]}"; do
