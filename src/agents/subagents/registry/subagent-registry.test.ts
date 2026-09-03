@@ -1317,6 +1317,64 @@ describe("subagent registry seam flow", () => {
     expect(mocks.restoreSubagentRunsFromDisk).toHaveBeenCalledOnce();
   });
 
+  it("replays a terminal task projection after registry restore", async () => {
+    resetTaskRegistryForTests({ persist: false });
+    resetTaskFlowRegistryForTests({ persist: false });
+    try {
+      const startedAt = Date.now() - 2_000;
+      const endedAt = Date.now() - 1_000;
+      const runId = "run-restored-task-projection";
+      const childSessionKey = "agent:main:subagent:restored-task-projection";
+      mocks.loadSessionStore.mockReturnValue(
+        createSessionStore({ lifecycleRevision: "revision-child" }, childSessionKey),
+      );
+      expect(
+        createRunningTaskRun(
+          makeRunningTaskParams({
+            runId,
+            childSessionKey,
+            task: "restore terminal task projection",
+            startedAt,
+          }),
+        ),
+      ).not.toBeNull();
+      mocks.restoreSubagentRunsFromDisk.mockImplementation(((params: {
+        runs: Map<string, SubagentRunRecord>;
+      }) => {
+        params.runs.set(
+          runId,
+          createSubagentRunRecord({
+            runId,
+            childSessionKey,
+            task: "restore terminal task projection",
+            cleanup: "keep",
+            createdAt: startedAt,
+            startedAt,
+            endedAt,
+            endedReason: SUBAGENT_ENDED_REASON_COMPLETE,
+            outcome: { status: "ok" },
+            completion: { required: false, resultText: "restored result" },
+            cleanupCompletedAt: endedAt,
+          }),
+        );
+        return 1;
+      }) as never);
+
+      hydrateAndActivateRegistry();
+
+      await waitForFast(() =>
+        expect(findTaskByRunIdForStatus(runId)).toMatchObject({
+          status: "succeeded",
+          endedAt,
+          progressSummary: "restored result",
+        }),
+      );
+    } finally {
+      resetTaskRegistryForTests({ persist: false });
+      resetTaskFlowRegistryForTests({ persist: false });
+    }
+  });
+
   it("does not double-run reentrant registry restore calls", () => {
     mocks.restoreSubagentRunsFromDisk.mockImplementation(() => {
       mod.initSubagentRegistry();

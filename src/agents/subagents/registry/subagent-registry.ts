@@ -26,6 +26,7 @@ import {
   type SubagentRegistryDeps,
 } from "./subagent-registry-deps.js";
 import { ANNOUNCE_EXPIRY_MS, reconcileOrphanedRun } from "./subagent-registry-helpers.js";
+import { safeFinalizeSubagentTaskRun } from "./subagent-registry-lifecycle-delivery.js";
 import { SubagentLifecycleController } from "./subagent-registry-lifecycle.js";
 import { createSubagentRegistryListener } from "./subagent-registry-listener.js";
 import {
@@ -238,6 +239,14 @@ export function resumeSubagentRun(runId: string) {
     // reads session/config state. Do not prune or resume it through announce.
     resumedRuns.add(runId);
     return;
+  }
+  if (entry.execution.outcome) {
+    // The child result can reach disk before its task projection. Replay that
+    // idempotent projection before terminal cleanup exits during restoration.
+    safeFinalizeSubagentTaskRun(subagentLifecycleController.options, {
+      entry,
+      outcome: entry.execution.outcome,
+    });
   }
   const yieldedWakeWaitingForDelivery =
     entry.requesterSettleWake?.requesterYieldBatch === true &&
