@@ -42,7 +42,6 @@ describe("printModelTable", () => {
         local: false,
         available: true,
         tags: [],
-        missing: false,
       },
     ];
 
@@ -64,7 +63,6 @@ describe("printModelTable", () => {
         local: false,
         available: true,
         tags: [],
-        missing: false,
       },
     ];
 
@@ -90,7 +88,6 @@ describe("printModelTable", () => {
         local: false,
         available: true,
         tags: [],
-        missing: false,
       },
     ];
 

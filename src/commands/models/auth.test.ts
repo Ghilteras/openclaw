@@ -2,13 +2,14 @@
 
 import { MAX_DATE_TIMESTAMP_MS } from "@openclaw/normalization-core/number-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { createWizardPrompter } from "../../../test/helpers/wizard-prompter.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
   getRuntimeConfigWriteApplication,
   type RuntimeConfigWriteApplicationStatus,
 } from "../../config/runtime-write-application.js";
-import type { ProviderPlugin } from "../../plugins/types.js";
+import type { ProviderAuthMethod, ProviderPlugin } from "../../plugins/types.js";
 import type { RuntimeEnv } from "../../runtime.js";
 
 type AuthRunCall = {
@@ -374,7 +375,7 @@ describe("modelsAuthLoginCommand", () => {
   let restoreStdin: (() => void) | null = null;
   let currentConfig: OpenClawConfig;
   let lastUpdatedConfig: OpenClawConfig | null;
-  let runProviderAuth: ReturnType<typeof vi.fn>;
+  let runProviderAuth: Mock<ProviderAuthMethod["run"]>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -431,7 +432,7 @@ describe("modelsAuthLoginCommand", () => {
       note: vi.fn(async () => {}),
       select: vi.fn(),
     });
-    runProviderAuth = vi.fn().mockResolvedValue({
+    runProviderAuth = vi.fn<ProviderAuthMethod["run"]>().mockResolvedValue({
       profiles: [
         {
           profileId: "openai:user@example.com",
@@ -1184,10 +1185,7 @@ describe("modelsAuthLoginCommand", () => {
         },
       ],
     });
-    const prompter = {
-      note: vi.fn(async () => {}),
-      select: vi.fn(),
-    };
+    const prompter = createWizardPrompter({ note: vi.fn(async () => {}) });
     mocks.resolvePluginProvidersCore.mockReturnValue([
       {
         id: "openai",

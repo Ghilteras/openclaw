@@ -2074,7 +2074,6 @@ describe("normalizeCompatibilityConfigValues", () => {
           {
             id: "worker",
             model: legacy("claude-cli", "claude-opus-4-7"),
-            imageModel: legacy("google-gemini-cli", "gemini-3-pro-image-preview"),
             heartbeat: { model: legacy("codex", "gpt-5.5") },
             tts: { summaryModel: legacy("codex-cli", "gpt-5.4") },
           },

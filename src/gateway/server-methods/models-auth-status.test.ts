@@ -59,6 +59,7 @@ const mocks = vi.hoisted(() => ({
   refreshActiveProviderAuthRuntimeSnapshot: vi.fn(async () => false),
   clearCurrentProviderAuthState: vi.fn(),
   warmCurrentProviderAuthStateOffMainThread: vi.fn(async (_cfg: unknown) => {}),
+  refreshPreparedModelRuntimeSnapshots: vi.fn(async () => {}),
   loadDeferredCatalog: vi.fn(),
   readPreparedCatalog: vi.fn(),
   buildAuthHealthSummary: vi.fn<BuildAuthHealthSummary>(
@@ -123,6 +124,11 @@ vi.mock("../../secrets/runtime.js", () => ({
 vi.mock("../../agents/model-provider-auth.js", () => ({
   clearCurrentProviderAuthState: mocks.clearCurrentProviderAuthState,
   warmCurrentProviderAuthStateOffMainThread: mocks.warmCurrentProviderAuthStateOffMainThread,
+}));
+
+vi.mock("../../agents/prepared-model-runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../agents/prepared-model-runtime.js")>()),
+  refreshPreparedModelRuntimeSnapshots: mocks.refreshPreparedModelRuntimeSnapshots,
 }));
 
 vi.mock("../server-model-catalog-auth.js", () => ({
@@ -444,6 +450,7 @@ describe("models.authRefresh", () => {
   beforeEach(() => {
     resetAuthStatusMocks();
     mocks.clearCurrentProviderAuthState.mockClear();
+    mocks.refreshPreparedModelRuntimeSnapshots.mockClear();
   });
 
   it.each([{ operation: "login" }, { operation: "logout" }, { operation: "update" }] as const)(
@@ -459,6 +466,11 @@ describe("models.authRefresh", () => {
       expect(firstRespondCall(options)).toEqual([true, { refreshed: true }, undefined]);
       expect(mocks.refreshActiveProviderAuthRuntimeSnapshot).toHaveBeenCalledOnce();
       expect(mocks.clearCurrentProviderAuthState).toHaveBeenCalledOnce();
+      // Ordinary reads never wait on discovery, so the agent owner republishes before success.
+      expect(mocks.refreshPreparedModelRuntimeSnapshots).toHaveBeenCalledExactlyOnceWith(
+        expect.anything(),
+        { allowGatewaySubagentBinding: true, agentIds: new Set(["main"]) },
+      );
       expect(loadGatewayModelCatalogSnapshot).not.toHaveBeenCalled();
     },
   );

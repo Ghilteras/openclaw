@@ -8,6 +8,7 @@ import {
   clearCurrentProviderAuthState,
   warmCurrentProviderAuthStateOffMainThread,
 } from "../../agents/model-provider-auth.js";
+import { refreshPreparedModelRuntimeSnapshots } from "../../agents/prepared-model-runtime.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { refreshActiveProviderAuthRuntimeSnapshot } from "../../secrets/runtime.js";
 import { formatForLog } from "../ws-log.js";
@@ -37,14 +38,22 @@ export function invalidateModelAuthStatusCache(): void {
 export async function refreshModelAuthStateAfterMutation(
   context: GatewayRequestContext,
   operation: "login" | "logout" | "update",
+  agentId: string,
 ): Promise<void> {
   invalidateModelAuthStatusCache();
-  await refreshActiveProviderAuthRuntimeSnapshot();
-  void warmCurrentProviderAuthStateOffMainThread(context.getRuntimeConfig()).catch(
-    (err: unknown) => {
-      log.warn(`provider auth state rewarm after ${operation} failed: ${formatForLog(err)}`);
-    },
-  );
+  const cfg = context.getRuntimeConfig();
+  // Prepared owners pair auth facts with their catalog, and ordinary Models reads never wait
+  // on discovery, so the mutated agent's owner republishes before the caller sees success.
+  await Promise.all([
+    refreshActiveProviderAuthRuntimeSnapshot(),
+    refreshPreparedModelRuntimeSnapshots(cfg, {
+      allowGatewaySubagentBinding: true,
+      agentIds: new Set([agentId]),
+    }),
+  ]);
+  void warmCurrentProviderAuthStateOffMainThread(cfg).catch((err: unknown) => {
+    log.warn(`provider auth state rewarm after ${operation} failed: ${formatForLog(err)}`);
+  });
 }
 
 export const modelsAuthRefreshHandlers: GatewayRequestHandlers = {
@@ -66,7 +75,7 @@ export const modelsAuthRefreshHandlers: GatewayRequestHandlers = {
       return;
     }
     try {
-      await refreshModelAuthStateAfterMutation(context, params.operation);
+      await refreshModelAuthStateAfterMutation(context, params.operation, scope.agentId);
       respond(true, { refreshed: true }, undefined);
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));

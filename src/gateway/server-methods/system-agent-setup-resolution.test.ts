@@ -553,6 +553,7 @@ describe("openclaw.setup.auth.start", () => {
     expect(modelsAuthLoginMocks.refreshModelAuthStateAfterMutation).toHaveBeenCalledWith(
       context,
       "login",
+      "research",
     );
     expect(session.cancel()).toBe(false);
   });

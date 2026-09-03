@@ -513,7 +513,7 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
       }
       // Fence auxiliary usage work that captured the removed profiles before
       // logout. Its later completion must not repopulate the cache.
-      await refreshModelAuthStateAfterMutation(context, "logout");
+      await refreshModelAuthStateAfterMutation(context, "logout", scope.agentId);
       // A provider-wide abort would terminate runs using credentials this
       // logout preserved (other profiles, tokens, or the config API key). Abort
       // entries do not carry the profile id, so a targeted logout cannot scope

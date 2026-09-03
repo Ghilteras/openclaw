@@ -59,8 +59,8 @@ export async function startModelsAuthLoginWizard(params: {
           signal.throwIfAborted();
           session.lockCancellation();
         },
-        refreshAuthState: async () => {
-          await refreshModelAuthStateAfterMutation(params.context, "login");
+        refreshAuthState: async (agentId) => {
+          await refreshModelAuthStateAfterMutation(params.context, "login", agentId);
           return "refreshed";
         },
       });
