@@ -1,17 +1,35 @@
 import { consume } from "@lit/context";
+import type { BoardSnapshot } from "@openclaw/gateway-protocol";
 import type { PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import { applicationContext, type ApplicationContext } from "../../app/context.ts";
 import { formatUiError } from "../../lib/format-error.ts";
+import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import { fetchPagedSessionRows } from "../../lib/sessions/paged-session-rows.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
+import type { DashboardPreviewLoader } from "./dashboard-preview.ts";
+import {
+  loadStoredDashboardsView,
+  saveStoredDashboardsView,
+  type DashboardsView,
+} from "./page-state.ts";
 import { dashboardSessionListQuery, dashboardsRouteData } from "./route.ts";
 import {
   renderDashboards,
   type DashboardGalleryFilters,
   type DashboardsRouteData,
 } from "./view.ts";
+
+// Previews are keyed by session + row change marker, so a dashboard is fetched
+// once per edit no matter how often the gallery re-renders or switches views.
+// The bound keeps a long-lived tab from holding every snapshot it ever saw.
+const PREVIEW_CACHE_LIMIT = 300;
+
+type PreviewLoaderBinding = {
+  client: NonNullable<ApplicationContext["gateway"]["snapshot"]["client"]>;
+  load: DashboardPreviewLoader;
+};
 
 class DashboardsPage extends OpenClawLightDomElement {
   @consume({ context: applicationContext, subscribe: true })
@@ -24,12 +42,15 @@ class DashboardsPage extends OpenClawLightDomElement {
     ownerId: "",
     sort: "updated",
   };
+  @state() private view: DashboardsView = loadStoredDashboardsView();
 
   private observedSessions?: ApplicationContext["sessions"];
   private observedScopeId?: string | null;
   private unsubscribeList?: () => void;
   private data?: DashboardsRouteData;
   private listGeneration = 0;
+  private previewCache = new Map<string, Promise<BoardSnapshot | null>>();
+  private previewLoader?: PreviewLoaderBinding;
   private readonly subscriptions = new SubscriptionsController(this).effect(
     () => this.context?.agentSelection,
     (agentSelection) => {
@@ -140,6 +161,41 @@ class DashboardsPage extends OpenClawLightDomElement {
       });
   }
 
+  // One loader per gateway client: a stable identity keeps mounted previews from
+  // refetching on every render, and a reconnect naturally rebinds it.
+  private resolvePreviewLoader(): DashboardPreviewLoader | undefined {
+    const snapshot = this.context?.gateway.snapshot;
+    const client = snapshot?.client;
+    if (!snapshot || !client || isGatewayMethodAdvertised(snapshot, "board.get") === false) {
+      this.previewLoader = undefined;
+      return undefined;
+    }
+    if (this.previewLoader?.client !== client) {
+      this.previewLoader = {
+        client,
+        load: (request) => {
+          const key = `${request.sessionKey}@${request.version}`;
+          const cached = this.previewCache.get(key);
+          if (cached) {
+            return cached;
+          }
+          if (this.previewCache.size >= PREVIEW_CACHE_LIMIT) {
+            this.previewCache.clear();
+          }
+          const pending = client
+            .request<BoardSnapshot>("board.get", {
+              sessionKey: request.sessionKey,
+              ...(request.agentId ? { agentId: request.agentId } : {}),
+            })
+            .catch((): null => null);
+          this.previewCache.set(key, pending);
+          return pending;
+        },
+      };
+    }
+    return this.previewLoader.load;
+  }
+
   override render() {
     return renderDashboards(
       this.data,
@@ -149,7 +205,7 @@ class DashboardsPage extends OpenClawLightDomElement {
           void context.sessions.refreshList({ ...dashboardSessionListQuery(context), force: true });
         }
       },
-      this.filters,
+      { filters: this.filters, view: this.view, loadPreview: this.resolvePreviewLoader() },
       {
         onQueryChange: (query) => {
           this.filters = { ...this.filters, query };
@@ -159,6 +215,10 @@ class DashboardsPage extends OpenClawLightDomElement {
         },
         onSortChange: (sort) => {
           this.filters = { ...this.filters, sort };
+        },
+        onViewChange: (view) => {
+          this.view = view;
+          saveStoredDashboardsView(view);
         },
       },
     );

@@ -15,24 +15,18 @@ type DashboardsPageElement = HTMLElement & {
   updateComplete: Promise<boolean>;
 };
 
-function result(sessionRow: GatewaySessionRow): SessionsListResult {
+function results(sessions: GatewaySessionRow[]): SessionsListResult {
   return {
     ts: 1,
     path: "(multiple)",
-    count: 1,
+    count: sessions.length,
     defaults: { modelProvider: null, model: null, contextTokens: null },
-    sessions: [sessionRow],
+    sessions,
   };
 }
 
-function results(sessionRows: GatewaySessionRow[]): SessionsListResult {
-  return {
-    ts: 1,
-    path: "(multiple)",
-    count: sessionRows.length,
-    defaults: { modelProvider: null, model: null, contextTokens: null },
-    sessions: sessionRows,
-  };
+function result(sessionRow: GatewaySessionRow): SessionsListResult {
+  return results([sessionRow]);
 }
 
 function row(key: string, displayName: string): GatewaySessionRow {
@@ -55,6 +49,41 @@ function routeData(sessionRow: GatewaySessionRow): DashboardsRouteData {
   };
 }
 
+function connectedContext(
+  request: (method: string, params: unknown) => Promise<unknown>,
+  methods: string[] = ["board.get"],
+): ApplicationContext {
+  return {
+    basePath: "",
+    gateway: {
+      snapshot: {
+        client: { request },
+        phase: "connected",
+        hello: { features: { methods } },
+      },
+    },
+    sessions: {
+      listSnapshot: () => ({ result: null, agentId: null, loading: false, error: null }),
+      subscribeList: () => () => undefined,
+      refreshList: vi.fn(async () => undefined),
+    },
+    agentSelection: {
+      state: { selectedId: "main", scopeId: null },
+      subscribe: () => () => undefined,
+    },
+    agents: { state: { agentsList: null } },
+  } as unknown as ApplicationContext;
+}
+
+function mountPage(context: ApplicationContext, data: DashboardsRouteData): DashboardsPageElement {
+  const element = document.createElement("openclaw-dashboards-page") as DashboardsPageElement;
+  element.routeData = data;
+  const provider = createApplicationContextProvider(context);
+  provider.append(element);
+  document.body.append(provider);
+  return element;
+}
+
 describe("DashboardsPage", () => {
   beforeEach(async () => {
     await i18n.setLocale("en");
@@ -62,6 +91,7 @@ describe("DashboardsPage", () => {
 
   afterEach(() => {
     document.body.replaceChildren();
+    localStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -101,11 +131,7 @@ describe("DashboardsPage", () => {
       },
       agents: { state: { agentsList: null } },
     } as unknown as ApplicationContext;
-    const element = document.createElement("openclaw-dashboards-page") as DashboardsPageElement;
-    element.routeData = routeData(row("agent:main:before", "Before"));
-    const provider = createApplicationContextProvider(context);
-    provider.append(element);
-    document.body.append(provider);
+    const element = mountPage(context, routeData(row("agent:main:before", "Before")));
     await element.updateComplete;
 
     expect(subscribeList).toHaveBeenCalledWith(
@@ -207,17 +233,13 @@ describe("DashboardsPage", () => {
       },
       agents: { state: { agentsList: null } },
     } as unknown as ApplicationContext;
-    const element = document.createElement("openclaw-dashboards-page") as DashboardsPageElement;
-    element.routeData = {
+    const element = mountPage(context, {
       result: first,
       error: null,
       basePath: "",
       fallbackAgentId: "main",
       mainKey: "main",
-    };
-    const provider = createApplicationContextProvider(context);
-    provider.append(element);
-    document.body.append(provider);
+    });
 
     await vi.waitFor(() =>
       expect(element.querySelectorAll("[data-dashboard-session]")).toHaveLength(2),
@@ -300,5 +322,74 @@ describe("DashboardsPage", () => {
         heading.textContent?.trim(),
       ),
     ).toEqual(["Alpha signals", "Bravo health", "Zulu monitor"]);
+  });
+
+  it("remembers the list view per browser", async () => {
+    const context = connectedContext(async () => null, []);
+    const element = mountPage(context, routeData(row("agent:main:dashboard:one", "One")));
+    await element.updateComplete;
+    expect(element.querySelector(".dashboard-card")).not.toBeNull();
+
+    element.querySelector<HTMLButtonElement>('[data-dashboards-view="list"]')?.click();
+    await element.updateComplete;
+    expect(element.querySelector(".dashboard-row")).not.toBeNull();
+    expect(element.querySelector(".dashboard-card")).toBeNull();
+    expect(localStorage.getItem("openclaw:dashboards:view")).toBe("list");
+
+    element.remove();
+    const revisited = mountPage(context, routeData(row("agent:main:dashboard:one", "One")));
+    await revisited.updateComplete;
+    expect(revisited.querySelector(".dashboard-row")).not.toBeNull();
+    expect(
+      revisited.querySelector('[data-dashboards-view="list"]')?.getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("fetches each dashboard board once and reuses it across view changes", async () => {
+    const board = {
+      sessionKey: "agent:main:dashboard:one",
+      revision: 1,
+      tabs: [{ tabId: "main", title: "Main", position: 0, chatDock: "hidden" }],
+      widgets: [
+        {
+          name: "hero",
+          tabId: "main",
+          title: "Hero",
+          contentKind: "html",
+          sizeW: 12,
+          sizeH: 3,
+          position: 0,
+          grantState: "none",
+          revision: 1,
+        },
+      ],
+    };
+    const request = vi.fn(async () => board);
+    const context = connectedContext(request);
+    const element = mountPage(context, {
+      ...routeData({ ...row("agent:main:dashboard:one", "One"), agentId: "main" }),
+    });
+
+    await vi.waitFor(() => expect(element.querySelectorAll("svg g")).toHaveLength(1));
+    expect(request).toHaveBeenCalledWith("board.get", {
+      sessionKey: "agent:main:dashboard:one",
+      agentId: "main",
+    });
+
+    element.querySelector<HTMLButtonElement>('[data-dashboards-view="list"]')?.click();
+    await element.updateComplete;
+    await vi.waitFor(() =>
+      expect(element.querySelectorAll(".dashboard-row svg g")).toHaveLength(1),
+    );
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to a placeholder when the gateway does not serve boards", async () => {
+    const request = vi.fn(async () => null);
+    const context = connectedContext(request, ["sessions.list"]);
+    const element = mountPage(context, routeData(row("agent:main:dashboard:one", "One")));
+
+    await vi.waitFor(() => expect(element.textContent).toContain("Preview unavailable"));
+    expect(request).not.toHaveBeenCalled();
   });
 });
