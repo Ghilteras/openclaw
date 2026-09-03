@@ -248,6 +248,12 @@ suite.define(() => {
         path: path.join(RECOVERY_ARTIFACT_DIR, "02-recovered.png"),
         fullPage: true,
       });
+      await page.getByRole("button", { name: "Actions for Main" }).tap();
+      await page.getByRole("menuitem", { name: "Assign to…", exact: true }).waitFor();
+      await page.screenshot({
+        path: path.join(RECOVERY_ARTIFACT_DIR, "03-assignment-menu.png"),
+        fullPage: true,
+      });
     } finally {
       await closeContext(context);
     }
