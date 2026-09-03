@@ -16,6 +16,7 @@ import { renderProjectChip, resolveProjectChip } from "./project-chip.ts";
 import { resolveCloudPlacementDisabledReason } from "./submit-gates.ts";
 import { renderNewSessionTerminalHost } from "./terminal-start.ts";
 import { renderWhereChip, resolveWhereChip } from "./where-chip.ts";
+import { worktreeAllocationBlockedReason } from "./worktree-allocation.ts";
 
 type DraftAgent = GatewayAgentRow;
 
@@ -106,6 +107,7 @@ export function renderNewSessionPlaceControls({
     worktree: place.worktree,
     worktreeAvailable: place.worktreeAvailable(),
   });
+  const allocationStatus = branches?.allocationStatus;
   const gatewayLabel = gateway.gatewayName
     ? t("newSession.gatewayNamed", { name: gateway.gatewayName })
     : t("newSession.gateway");
@@ -216,6 +218,8 @@ export function renderNewSessionPlaceControls({
         state: detailState,
         worktree: place.worktree,
         worktreeAvailable: place.worktreeAvailable(),
+        allocationStatus,
+        allocationBlockedReason: worktreeAllocationBlockedReason(allocationStatus),
         repositoryUnavailable: place.repository.kind === "unavailable",
         branches,
         branchesLoading: place.repository.kind === "checking",
@@ -225,6 +229,7 @@ export function renderNewSessionPlaceControls({
         pendingPlacement,
         ...browser.popoverCallbacks("detail"),
         onToggleWorktree: () => place.toggleWorktree(),
+        onManageWorktrees: () => context?.navigate("worktrees"),
         onBaseRefInput: (baseRef) => place.setBaseRef(baseRef),
         onWorktreeNameInput: (worktreeName) => place.setWorktreeName(worktreeName),
       })

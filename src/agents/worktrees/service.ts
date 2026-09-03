@@ -22,6 +22,7 @@ import {
   directorySizeBytes,
   estimateWorktreeGitBytes,
   requireWorktreeDiskSpace,
+  WorktreeDiskSpaceError,
   WORKTREE_SETUP_HEADROOM_BYTES,
 } from "./capacity.js";
 import { lockState, lockWorktreeForProcess, unlockWorktree } from "./git-lock.js";
@@ -67,6 +68,7 @@ import type {
   CreateManagedWorktreeParams,
   ManagedWorktreeBranch,
   ManagedWorktreeBranchesResult,
+  ManagedWorktreeAllocationStatus,
   ManagedWorktreeGcResult,
   ManagedWorktreeOwnerKind,
   ManagedWorktreeRecord,
@@ -749,12 +751,15 @@ export class ManagedWorktreeService {
   }
 
   private async worktreesRoot(): Promise<string> {
-    const root =
-      this.getConfig?.().worktreeRoot ?? path.join(resolveStateDir(this.env), "worktrees");
+    const root = this.worktreesRootPath();
     await fs.mkdir(root, { recursive: true });
     // Git canonicalizes paths in `git worktree list`; minting below the real root keeps
     // lock-state and adoption comparisons aligned when the state path traverses symlinks.
     return await fs.realpath(root);
+  }
+
+  private worktreesRootPath(): string {
+    return this.getConfig?.().worktreeRoot ?? path.join(resolveStateDir(this.env), "worktrees");
   }
 
   async create(params: CreateManagedWorktreeParams): Promise<ManagedWorktreeRecord> {
@@ -828,6 +833,19 @@ export class ManagedWorktreeService {
       ],
       "worktree allocation",
     );
+  }
+
+  private allocationStatus(repository: ResolvedRepository): ManagedWorktreeAllocationStatus {
+    const target = path.join(this.worktreesRootPath(), repository.fingerprint);
+    try {
+      this.requireAllocationSpace(target, repository);
+      return "available";
+    } catch (error) {
+      if (!(error instanceof WorktreeDiskSpaceError)) {
+        throw error;
+      }
+      return error.kind === "insufficient" ? "insufficient-space" : "unavailable";
+    }
   }
 
   private async createForRepository(
@@ -1138,11 +1156,15 @@ export class ManagedWorktreeService {
         ([aShort, a], [bShort, b]) => rank(aShort) - rank(bShort) || a.name.localeCompare(b.name),
       )
       .map(([, branch]) => branch);
+    const allocationStatus = options.includeRepositoryStatus
+      ? this.allocationStatus(repository)
+      : undefined;
     return {
       branches: sorted,
       ...(defaultBranch ? { defaultBranch } : {}),
       ...(headBranch ? { headBranch } : {}),
       ...(options.includeRepositoryStatus ? { repositoryStatus: "git" as const } : {}),
+      ...(allocationStatus ? { allocationStatus } : {}),
     };
   }
 

@@ -86,8 +86,22 @@ describe("managed worktree protocol schemas", () => {
     ).toBe(true);
     expect(
       Value.Check(WorktreesBranchesResultSchema, {
+        branches: [{ name: "main", kind: "local" }],
+        repositoryStatus: "git",
+        allocationStatus: "insufficient-space",
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(WorktreesBranchesResultSchema, {
         branches: [],
         repositoryStatus: "unknown",
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(WorktreesBranchesResultSchema, {
+        branches: [],
+        repositoryStatus: "git",
+        allocationStatus: "full",
       }),
     ).toBe(false);
     expect(

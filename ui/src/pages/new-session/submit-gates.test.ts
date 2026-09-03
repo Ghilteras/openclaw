@@ -168,6 +168,48 @@ describe("DraftSubmissionFlow submit gates", () => {
     expect(flow.submitDisabledReason()).toBeUndefined();
   });
 
+  it.each([
+    {
+      status: "insufficient-space",
+      reason: "Not enough disk space for another worktree",
+    },
+    { status: "unavailable", reason: "Couldn't check worktree storage capacity" },
+  ] as const)(
+    "blocks a selected worktree when allocation is $status",
+    async ({ status, reason }) => {
+      patchNewSessionPreference("ws://gateway.example", "main", {
+        folder: "/workspace",
+        worktree: true,
+      });
+      const fixture = createDraftFixture({
+        scopes: ["operator.admin", "operator.read", "operator.write"],
+        agents: [
+          {
+            id: "main",
+            workspace: "/workspace",
+            workspaceGit: true,
+            model: { primary: "openai/gpt-5.6-luna" },
+          },
+        ],
+        request: async (method) =>
+          method === "worktrees.branches"
+            ? {
+                repositoryStatus: "git",
+                branches: [{ name: "main", kind: "local" }],
+                defaultBranch: "main",
+                allocationStatus: status,
+              }
+            : {},
+      });
+      fixture.flow.setMessage("start something");
+
+      await vi.waitFor(() =>
+        expect(fixture.flow.submitBlock()).toEqual({ gate: "worktree-capacity", reason }),
+      );
+      expect(fixture.flow.canSubmit()).toBe(false);
+    },
+  );
+
   it("does not raise a notice for the silent empty-draft gate", async () => {
     const fixture = createDraftFixture();
     await fixture.flow.submit();

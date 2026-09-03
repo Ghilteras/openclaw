@@ -20,6 +20,7 @@ import type {
   SubmissionOutcomeReason,
 } from "./session-placement-recovery-state.ts";
 import { readNewSessionTerminalStartAccess } from "./terminal-start.ts";
+import { worktreeAllocationBlockedReason } from "./worktree-allocation.ts";
 
 // Silent gates are the only submit blocks allowed to omit a visible reason:
 // the busy Start button and an empty draft already explain themselves. Every
@@ -43,6 +44,7 @@ type ReasonedSubmitGate =
   | "device-runtime"
   | "cloud"
   | "worktree-unavailable"
+  | "worktree-capacity"
   | "worktree-name"
   | "terminal-capabilities"
   | "terminal-folder";
@@ -61,6 +63,12 @@ export function resolveCloudPlacementDisabledReason(place: DraftPlaceState): str
   const runtimeReason = place.modelControl.cloudRuntimeUnsupportedReason();
   if (runtimeReason) {
     return runtimeReason;
+  }
+  const capacityReason = worktreeAllocationBlockedReason(
+    place.repository.kind === "git" ? place.repository.allocationStatus : undefined,
+  );
+  if (capacityReason) {
+    return capacityReason;
   }
   if (place.repository.kind === "checking") {
     return t("newSession.checkingGit");
@@ -278,6 +286,14 @@ export function resolveNewSessionSubmitBlock(
           ? t("newSession.checkingGit")
           : t("newSession.worktreeUnavailable"),
     };
+  }
+  if (place.worktree) {
+    const capacityReason = worktreeAllocationBlockedReason(
+      place.repository.kind === "git" ? place.repository.allocationStatus : undefined,
+    );
+    if (capacityReason) {
+      return { gate: "worktree-capacity", reason: capacityReason };
+    }
   }
   if (place.worktree && !isWorktreeNameValid(place.worktreeName)) {
     return { gate: "worktree-name", reason: t("newSession.worktreeNameInvalid") };

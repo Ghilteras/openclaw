@@ -10,6 +10,7 @@ import {
   SOURCE_REPO,
   TARGET_REPO,
   WORKSPACE,
+  captureUiProofEnabled,
   controlUiSessionPath,
   createNewSessionPageE2eSuite,
   installMockGateway,
@@ -114,6 +115,58 @@ async function expectPendingNewSession(page: Page, message: string) {
 }
 
 suite.define(() => {
+  it.each([
+    { viewportName: "desktop", viewport: { height: 900, width: 1280 } },
+    { viewportName: "mobile", viewport: { height: 844, width: 390 } },
+  ])(
+    "surfaces insufficient worktree capacity before selection on $viewportName",
+    async ({ viewportName, viewport }) => {
+      await withNewSessionPage(
+        {
+          ...BASE_CONTEXT,
+          viewport,
+          ...(captureUiProofEnabled
+            ? { recordVideo: { dir: suite.artifactDir, size: viewport } }
+            : {}),
+        },
+        async (page) => {
+          const gateway = await installMockGateway(page, {
+            workspace: WORKSPACE,
+            workspaceGit: true,
+            methodResponses: {
+              "worktrees.branches": {
+                ...branchList(),
+                allocationStatus: "insufficient-space",
+              },
+            },
+          });
+          await page.goto(`${suite.server.baseUrl}new`);
+          await gateway.waitForRequest("worktrees.branches");
+
+          const trigger = page.locator("#new-session-detail-trigger");
+          await pollLocatorText(trigger).toContain("No space");
+          await trigger.click();
+          const place = page.locator("wa-popover.new-session-page__detail-popover");
+          const worktree = place.getByRole("button", { name: "Worktree" });
+          expect(await worktree.isDisabled()).toBe(true);
+          await place
+            .getByText("Not enough disk space for another worktree", { exact: true })
+            .waitFor();
+          if (captureUiProofEnabled) {
+            await page.screenshot({
+              path: `${suite.artifactDir}/worktree-capacity-${viewportName}.png`,
+              fullPage: true,
+            });
+          }
+
+          await place.getByRole("button", { name: "Manage", exact: true }).click();
+          await page.waitForURL((url) => url.pathname === "/worktrees");
+          expect(await gateway.getRequests("sessions.create")).toHaveLength(0);
+        },
+      );
+    },
+  );
+
   it("blocks a selected workspace worktree when branch rediscovery is unavailable until cleared", async () => {
     await withNewSessionPage(BASE_CONTEXT, async (page) => {
       const gateway = await installMockGateway(page, {

@@ -70,6 +70,8 @@ export function renderDetailChip(params: {
   state: DetailChipState;
   worktree: boolean;
   worktreeAvailable: boolean;
+  allocationStatus?: DraftBranches["allocationStatus"];
+  allocationBlockedReason?: string;
   repositoryUnavailable?: boolean;
   branches: DraftBranches | null;
   branchesLoading: boolean;
@@ -84,10 +86,12 @@ export function renderDetailChip(params: {
   onPopoverHide: () => void;
   onPopoverAfterHide: () => void;
   onToggleWorktree: () => void;
+  onManageWorktrees: () => void;
   onBaseRefInput: (baseRef: string) => void;
   onWorktreeNameInput: (name: string) => void;
 }) {
-  const worktreeEnabled = params.worktreeAvailable || params.worktree;
+  const allocationBlockedReason = params.allocationBlockedReason;
+  const worktreeEnabled = params.worktree || (params.worktreeAvailable && !allocationBlockedReason);
   return html`
     <span class="new-session-page__select">
       <button
@@ -106,6 +110,13 @@ export function renderDetailChip(params: {
       >
         <span class="new-session-page__target-icon" aria-hidden="true">${icons.gitBranch}</span>
         <span class="new-session-page__trigger-label">${params.state.label}</span>
+        ${allocationBlockedReason
+          ? html`<span class="new-session-page__capacity-badge"
+              >${params.allocationStatus === "insufficient-space"
+                ? t("newSession.worktreeCapacityBadge")
+                : t("newSession.worktreeCapacityUnavailableBadge")}</span
+            >`
+          : null}
         <span
           class="new-session-page__trigger-chevron new-session-page__trigger-chevron--desktop"
           aria-hidden="true"
@@ -136,7 +147,7 @@ export function renderDetailChip(params: {
             checked: params.worktree,
             disabled: !worktreeEnabled,
             title: params.worktreeAvailable
-              ? t("chat.runControls.newSessionWorktree")
+              ? (allocationBlockedReason ?? t("chat.runControls.newSessionWorktree"))
               : params.repositoryUnavailable
                 ? t("newSession.gitCheckUnavailable")
                 : t("newSession.worktreeUnavailable"),
@@ -145,6 +156,14 @@ export function renderDetailChip(params: {
           },
           params.submitting,
         )}
+        ${allocationBlockedReason
+          ? html`<div class="new-session-page__capacity-warning" role="status">
+              <span>${allocationBlockedReason}</span>
+              <button type="button" @click=${params.onManageWorktrees}>
+                ${t("newSession.manageWorktrees")}
+              </button>
+            </div>`
+          : null}
         ${params.worktree
           ? renderWorktreeFields(params)
           : html`<div class="new-session-page__menu-note">

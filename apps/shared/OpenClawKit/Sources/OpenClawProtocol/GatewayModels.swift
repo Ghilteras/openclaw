@@ -4187,17 +4187,20 @@ public struct WorktreesBranchesResult: Codable, Sendable {
     public let defaultbranch: String?
     public let headbranch: String?
     public let repositorystatus: WorktreeRepositoryStatus?
+    public let allocationstatus: String?
 
     public init(
         branches: [WorktreeBranch],
         defaultbranch: String? = nil,
         headbranch: String? = nil,
-        repositorystatus: WorktreeRepositoryStatus? = nil)
+        repositorystatus: WorktreeRepositoryStatus? = nil,
+        allocationstatus: String? = nil)
     {
         self.branches = branches
         self.defaultbranch = defaultbranch
         self.headbranch = headbranch
         self.repositorystatus = repositorystatus
+        self.allocationstatus = allocationstatus
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -4205,6 +4208,7 @@ public struct WorktreesBranchesResult: Codable, Sendable {
         case defaultbranch = "defaultBranch"
         case headbranch = "headBranch"
         case repositorystatus = "repositoryStatus"
+        case allocationstatus = "allocationStatus"
     }
 }
 

@@ -71,6 +71,19 @@ export class DraftRepositoryController {
     return this.repositoryValue;
   }
 
+  allocationStatus() {
+    return this.repositoryValue.kind === "git" ? this.repositoryValue.allocationStatus : undefined;
+  }
+
+  allocationAvailable(): boolean {
+    const status = this.allocationStatus();
+    return status === undefined || status === "available";
+  }
+
+  availableForAllocation(): boolean {
+    return this.available() && this.allocationAvailable();
+  }
+
   get preferenceReady(): boolean {
     return !this.preferredWorktreeRestore;
   }
@@ -138,7 +151,7 @@ export class DraftRepositoryController {
   }
 
   toggle() {
-    if (this.read().remotePlacement) {
+    if (this.read().remotePlacement || (!this.worktreeValue && !this.allocationAvailable())) {
       return;
     }
     this.selectWorktree(!this.worktreeValue, false);
@@ -222,6 +235,7 @@ export class DraftRepositoryController {
                 branches: result.branches,
                 ...(result.defaultBranch ? { defaultBranch: result.defaultBranch } : {}),
                 ...(result.headBranch ? { headBranch: result.headBranch } : {}),
+                ...(result.allocationStatus ? { allocationStatus: result.allocationStatus } : {}),
               }
             : { kind: result?.repositoryStatus === "not_git" ? "direct" : "unavailable", repoRoot },
         );

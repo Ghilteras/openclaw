@@ -70,6 +70,10 @@ const WORKTREE_REPOSITORY_STATUSES = ["git", "not_git", "unavailable"] as const;
 export const WorktreeRepositoryStatusSchema = Type.String({
   enum: [...WORKTREE_REPOSITORY_STATUSES],
 });
+const WORKTREE_ALLOCATION_STATUSES = ["available", "insufficient-space", "unavailable"] as const;
+export const WorktreeAllocationStatusSchema = Type.String({
+  enum: [...WORKTREE_ALLOCATION_STATUSES],
+});
 export const WorktreesBranchesParamsSchema = closedObject({
   repoRoot: NonEmptyString,
   includeRepositoryStatus: Type.Optional(Type.Boolean()),
@@ -83,6 +87,7 @@ export const WorktreesBranchesResultSchema = closedObject({
   defaultBranch: Type.Optional(NonEmptyString),
   headBranch: Type.Optional(NonEmptyString),
   repositoryStatus: Type.Optional(WorktreeRepositoryStatusSchema),
+  allocationStatus: Type.Optional(WorktreeAllocationStatusSchema),
 });
 
 export const WorktreesRestoreParamsSchema = closedObject({ id: NonEmptyString });
@@ -106,5 +111,6 @@ export type WorktreesGcParams = Static<typeof WorktreesGcParamsSchema>;
 export type WorktreesGcResult = Static<typeof WorktreesGcResultSchema>;
 export type WorktreeBranch = Static<typeof WorktreeBranchSchema>;
 export type WorktreeRepositoryStatus = (typeof WORKTREE_REPOSITORY_STATUSES)[number];
+export type WorktreeAllocationStatus = (typeof WORKTREE_ALLOCATION_STATUSES)[number];
 export type WorktreesBranchesParams = Static<typeof WorktreesBranchesParamsSchema>;
 export type WorktreesBranchesResult = Static<typeof WorktreesBranchesResultSchema>;

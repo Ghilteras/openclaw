@@ -1,5 +1,5 @@
 import { render } from "lit";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderDetailChip, resolveDetailChip } from "./detail-chip.ts";
 
 describe("Detail chip state", () => {
@@ -42,6 +42,7 @@ describe("Detail chip state", () => {
         state: { label: "Worktree" },
         worktree: true,
         worktreeAvailable: true,
+        allocationStatus: "available",
         branches: { repoRoot: "/repo", branches: [] },
         branchesLoading: false,
         baseRef: "main",
@@ -55,6 +56,7 @@ describe("Detail chip state", () => {
         onPopoverHide: () => undefined,
         onPopoverAfterHide: () => undefined,
         onToggleWorktree: () => undefined,
+        onManageWorktrees: () => undefined,
         onBaseRefInput: () => undefined,
         onWorktreeNameInput: () => undefined,
       }),
@@ -64,5 +66,44 @@ describe("Detail chip state", () => {
     const worktree = container.querySelector<HTMLButtonElement>('[data-value="worktree"]');
     expect(worktree?.disabled).toBe(false);
     expect(container.textContent).toContain("Worktree name");
+  });
+
+  it("surfaces blocked allocation beside the selected Worktree and links to management", () => {
+    const container = document.createElement("div");
+    const onManageWorktrees = vi.fn();
+    render(
+      renderDetailChip({
+        state: { label: "Worktree" },
+        worktree: true,
+        worktreeAvailable: true,
+        allocationStatus: "insufficient-space",
+        allocationBlockedReason: "Not enough disk space for another worktree",
+        branches: { repoRoot: "/repo", branches: [] },
+        branchesLoading: false,
+        baseRef: "main",
+        worktreeName: "",
+        submitting: false,
+        pendingPlacement: false,
+        popoverOpen: true,
+        popoverHiding: false,
+        onGuardTransition: () => undefined,
+        onPopoverShow: () => undefined,
+        onPopoverHide: () => undefined,
+        onPopoverAfterHide: () => undefined,
+        onToggleWorktree: () => undefined,
+        onManageWorktrees,
+        onBaseRefInput: () => undefined,
+        onWorktreeNameInput: () => undefined,
+      }),
+      container,
+    );
+
+    expect(container.textContent).toContain("No space");
+    expect(container.textContent).toContain("Not enough disk space for another worktree");
+    const manage = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Manage",
+    );
+    manage?.click();
+    expect(onManageWorktrees).toHaveBeenCalledOnce();
   });
 });

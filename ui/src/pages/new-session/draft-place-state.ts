@@ -592,7 +592,7 @@ export class DraftPlaceState {
       snapshot.submitting ||
       snapshot.pendingPlacementSessionKey ||
       !this.isAdmin() ||
-      !this.worktreeAvailable() ||
+      !this.repositoryState.availableForAllocation() ||
       !profile ||
       Boolean(this.modelControl.cloudRuntimeUnsupportedReason(profile))
     ) {
@@ -676,7 +676,7 @@ export class DraftPlaceState {
         (!preferredProject || this.browser.projectId === preferredProject) &&
         this.repositoryState.matchesCurrentRepo() &&
         this.repository.kind !== "checking";
-      if (profileAvailable && repositoryReady && this.worktreeAvailable()) {
+      if (profileAvailable && repositoryReady && this.repositoryState.availableForAllocation()) {
         this.deviceIdValue = "";
         this.autoDeviceValue = false;
         this.cloudProfileIdValue = preferredWhere.id;

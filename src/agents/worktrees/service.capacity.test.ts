@@ -126,6 +126,34 @@ describe("ManagedWorktreeService capacity", () => {
     expect(await git(repo, "branch", "--list", "openclaw/unknown-space")).toBe("");
   });
 
+  it.each([
+    { available: 100, status: "available" },
+    { available: 1, status: "insufficient-space" },
+  ])(
+    "reports $status allocation status with $available GiB available",
+    async ({ available, status }) => {
+      availableBytes = available * GiB;
+
+      await expect(
+        service.listRepositoryBranches(repo, {
+          includeRepositoryStatus: true,
+        }),
+      ).resolves.toMatchObject({ repositoryStatus: "git", allocationStatus: status });
+    },
+  );
+
+  it("reports unavailable allocation status when disk capacity cannot be read", async () => {
+    vi.mocked(fsSync.statfsSync).mockImplementation(() => {
+      throw new Error("volume unavailable");
+    });
+
+    await expect(
+      service.listRepositoryBranches(repo, {
+        includeRepositoryStatus: true,
+      }),
+    ).resolves.toMatchObject({ repositoryStatus: "git", allocationStatus: "unavailable" });
+  });
+
   it("creates beyond 100 live checkouts without removing prior worktrees", async () => {
     await fill(100);
     const before = service.listRegistryRecords();
