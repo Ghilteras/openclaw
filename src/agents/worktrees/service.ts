@@ -873,6 +873,9 @@ export class ManagedWorktreeService {
   ): Promise<ManagedWorktreeAllocationStatus> {
     const target = path.join(this.worktreesRootPath(), repository.fingerprint);
     try {
+      // Default-base resolution may fetch remote objects, so protect that write
+      // with the same reserve check used by creation before estimating its size.
+      this.requireAllocationSpace(target, repository);
       const base = await resolveWorktreeBase(repository.repoRoot, baseRef);
       const estimate = await this.estimateAllocation(
         repository,

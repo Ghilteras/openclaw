@@ -90,6 +90,7 @@ export class DraftRepositoryController {
   }
 
   adoptPreference(preference: NewSessionPreference | null) {
+    const previousBaseRef = this.baseRefOverride ?? "";
     if (!this.worktreeSelectedByUser) {
       this.worktreeValue = false;
       this.preferredWorktreeRestore = preference?.worktree === true;
@@ -101,7 +102,11 @@ export class DraftRepositoryController {
     if (!this.matchesCurrentRepo()) {
       // Retire the old folder's RPC before it can consume the new preference.
       this.invalidate();
-    } else if (this.repositoryValue.kind !== "checking") {
+    } else if (this.repositoryValue.kind === "checking") {
+      if ((this.baseRefOverride ?? "") !== previousBaseRef) {
+        this.load();
+      }
+    } else {
       this.adoptResolvedRepository(this.repositoryValue);
     }
   }
@@ -179,6 +184,10 @@ export class DraftRepositoryController {
 
   refreshAllocationStatus() {
     const state = this.repositoryValue;
+    if (state.kind === "checking") {
+      this.load();
+      return;
+    }
     const snapshot = this.read();
     const client = snapshot.gateway?.client;
     if (state.kind !== "git" || snapshot.gateway?.phase !== "connected" || !client) {
@@ -268,15 +277,16 @@ export class DraftRepositoryController {
       return this.adoptResolvedRepository({ kind: "idle" });
     }
     const { repoRoot } = discovery;
+    const baseRef = this.baseRefOverride ?? "";
     this.repositoryValue = discovery;
     void client
       .request<WorktreesBranchesResult>("worktrees.branches", {
         repoRoot,
         includeRepositoryStatus: true,
-        ...(this.baseRefOverride ? { baseRef: this.baseRefOverride } : {}),
+        ...(baseRef ? { baseRef } : {}),
       })
       .then((result) => {
-        if (requestId !== this.requestToken) {
+        if (requestId !== this.requestToken || (this.baseRefOverride ?? "") !== baseRef) {
           return;
         }
         this.adoptResolvedRepository(
@@ -293,7 +303,7 @@ export class DraftRepositoryController {
         );
       })
       .catch(() => {
-        if (requestId !== this.requestToken) {
+        if (requestId !== this.requestToken || (this.baseRefOverride ?? "") !== baseRef) {
           return;
         }
         this.adoptResolvedRepository({ kind: "unavailable", repoRoot });

@@ -162,6 +162,7 @@ describe("Checkout chip state", () => {
     const container = document.createElement("div");
     const onSelectWorktree = vi.fn();
     const onManageWorktrees = vi.fn();
+    const onBaseRefChange = vi.fn();
     render(
       renderCheckoutChip({
         state: { label: "feature" },
@@ -188,7 +189,7 @@ describe("Checkout chip state", () => {
         onPopoverAfterHide: () => undefined,
         onSelectWorktree,
         onManageWorktrees,
-        onBaseRefChange: () => undefined,
+        onBaseRefChange,
         onWorktreeNameInput: () => undefined,
       }),
       container,
@@ -201,6 +202,12 @@ describe("Checkout chip state", () => {
     expect(isolated.disabled).toBe(true);
     isolated.click();
     expect(onSelectWorktree).not.toHaveBeenCalled();
+    const fields = container.querySelectorAll<HTMLLabelElement>(".new-session-page__menu-field");
+    expect(fields).toHaveLength(1);
+    const baseRef = fields[0]!.querySelector("input")!;
+    baseRef.value = " local-branch ";
+    baseRef.dispatchEvent(new Event("change"));
+    expect(onBaseRefChange).toHaveBeenCalledWith("local-branch");
     container
       .querySelector<HTMLButtonElement>(".new-session-page__capacity-warning button")!
       .click();

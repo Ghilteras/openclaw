@@ -35,6 +35,7 @@ function renderWorktreeFields(params: {
   worktreeName: string;
   submitting: boolean;
   pendingPlacement: boolean;
+  showWorktreeDetails: boolean;
   onBaseRefChange: (baseRef: string) => void;
   onWorktreeNameInput: (name: string) => void;
 }) {
@@ -61,21 +62,23 @@ function renderWorktreeFields(params: {
         )}
       </datalist>
     </label>
-    <label class="new-session-page__menu-field">
-      <span>${t("newSession.worktreeName")}</span>
-      <input
-        type="text"
-        ?disabled=${params.submitting || params.pendingPlacement}
-        placeholder=${t("newSession.worktreeNamePlaceholder")}
-        .value=${params.worktreeName}
-        @input=${(event: Event) => {
-          if (event.currentTarget instanceof HTMLInputElement) {
-            params.onWorktreeNameInput(event.currentTarget.value.trim());
-          }
-        }}
-      />
-    </label>
-    <div class="new-session-page__menu-note">${t("newSession.worktreeBranchNote")}</div>
+    ${params.showWorktreeDetails
+      ? html`<label class="new-session-page__menu-field">
+            <span>${t("newSession.worktreeName")}</span>
+            <input
+              type="text"
+              ?disabled=${params.submitting || params.pendingPlacement}
+              placeholder=${t("newSession.worktreeNamePlaceholder")}
+              .value=${params.worktreeName}
+              @input=${(event: Event) => {
+                if (event.currentTarget instanceof HTMLInputElement) {
+                  params.onWorktreeNameInput(event.currentTarget.value.trim());
+                }
+              }}
+            />
+          </label>
+          <div class="new-session-page__menu-note">${t("newSession.worktreeBranchNote")}</div>`
+      : nothing}
   `;
 }
 
@@ -196,7 +199,9 @@ export function renderCheckoutChip(params: {
               </button>
             </div>`
           : nothing}
-        ${params.worktree ? renderWorktreeFields(params) : nothing}
+        ${params.worktree || allocationBlockedReason
+          ? renderWorktreeFields({ ...params, showWorktreeDetails: params.worktree })
+          : nothing}
         ${params.remotePlacement
           ? html`<div class="new-session-page__menu-note">
               ${t("newSession.placementSyncsFolder", { folder: params.folderLabel })}

@@ -142,6 +142,19 @@ describe("ManagedWorktreeService capacity", () => {
     },
   );
 
+  it("checks the reserve before fetching a default base", async () => {
+    availableBytes = GiB;
+    const realRun = commandExec.runCommandWithTimeout;
+    const run = vi
+      .spyOn(commandExec, "runCommandWithTimeout")
+      .mockImplementation((argv, options) => realRun(argv, options));
+
+    await expect(
+      service.listRepositoryBranches(repo, { includeRepositoryStatus: true }),
+    ).resolves.toMatchObject({ allocationStatus: "insufficient-space" });
+    expect(run.mock.calls.some(([argv]) => argv.includes("fetch"))).toBe(false);
+  });
+
   it("estimates allocation for the selected base ref", async () => {
     await git(repo, "checkout", "-b", "large-base");
     await fs.writeFile(path.join(repo, "large.bin"), Buffer.alloc(8 * 1024 ** 2));

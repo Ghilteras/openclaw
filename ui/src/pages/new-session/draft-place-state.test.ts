@@ -182,6 +182,50 @@ describe("DraftPlaceState repository selection", () => {
     });
   });
 
+  it("restarts pending discovery when the capacity base changes", async () => {
+    const { state, request } = createRepositoryFixture({ workspaceGit: true });
+    const initial = createDeferred<WorktreesBranchesResult>();
+    const refreshed = createDeferred<WorktreesBranchesResult>();
+    let branchRequestCount = 0;
+    request.mockImplementation(async (method) => {
+      if (method !== "worktrees.branches") {
+        return {};
+      }
+      branchRequestCount += 1;
+      return branchRequestCount === 1 ? initial.promise : refreshed.promise;
+    });
+
+    state.adoptAgentDefaults();
+    expect(state.repository.kind).toBe("checking");
+    state.setBaseRef("large-base");
+    expect(request).toHaveBeenLastCalledWith("worktrees.branches", {
+      repoRoot: "/workspace",
+      includeRepositoryStatus: true,
+      baseRef: "large-base",
+    });
+
+    initial.resolve({
+      repositoryStatus: "git",
+      branches: [],
+      defaultBranch: "main",
+      allocationStatus: "available",
+    });
+    await Promise.resolve();
+    expect(state.repository.kind).toBe("checking");
+
+    refreshed.resolve({
+      repositoryStatus: "git",
+      branches: [],
+      allocationStatus: "insufficient-space",
+    });
+    await vi.waitFor(() =>
+      expect(state.repository).toMatchObject({
+        kind: "git",
+        allocationStatus: "insufficient-space",
+      }),
+    );
+  });
+
   it("fails closed when repository discovery omits allocation capacity", async () => {
     const { state, request } = createRepositoryFixture({ workspaceGit: true });
     request.mockResolvedValue({ repositoryStatus: "git", branches: [], defaultBranch: "main" });
@@ -233,7 +277,7 @@ describe("DraftPlaceState repository selection", () => {
       await vi.waitFor(() => expect(state.repository.kind).toBe("git"));
       expect(state.baseRef).toBe(edited ? "my-branch" : "release/next");
       expect(request.mock.calls.filter(([method]) => method === "worktrees.branches")).toHaveLength(
-        1,
+        edited ? 3 : 2,
       );
     },
   );
