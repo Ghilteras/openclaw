@@ -61,12 +61,16 @@ type ChannelProgressDraftUpdateOptions = {
 
 /** Creates a stateful compositor for one streaming channel reply. */
 export function createChannelProgressDraftCompositor(params: {
-  /** Show authored milestones and attention instead of a rolling tool log. */
-  presentation?: "summary";
   entry: StreamingCompatEntry | null | undefined;
   mode: ChannelProgressDraftMode;
   active: boolean;
   seed: string;
+  /**
+   * Channel default for `streaming.progress.toolProgress` when the operator
+   * has not set it. `false` keeps the draft quiet: headline, authored text,
+   * plan milestones, and attention lines, with no rolling tool log.
+   */
+  toolProgressDefault?: boolean;
   update: (
     text: string,
     options?: ChannelProgressDraftUpdateOptions,
@@ -105,11 +109,16 @@ export function createChannelProgressDraftCompositor(params: {
       .map((line) => line.replace(/^_(.*)_$/su, "$1"))
       .join("\n");
   const previewToolProgressEnabled =
-    params.active && resolveChannelStreamingPreviewToolProgress(params.entry, true, params.mode);
+    params.active &&
+    resolveChannelStreamingPreviewToolProgress(
+      params.entry,
+      params.toolProgressDefault ?? true,
+      params.mode,
+    );
   const commentaryProgressEnabled =
     params.active && resolveChannelStreamingProgressCommentary(params.entry, false, params.mode);
-  const thinkingProgressEnabled =
-    params.active && (params.reasoningGate ?? previewToolProgressEnabled);
+  // Reasoning is authored text, not tool telemetry: a quiet draft keeps it.
+  const thinkingProgressEnabled = params.active && (params.reasoningGate ?? true);
   const suppressDefaultToolProgressMessages =
     params.active &&
     resolveChannelStreamingSuppressDefaultToolProgressMessages(params.entry, {
@@ -183,7 +192,6 @@ export function createChannelProgressDraftCompositor(params: {
     const linesRenderedByChannel =
       params.rendersRollingLinesNatively === true && Boolean(narration || planSteps?.length);
     return formatChannelProgressDraftText({
-      presentation: params.presentation,
       entry: params.entry,
       lines: linesRenderedByChannel ? [] : draftLines,
       seed: params.seed,
@@ -384,12 +392,9 @@ export function createChannelProgressDraftCompositor(params: {
       return false;
     }
     const progressLine = typeof line === "object" && line !== undefined ? line : normalized;
-    const summary = params.presentation === "summary";
+    // Approvals and failures stay visible even when the rolling tool log is off.
     const needsAttention = isChannelProgressAttentionLine(progressLine);
-    if (summary && !needsAttention && typeof line === "object" && line.id) {
-      lines = removeChannelProgressDraftLine(lines, line.id);
-    }
-    const shouldStoreLine = summary ? needsAttention : previewToolProgressEnabled;
+    const shouldStoreLine = previewToolProgressEnabled || needsAttention;
     const nextLines = shouldStoreLine
       ? mergeChannelProgressDraftLine(lines, progressLine, {
           maxLines: resolveChannelProgressDraftMaxLines(params.entry),
@@ -403,9 +408,11 @@ export function createChannelProgressDraftCompositor(params: {
     if (shouldStoreLine && !lineChanged && !hasUnconfirmedRender && !diffStatChanged) {
       return false;
     }
-    // Work delimits reasoning bursts even when summary presentation hides its
-    // row; otherwise unrelated thoughts are concatenated as one streamed delta.
-    if (summary || (shouldStoreLine && lineChanged)) {
+    // A work line lands between reasoning bursts: commit the current thinking
+    // line so the next thought appends as its own line, interleaved with tools
+    // in arrival order, instead of replacing the prior thought. Hidden work
+    // still delimits bursts; otherwise unrelated thoughts concatenate.
+    if (!previewToolProgressEnabled || (shouldStoreLine && lineChanged)) {
       reasoningRawText = "";
       lastReasoningLine = undefined;
     }
@@ -424,8 +431,10 @@ export function createChannelProgressDraftCompositor(params: {
     if (params.mode !== "progress") {
       return shouldStoreLine ? await publish() : false;
     }
-    if (options?.startImmediately || params.shouldStartNow?.(line) || (summary && needsAttention)) {
-      const flush = options?.flush === true || (summary && needsAttention);
+    // A quiet draft has no rolling rows to wait for: attention opens it now.
+    const attentionNow = needsAttention && !previewToolProgressEnabled;
+    if (options?.startImmediately || params.shouldStartNow?.(line) || attentionNow) {
+      const flush = options?.flush === true || attentionNow;
       return await startAndRender(flush ? { flush: true } : undefined);
     }
     const alreadyStarted = gate.hasStarted;
@@ -533,7 +542,7 @@ export function createChannelProgressDraftCompositor(params: {
     async pushApprovalEvent(
       payload: Parameters<typeof progressEventHandlers.pushApprovalEvent>[0],
     ) {
-      if (params.presentation === "summary" && payload.phase === "resolved" && payload.approvalId) {
+      if (payload.phase === "resolved" && payload.approvalId) {
         return await clearLine(`approval:${payload.approvalId}`);
       }
       return await progressEventHandlers.pushApprovalEvent(payload);
@@ -657,27 +666,13 @@ export function createChannelProgressDraftCompositor(params: {
       const displayLine = `${reasoningLinePrefix}${compactLine}`;
       // Reasoning streams usually arrive as deltas. Replace the previous
       // reasoning line so the draft stays compact instead of appending noise.
-      if (params.presentation === "summary") {
-        lines = mergeChannelProgressDraftLine(
-          lines,
-          {
-            id: "reasoning",
-            kind: "item",
-            text: stripLaneItalics(compactLine),
-            label: "Reasoning",
-            prefix: false,
-          },
-          { maxLines: resolveChannelProgressDraftMaxLines(params.entry) },
-        );
+      const priorIndex =
+        lastReasoningLine === undefined ? -1 : lines.lastIndexOf(lastReasoningLine);
+      if (priorIndex >= 0) {
+        lines = [...lines];
+        lines[priorIndex] = displayLine;
       } else {
-        const priorIndex =
-          lastReasoningLine === undefined ? -1 : lines.lastIndexOf(lastReasoningLine);
-        if (priorIndex >= 0) {
-          lines = [...lines];
-          lines[priorIndex] = displayLine;
-        } else {
-          lines = [...lines, displayLine].slice(-resolveChannelProgressDraftMaxLines(params.entry));
-        }
+        lines = [...lines, displayLine].slice(-resolveChannelProgressDraftMaxLines(params.entry));
       }
       lastReasoningLine = displayLine;
       const progressActive = await gate.noteWork();

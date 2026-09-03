@@ -552,10 +552,10 @@ function createPreparedTraceMessage(scenario: SlackTraceScenarioName): PreparedS
         : progressCard
           ? // Native task cards are the progress default; this scenario owns the
             // Block Kit opt-out path.
-            { streaming: { progress: { nativeTaskCards: false } } }
+            { streaming: { progress: { nativeTaskCards: false, toolProgress: true } } }
           : nativeProgress
             ? // Empty progress config on purpose: proves the shipped default.
-              { streaming: { mode: "progress" } }
+              { streaming: { mode: "progress", progress: { toolProgress: true } } }
             : {
                 streaming: {
                   mode: "partial",
@@ -871,6 +871,7 @@ describe("slack delivery trace goldens", () => {
   });
 
   it("removes a progress card detached by a later human message", async () => {
+    let progressEvents = 0;
     const events = await runDeliveryTraceScenario({
       scenario: {
         name: "progress-session-card-detached",
@@ -878,7 +879,7 @@ describe("slack delivery trace goldens", () => {
           { kind: "reply-start" },
           { kind: "tool-progress", name: "read", phase: "start" },
           { kind: "advance", ms: 2000 },
-          { kind: "partial", text: "Writing the implementation" },
+          { kind: "tool-progress", name: "write", phase: "start" },
           { kind: "advance", ms: 2000 },
           { kind: "final", text: "The replacement session card is complete." },
           { kind: "idle" },
@@ -887,24 +888,19 @@ describe("slack delivery trace goldens", () => {
       setup: async (recorder) => {
         const dispatch = await setupSlackTrace(recorder, "progress-session-card");
         return async (step) => {
-          if (step.kind === "partial") {
-            traceState.tsCounter += 1;
-            noteSlackDraftConversationMessage({
-              accountId: "default",
-              channelId: CHANNEL_ID,
-              threadTs: INBOUND_TS,
-              messageTs: `1767225601.${String(traceState.tsCounter).padStart(6, "0")}`,
-              userId: "U_SECOND",
-              botUserId: "UBOT",
-            });
-            // A changed authored status moves progress below the human message;
-            // ordinary tool activity intentionally leaves the summary unchanged.
-            await traceState.turn?.replyOptions.onItemEvent?.({
-              kind: "preamble",
-              itemId: "preamble-1",
-              progressText: step.text,
-            });
-            return;
+          if (step.kind === "tool-progress") {
+            progressEvents += 1;
+            if (progressEvents === 2) {
+              traceState.tsCounter += 1;
+              noteSlackDraftConversationMessage({
+                accountId: "default",
+                channelId: CHANNEL_ID,
+                threadTs: INBOUND_TS,
+                messageTs: `1767225601.${String(traceState.tsCounter).padStart(6, "0")}`,
+                userId: "U_SECOND",
+                botUserId: "UBOT",
+              });
+            }
           }
           await dispatch(step);
         };
@@ -914,10 +910,7 @@ describe("slack delivery trace goldens", () => {
 
     const workingPosts = events.filter(
       (event) =>
-        event.kind === "chat.postMessage" &&
-        Array.isArray(
-          (event.data as { payload?: { blocks?: unknown } } | undefined)?.payload?.blocks,
-        ),
+        event.kind === "chat.postMessage" && JSON.stringify(event.data).includes("🔄 *Working*"),
     );
     expect(workingPosts).toHaveLength(2);
     const firstCardId = (workingPosts[0]?.data as { result?: { ts?: string } } | undefined)?.result
@@ -933,26 +926,13 @@ describe("slack delivery trace goldens", () => {
           (event.data as { target?: string } | undefined)?.target === firstCardId,
       ),
     ).toBe(true);
-    const completedCard = events.find(
-      (event) =>
-        event.kind === "chat.update" &&
-        (event.data as { target?: string } | undefined)?.target === secondCardId,
-    );
-    expect(completedCard?.data).toMatchObject({
-      payload: {
-        blocks: expect.arrayContaining([
-          {
-            type: "section",
-            text: { type: "mrkdwn", text: "Completed: *Writing the implementation*" },
-          },
-          {
-            type: "actions",
-            elements: expect.arrayContaining([
-              expect.objectContaining({ action_id: "openclaw:session_link" }),
-            ]),
-          },
-        ]),
-      },
-    });
+    expect(
+      events.some(
+        (event) =>
+          event.kind === "chat.update" &&
+          (event.data as { target?: string } | undefined)?.target === secondCardId &&
+          JSON.stringify(event.data).includes("✅ *Working*"),
+      ),
+    ).toBe(true);
   });
 });

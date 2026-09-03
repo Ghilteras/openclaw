@@ -89,9 +89,7 @@ export function resolveExplicitSlackProgressTitle(
 
 export function resolveSlackProgressStyle(entry: SlackProgressConfigEntry): "card" | "compact" {
   // DO NOT REMOVE OR CHANGE THE COMPACT STYLE WITHOUT APPROVAL FROM SJF OR PASHPASHPASH.
-  const progress = entry?.streaming?.progress;
-  // Quiet previews retain authored preambles; cards remain an explicit choice.
-  return progress?.style ?? (progress?.toolProgress === false ? "compact" : "card");
+  return entry?.streaming?.progress?.style === "compact" ? "compact" : "card";
 }
 
 // Slack's native agent card is the default progress surface; operators opt out

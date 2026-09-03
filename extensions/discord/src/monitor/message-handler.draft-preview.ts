@@ -101,12 +101,14 @@ export function createDiscordDraftPreviewController(params: {
     resolveChannelStreamingPreviewCommandText(params.discordConfig) === "status";
   const progressSeed = `${params.accountId}:${params.deliverChannelId}`;
   const progressDraft = createChannelProgressDraftCompositor({
-    presentation: discordStreamMode === "progress" ? "summary" : undefined,
     entry: params.discordConfig,
     mode: discordStreamMode,
     active: Boolean(draftStream),
     seed: progressSeed,
+    // Discord progress drafts are quiet unless the operator opts into tool rows.
+    toolProgressDefault: discordStreamMode !== "progress",
     reasoningLinePrefix: "🧠 ",
+    commentaryLinePrefix: "💬 ",
     commentaryItalics: false,
     update: async (previewText, options) => {
       if (!draftStream) {

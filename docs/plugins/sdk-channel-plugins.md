@@ -91,13 +91,7 @@ update occurred. Existing synchronous and asynchronous callbacks that return `vo
 backward-compatible and are treated as visible; new acceptance-aware implementations should use
 an explicit boolean.
 
-### Quiet progress presentation
-
-`createChannelProgressDraftCompositor({ presentation: "summary", ... })` keeps
-routine tool activity out of the visible draft while retaining authored status,
-reasoning, commentary, milestones, and actionable approval/failure lines. Pass
-`approvalId` on requested and resolved approval events so the compositor can
-clear the matching attention line. The default presentation remains unchanged.
+### Quiet acknowledgement and coalesced progress
 
 `createStatusReactionController({ presentation: "acknowledgement", ... })`
 keeps the initial reaction through work and success, skips inactivity warnings,

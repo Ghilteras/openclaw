@@ -23,11 +23,11 @@ function createTestProgressDraftCompositor(
 const DEFAULT_PROGRESS_DRAFT_INITIAL_DELAY_MS = 1_500;
 
 describe("createChannelProgressDraftCompositor", () => {
-  it("keeps summary presentation stable across tool activity and uses plain milestones", async () => {
+  it("keeps a quiet draft stable across tool activity when the tool log is off", async () => {
     const update = vi.fn();
     const progress = createTestProgressDraftCompositor({
       entry: { streaming: { mode: "progress" } },
-      presentation: "summary",
+      toolProgressDefault: false,
       update,
     });
     await progress.pushPreambleHeadline("Checking source 🔎");
@@ -38,15 +38,28 @@ describe("createChannelProgressDraftCompositor", () => {
     expect(update).toHaveBeenCalledTimes(1);
     expect(update.mock.calls[0]?.[0]).toBe("Checking source 🔎");
     await progress.pushPlanProgress([{ step: "Verify behavior", status: "in_progress" }]);
-    expect(update.mock.lastCall?.[0]).toBe("Checking source 🔎\n\nIn progress: Verify behavior");
+    expect(update.mock.lastCall?.[0]).toBe("Checking source 🔎\n\n▸ Verify behavior");
     progress.cancel();
   });
 
-  it("shows and resolves summary approval attention independently of tool activity", async () => {
+  it("opts a quiet channel back into the tool log with progress.toolProgress", async () => {
+    const update = vi.fn();
+    const progress = createTestProgressDraftCompositor({
+      entry: { streaming: { mode: "progress", progress: { toolProgress: true } } },
+      toolProgressDefault: false,
+      update,
+    });
+    await progress.pushToolEvent({ name: "exec", toolCallId: "call-1", phase: "start" });
+    await progress.noteActivity({ startImmediately: true });
+    expect(update.mock.lastCall?.[0]).toContain("🛠️ Exec");
+    progress.cancel();
+  });
+
+  it("flushes approval attention through a quiet draft and clears it once resolved", async () => {
     const update = vi.fn();
     const progress = createTestProgressDraftCompositor({
       entry: { streaming: { mode: "progress" } },
-      presentation: "summary",
+      toolProgressDefault: false,
       update,
     });
     await progress.pushApprovalEvent({
@@ -56,14 +69,6 @@ describe("createChannelProgressDraftCompositor", () => {
     });
     expect(update.mock.lastCall?.[0]).toContain("Run checks");
     expect(update.mock.lastCall?.[1]).toMatchObject({ flush: true });
-    await progress.pushPlanProgress(
-      Array.from({ length: 8 }, (_, index) => ({
-        step: `Milestone ${index + 1}`,
-        status: "pending" as const,
-      })),
-    );
-    expect(update.mock.lastCall?.[0]).toContain("Run checks");
-    await progress.pushPlanProgress([]);
     for (let index = 0; index < 20; index++) {
       await progress.pushToolEvent({ name: "read", toolCallId: `call-${index}`, phase: "start" });
     }
@@ -242,39 +247,21 @@ describe("createChannelProgressDraftCompositor", () => {
     await hidden.pushReasoningProgress("Reading files");
     expect(hiddenUpdate.mock.calls.every(([text]) => !String(text).includes("Reading"))).toBe(true);
 
-    const defaultUpdate = vi.fn();
-    const sharedDefault = createTestProgressDraftCompositor({
+    // …and a quiet draft (toolProgress off) still shows authored reasoning.
+    const quietUpdate = vi.fn();
+    const quiet = createTestProgressDraftCompositor({
       entry: {
         streaming: {
           mode: "progress",
           progress: { label: "Shelling", toolProgress: false },
         },
       },
-      update: defaultUpdate,
+      update: quietUpdate,
     });
-    await sharedDefault.pushToolProgress("🛠️ Exec", { startImmediately: true });
-    await sharedDefault.pushReasoningProgress("Reading files");
-    expect(defaultUpdate.mock.calls.every(([text]) => !String(text).includes("Reading"))).toBe(
-      true,
-    );
-
-    const update = vi.fn();
-    const progress = createTestProgressDraftCompositor({
-      entry: {
-        streaming: {
-          mode: "progress",
-          progress: { label: "Shelling", toolProgress: false },
-        },
-      },
-      reasoningLinePrefix: "🧠 ",
-      reasoningGate: true,
-      update,
-    });
-    await progress.pushToolProgress("🛠️ Exec", { startImmediately: true });
-    await progress.pushReasoningProgress("Reading files");
-    expect(update).toHaveBeenLastCalledWith("Shelling\n\n🧠 _Reading files_", {
-      lines: ["🧠 _Reading files_"],
-    });
+    await quiet.pushToolProgress("🛠️ Exec", { startImmediately: true });
+    await quiet.pushReasoningProgress("Reading files");
+    expect(quietUpdate.mock.lastCall?.[0]).toBe("Shelling\n\n• _Reading files_");
+    expect(quietUpdate.mock.calls.every(([text]) => !String(text).includes("Exec"))).toBe(true);
   });
 
   it("shares reasoning merge state with legacy preview renderers", () => {
@@ -538,48 +525,27 @@ describe("createChannelProgressDraftCompositor", () => {
     );
   });
 
-  it.each([
-    {
-      presentation: undefined,
-      text: "Shelling\n\n🧠 _Listing the workspace_\n🛠️ ls\n🧠 _Picking the largest_\n🛠️ wc",
-      lines: ["🧠 _Listing the workspace_", "🛠️ ls", "🧠 _Picking the largest_", "🛠️ wc"],
-    },
-    {
-      presentation: "summary" as const,
-      text: "Shelling\n\nPicking the largest",
-      lines: [
-        {
-          id: "reasoning",
-          kind: "item",
-          text: "Picking the largest",
-          label: "Reasoning",
-          prefix: false,
-        },
-      ],
-    },
-  ])(
-    "keeps reasoning bursts separate across tools ($presentation)",
-    async ({ presentation, text, lines }) => {
-      const update = vi.fn();
-      const progress = createTestProgressDraftCompositor({
-        entry: {
-          streaming: { mode: "progress", progress: { label: "Shelling", maxLines: 8 } },
-        },
-        presentation,
-        reasoningLinePrefix: "🧠 ",
-        update,
-      });
+  it("keeps reasoning bursts separate across tools", async () => {
+    const update = vi.fn();
+    const progress = createTestProgressDraftCompositor({
+      entry: {
+        streaming: { mode: "progress", progress: { label: "Shelling", maxLines: 8 } },
+      },
+      reasoningLinePrefix: "🧠 ",
+      update,
+    });
 
-      // Hidden tools still delimit reasoning bursts in summary presentation.
-      await progress.pushReasoningProgress("Listing the workspace");
-      await progress.pushToolProgress("🛠️ ls", { startImmediately: true });
-      await progress.pushReasoningProgress("Picking the largest");
-      await progress.pushToolProgress("🛠️ wc", { startImmediately: true });
+    await progress.pushReasoningProgress("Listing the workspace");
+    await progress.pushToolProgress("🛠️ ls", { startImmediately: true });
+    await progress.pushReasoningProgress("Picking the largest");
+    await progress.pushToolProgress("🛠️ wc", { startImmediately: true });
 
-      expect(update).toHaveBeenLastCalledWith(text, { lines });
-      progress.cancel();
-    },
-  );
+    expect(update).toHaveBeenLastCalledWith(
+      "Shelling\n\n🧠 _Listing the workspace_\n🛠️ ls\n🧠 _Picking the largest_\n🛠️ wc",
+      { lines: ["🧠 _Listing the workspace_", "🛠️ ls", "🧠 _Picking the largest_", "🛠️ wc"] },
+    );
+    progress.cancel();
+  });
 
   it("preserves tagged reasoning content without leaking tags", async () => {
     const update = vi.fn();

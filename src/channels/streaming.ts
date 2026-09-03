@@ -294,6 +294,7 @@ export type ChannelProgressDraftLine = {
   prefix?: boolean;
 };
 
+/** Lines that need the operator's attention even when routine tool rows are hidden. */
 export function isChannelProgressAttentionLine(line: string | ChannelProgressDraftLine): boolean {
   if (typeof line === "string") {
     return false;
@@ -1080,7 +1081,7 @@ function compactChannelProgressDraftLine(line: string, maxChars: number): string
 
 export function formatPlanChecklistLines(
   steps: readonly AgentPlanStep[],
-  options: { maxLines: number; maxLineChars: number; plain?: boolean },
+  options: { maxLines: number; maxLineChars: number },
 ): string[] {
   const normalizedSteps = steps
     .map((entry, index) => ({ ...entry, step: entry.step.replace(/\s+/g, " ").trim(), index }))
@@ -1090,17 +1091,7 @@ export function formatPlanChecklistLines(
   }
   const maxLines = Math.max(1, options.maxLines);
   const marker = (status: AgentPlanStepStatus) =>
-    options.plain
-      ? status === "completed"
-        ? "Completed:"
-        : status === "in_progress"
-          ? "In progress:"
-          : "Pending:"
-      : status === "completed"
-        ? "✅"
-        : status === "in_progress"
-          ? "▸"
-          : "▢";
+    status === "completed" ? "✅" : status === "in_progress" ? "▸" : "▢";
   const formatStep = (entry: (typeof normalizedSteps)[number]) =>
     compactChannelProgressDraftLine(`${marker(entry.status)} ${entry.step}`, options.maxLineChars);
   if (normalizedSteps.length <= maxLines) {
@@ -1112,7 +1103,7 @@ export function formatPlanChecklistLines(
     const completedCount = normalizedSteps.filter((entry) => entry.status === "completed").length;
     return [
       compactChannelProgressDraftLine(
-        `${options.plain ? "" : "✅ "}${completedCount}/${normalizedSteps.length} done`,
+        `✅ ${completedCount}/${normalizedSteps.length} done`,
         options.maxLineChars,
       ),
     ];
@@ -1137,7 +1128,7 @@ export function formatPlanChecklistLines(
   const completedCount = normalizedSteps.length - pendingSteps.length;
   return [
     compactChannelProgressDraftLine(
-      `${options.plain ? "" : "✅ "}${completedCount}/${normalizedSteps.length} done`,
+      `✅ ${completedCount}/${normalizedSteps.length} done`,
       options.maxLineChars,
     ),
     ...visibleSteps.map(formatStep),
@@ -1280,8 +1271,6 @@ function resolveProgressDraftLineMergeKeys(line: string | ChannelProgressDraftLi
 }
 
 export function formatChannelProgressDraftText(params: {
-  /** Summary presentation omits routine tool telemetry and generated emoji. */
-  presentation?: "summary";
   /** Channel streaming config source for progress label and bounds. */
   entry?: StreamingCompatEntry | null;
   /** Ordered progress lines to render. */
@@ -1304,13 +1293,9 @@ export function formatChannelProgressDraftText(params: {
   const maxLines = resolveChannelProgressDraftMaxLines(params.entry);
   const maxLineChars = resolveChannelProgressDraftMaxLineChars(params.entry);
   const formatLine = params.formatLine ?? ((line: string) => line);
-  const attention =
-    params.presentation === "summary" ? params.lines.filter(isChannelProgressAttentionLine) : [];
-  const planLines = formatPlanChecklistLines(params.plan ?? [], {
-    maxLines: Math.max(0, maxLines - attention.length),
-    maxLineChars,
-    plain: params.presentation === "summary",
-  }).map(formatLine);
+  const planLines = formatPlanChecklistLines(params.plan ?? [], { maxLines, maxLineChars }).map(
+    formatLine,
+  );
   const hasConfiguredLabel = progress.label !== undefined || progress.labels !== undefined;
   const resolvedLabel =
     narration && !hasConfiguredLabel
@@ -1325,27 +1310,8 @@ export function formatChannelProgressDraftText(params: {
   const statusHeadline = narration ? formatLine(narration) : "";
   const bullet = params.bullet ?? "•";
   const toolLineBudget = planLines.length > 0 ? Math.max(0, maxLines - planLines.length) : maxLines;
-  // Attention cannot disappear behind a full plan or a burst of commentary.
-  const visibleLines =
-    params.presentation === "summary"
-      ? [...params.lines.filter((line) => !isChannelProgressAttentionLine(line)), ...attention]
-      : params.lines;
-  const renderedToolLines = visibleLines
+  const renderedToolLines = params.lines
     .map((line) => {
-      if (params.presentation === "summary") {
-        if (typeof line === "string") {
-          return undefined;
-        }
-        const text =
-          line.kind === "approval"
-            ? `Approval required: ${line.detail || line.label}`
-            : isChannelProgressAttentionLine(line)
-              ? [line.label, line.detail, line.status].filter(Boolean).join(" — ")
-              : line.id === "reasoning" || line.id?.startsWith("commentary:")
-                ? line.text
-                : undefined;
-        return text ? formatLine(compactChannelProgressDraftLine(text, maxLineChars)) : undefined;
-      }
       const text = compactChannelProgressDraftLine(
         typeof line === "string" ? line : getProgressDraftLineText(line),
         maxLineChars,

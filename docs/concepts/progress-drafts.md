@@ -161,9 +161,11 @@ Hide the label and show only progress lines:
 
 Progress lines come from real run events: tool starts, item updates, task
 plans, approvals, command output, patch summaries, and similar agent activity.
-They are enabled by default (`progress.toolProgress`, default `true`) and stay
-visible underneath the status headline. Set `progress.toolProgress: false` to
-keep the headline alone.
+`progress.toolProgress` decides whether ordinary tool calls become rolling
+rows underneath the status headline. Telegram, Matrix, and Mattermost default
+to `true`; Discord and Slack `progress` mode default to `false`, which keeps
+the draft quiet: headline, authored commentary and reasoning, plan milestones,
+and any approval request or failed command still appear.
 
 Tools can also emit typed progress while a single call is still running. That
 is how a slow fetch or search updates the visible draft before the tool
@@ -367,7 +369,7 @@ Tune the per-line budget:
 
 ### Hide tool/task lines
 
-Keep the single progress draft but hide tool and task lines:
+Keep the single progress draft but hide the rolling tool rows:
 
 ```json5
 {
@@ -385,8 +387,9 @@ Keep the single progress draft but hide tool and task lines:
 ```
 
 With `toolProgress: false`, OpenClaw still suppresses the older standalone
-tool-progress messages for that turn — the channel stays visually quiet until
-the final answer, except for the label if one is configured.
+tool-progress messages for that turn. The draft shows the headline, plan
+milestones, and attention lines only; on Telegram that is the way to quiet a
+channel that shows the tool log by default.
 
 ## Channel behavior
 
@@ -436,8 +439,9 @@ message.
 
 **I see the label but no tool lines.**
 
-Check `streaming.progress.toolProgress`. If it is `false`, OpenClaw keeps the
-single draft behavior but hides tool and task progress lines.
+Check `streaming.progress.toolProgress`. Discord and Slack `progress` mode
+default to `false`, which keeps the single draft but hides the rolling tool
+rows; set it to `true` for the full tool log.
 
 **I see a fresh final message instead of an edited draft.**
 
