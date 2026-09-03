@@ -141,6 +141,7 @@ export function createWorktreesHandlers(service: WorktreeService): GatewayReques
       const result = params.includeRepositoryStatus
         ? await service.listRepositoryBranches(repoRoot, {
             includeRepositoryStatus: true,
+            ...(params.baseRef ? { baseRef: params.baseRef } : {}),
           })
         : await service.listRepositoryBranches(repoRoot);
       respond(true, result, undefined);

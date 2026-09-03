@@ -55,11 +55,16 @@ describe("managed worktree protocol schemas", () => {
   it("accepts branch listing payloads and snapshot errors", () => {
     expect(validateWorktreesBranchesParams({ repoRoot: "/repo" })).toBe(true);
     expect(
-      validateWorktreesBranchesParams({ repoRoot: "/repo", includeRepositoryStatus: true }),
+      validateWorktreesBranchesParams({
+        repoRoot: "/repo",
+        includeRepositoryStatus: true,
+        baseRef: "origin/main",
+      }),
     ).toBe(true);
     expect(
       validateWorktreesBranchesParams({ repoRoot: "/repo", includeRepositoryStatus: false }),
     ).toBe(true);
+    expect(validateWorktreesBranchesParams({ repoRoot: "/repo", baseRef: "" })).toBe(false);
     expect(validateWorktreesBranchesParams({})).toBe(false);
     expect(
       Value.Check(WorktreesBranchesResultSchema, {

@@ -835,16 +835,58 @@ export class ManagedWorktreeService {
     );
   }
 
-  private allocationStatus(repository: ResolvedRepository): ManagedWorktreeAllocationStatus {
+  private async estimateAllocation(
+    repository: ResolvedRepository,
+    gitOperand: string,
+    fallbackGitOperand: string | undefined,
+    runSetup: boolean,
+  ): Promise<{ provisionedBytes: number; setupBytes: number; requiredBytes: number }> {
+    const gitBytes = Math.max(
+      await estimateWorktreeGitBytes(repository.repoRoot, gitOperand),
+      fallbackGitOperand
+        ? await estimateWorktreeGitBytes(repository.repoRoot, fallbackGitOperand)
+        : 0,
+    );
+    const provisionedBytes = await estimateProvisionedFileBytes(repository.sourceRoot);
+    const setupStat = runSetup
+      ? await fs
+          .stat(path.join(repository.sourceRoot, ".openclaw", "worktree-setup.sh"))
+          .catch(() => undefined)
+      : undefined;
+    const setupBytes =
+      setupStat?.isFile() === true && (setupStat.mode & 0o111) !== 0
+        ? Math.max(
+            WORKTREE_SETUP_HEADROOM_BYTES,
+            await directorySizeBytes(repository.sourceRoot, true),
+          )
+        : 0;
+    return {
+      provisionedBytes,
+      setupBytes,
+      requiredBytes: 2 * (gitBytes + provisionedBytes) + setupBytes,
+    };
+  }
+
+  private async allocationStatus(
+    repository: ResolvedRepository,
+    baseRef?: string,
+  ): Promise<ManagedWorktreeAllocationStatus> {
     const target = path.join(this.worktreesRootPath(), repository.fingerprint);
     try {
-      this.requireAllocationSpace(target, repository);
+      const base = await resolveWorktreeBase(repository.repoRoot, baseRef);
+      const estimate = await this.estimateAllocation(
+        repository,
+        base.gitOperand,
+        base.remote ? "HEAD" : undefined,
+        true,
+      );
+      this.requireAllocationSpace(target, repository, estimate.requiredBytes);
       return "available";
     } catch (error) {
-      if (!(error instanceof WorktreeDiskSpaceError)) {
-        throw error;
+      if (error instanceof WorktreeDiskSpaceError) {
+        return error.kind === "insufficient" ? "insufficient-space" : "unavailable";
       }
-      return error.kind === "insufficient" ? "insufficient-space" : "unavailable";
+      return "unavailable";
     }
   }
 
@@ -918,29 +960,15 @@ export class ManagedWorktreeService {
     this.requireAllocationSpace(worktreePath, repository);
     params.commitGuard?.();
     const base = await resolveWorktreeBase(repository.repoRoot, params.baseRef, params.signal);
-    const gitBytes = Math.max(
-      await estimateWorktreeGitBytes(repository.repoRoot, base.gitOperand),
-      base.remote ? await estimateWorktreeGitBytes(repository.repoRoot, "HEAD") : 0,
-    );
-    const provisionedBytes = await estimateProvisionedFileBytes(repository.sourceRoot);
-    const setupStat =
-      params.runSetupScript === false
-        ? undefined
-        : await fs
-            .stat(path.join(repository.sourceRoot, ".openclaw", "worktree-setup.sh"))
-            .catch(() => undefined);
-    const runRepositorySetup = setupStat?.isFile() === true && (setupStat.mode & 0o111) !== 0;
-    const setupBytes = runRepositorySetup
-      ? Math.max(
-          WORKTREE_SETUP_HEADROOM_BYTES,
-          await directorySizeBytes(repository.sourceRoot, true),
-        )
-      : 0;
-    this.requireAllocationSpace(
-      worktreePath,
+    const estimate = await this.estimateAllocation(
       repository,
-      2 * (gitBytes + provisionedBytes) + setupBytes,
+      base.gitOperand,
+      base.remote ? "HEAD" : undefined,
+      params.runSetupScript !== false,
     );
+    const { provisionedBytes, setupBytes } = estimate;
+    const runRepositorySetup = setupBytes > 0;
+    this.requireAllocationSpace(worktreePath, repository, estimate.requiredBytes);
     params.signal?.throwIfAborted();
     params.commitGuard?.();
     await fs.mkdir(root, { recursive: true });
@@ -1067,13 +1095,12 @@ export class ManagedWorktreeService {
   }
 
   /**
-   * Lists selectable base refs for a repository without touching the network.
-   * Base-ref pickers must stay snappy; resolveWorktreeBase() still fetches on create
-   * when no explicit ref is chosen.
+   * Lists selectable base refs from local Git metadata. Allocation status mirrors
+   * creation exactly, including fetching the default remote when no base is selected.
    */
   async listRepositoryBranches(
     repoRoot: string,
-    options: { includeRepositoryStatus?: boolean } = {},
+    options: { includeRepositoryStatus?: boolean; baseRef?: string } = {},
   ): Promise<ManagedWorktreeBranchesResult> {
     let repository: ResolvedRepository;
     if (options.includeRepositoryStatus) {
@@ -1157,7 +1184,7 @@ export class ManagedWorktreeService {
       )
       .map(([, branch]) => branch);
     const allocationStatus = options.includeRepositoryStatus
-      ? this.allocationStatus(repository)
+      ? await this.allocationStatus(repository, options.baseRef)
       : undefined;
     return {
       branches: sorted,

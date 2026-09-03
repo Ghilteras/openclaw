@@ -150,6 +150,17 @@ describe("worktrees gateway methods", () => {
       includeRepositoryStatus: true,
     });
 
+    await call(
+      handlers,
+      "worktrees.branches",
+      { repoRoot: "/anywhere", includeRepositoryStatus: true, baseRef: "release" },
+      { client: adminClient, context: emptyConfigContext },
+    );
+    expect(service.listRepositoryBranches).toHaveBeenLastCalledWith("/anywhere", {
+      includeRepositoryStatus: true,
+      baseRef: "release",
+    });
+
     // Write scope cannot probe arbitrary host paths for branch names.
     const denied = await call(
       handlers,

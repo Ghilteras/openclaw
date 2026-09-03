@@ -142,6 +142,46 @@ describe("ManagedWorktreeService capacity", () => {
     },
   );
 
+  it("estimates allocation for the selected base ref", async () => {
+    await git(repo, "checkout", "-b", "large-base");
+    await fs.writeFile(path.join(repo, "large.bin"), Buffer.alloc(8 * 1024 ** 2));
+    await git(repo, "add", "large.bin");
+    await git(repo, "commit", "-m", "large base");
+    await git(repo, "checkout", "main");
+    availableBytes = 16 * GiB + 12 * 1024 ** 2;
+
+    await expect(
+      service.listRepositoryBranches(repo, {
+        includeRepositoryStatus: true,
+        baseRef: "main",
+      }),
+    ).resolves.toMatchObject({ allocationStatus: "available" });
+    await expect(
+      service.listRepositoryBranches(repo, {
+        includeRepositoryStatus: true,
+        baseRef: "large-base",
+      }),
+    ).resolves.toMatchObject({ allocationStatus: "insufficient-space" });
+  });
+
+  it("estimates the fetched remote default used by creation", async () => {
+    const initialHead = await git(repo, "rev-parse", "HEAD");
+    await git(repo, "remote", "set-head", "origin", "main");
+    await fs.writeFile(path.join(repo, "large.bin"), Buffer.alloc(8 * 1024 ** 2));
+    await git(repo, "add", "large.bin");
+    await git(repo, "commit", "-m", "large remote default");
+    await git(repo, "push", "origin", "main");
+    await git(repo, "reset", "--hard", initialHead);
+    availableBytes = 16 * GiB + 12 * 1024 ** 2;
+
+    await expect(
+      service.listRepositoryBranches(repo, { includeRepositoryStatus: true }),
+    ).resolves.toMatchObject({
+      defaultBranch: "main",
+      allocationStatus: "insufficient-space",
+    });
+  });
+
   it("reports unavailable allocation status when disk capacity cannot be read", async () => {
     vi.mocked(fsSync.statfsSync).mockImplementation(() => {
       throw new Error("volume unavailable");

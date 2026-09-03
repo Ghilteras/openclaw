@@ -161,7 +161,12 @@ describe("DraftSubmissionFlow submit gates", () => {
     expect(context.sessions.createResult).not.toHaveBeenCalled();
     expect(flow.blockedSubmitNotice()).toBe(flow.submitDisabledReason());
 
-    resolveBranches({ repositoryStatus: "git", branches: ["main"], defaultBranch: "main" });
+    resolveBranches({
+      repositoryStatus: "git",
+      branches: ["main"],
+      defaultBranch: "main",
+      allocationStatus: "available",
+    });
     await vi.waitFor(() => expect(flow.canSubmit()).toBe(true));
     // The transient gate lifted; the notice retires itself.
     expect(flow.blockedSubmitNotice()).toBeUndefined();

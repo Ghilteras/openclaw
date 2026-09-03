@@ -1,6 +1,5 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { FsListDirResult } from "../../../../packages/gateway-protocol/src/index.js";
-import type { ApplicationContext } from "../../app/context.ts";
 import { hasOperatorAdminAccess, hasOperatorWriteAccess } from "../../app/operator-access.ts";
 import { t } from "../../i18n/index.ts";
 import { listSelectableAgents } from "../../lib/agents/display.ts";
@@ -18,27 +17,14 @@ import {
 import { DraftCloudMachineState } from "./draft-cloud-machine-state.ts";
 import type { DraftGatewayState } from "./draft-gateway-state.ts";
 import type { DraftPlaceBrowser } from "./draft-place-browser.ts";
+import type { DraftPlaceCallbacks, DraftPlaceSnapshot } from "./draft-place-state.types.ts";
 import { DraftRepositoryController } from "./draft-repository-state.ts";
 import type { PendingPlacementPlace } from "./draft-session-placement.ts";
 import { isMissingRestoredFolderError } from "./folder-validation.ts";
-import type { NewSessionRouteData } from "./location.ts";
 import { newSessionSearch } from "./location.ts";
 import { NewSessionModelControl } from "./model-control.ts";
 import { resolveNewSessionWhere, type NewSessionWhere } from "./preferences.ts";
 import type { DraftRemoteProject } from "./project-chip.ts";
-
-type DraftPlaceSnapshot = Readonly<{
-  context: ApplicationContext | undefined;
-  data: NewSessionRouteData | undefined;
-  submitting: boolean;
-  pendingPlacementSessionKey: string;
-}>;
-
-type DraftPlaceCallbacks = {
-  requestUpdate: () => void;
-  onError: (error: string | null) => void;
-  onClearError: (error: string) => void;
-};
 
 export class DraftPlaceState {
   terminalHostId = "gateway:local";
@@ -212,17 +198,17 @@ export class DraftPlaceState {
     return this.agents().find((agent) => normalizeAgentId(agent.id) === agentId);
   }
 
-  devicePlacementRequirement() {
+  devicePlacementRuntime() {
     return this.modelControl.resolveAgentRuntime({
       agent: this.selectedAgent(),
       context: this.read().context,
-    })?.devicePlacement;
+    });
   }
 
   devices() {
     return projectDevicePlacements(
       this.gateway.environments,
-      this.devicePlacementRequirement(),
+      this.devicePlacementRuntime()?.devicePlacement,
       this.gateway.deviceCatalogDisabledReason,
     );
   }
@@ -482,7 +468,7 @@ export class DraftPlaceState {
     this.folderSelectedByUser = true;
     this.projectSelectedByUser = true;
     this.preferredProjectRestore = "";
-    if (snapshot.data?.startTerminal && this.terminalOnNode) {
+    if (catalog.isTarget(snapshot.data) && this.terminalOnNode) {
       this.callbacks.requestUpdate();
       return;
     }
@@ -592,7 +578,8 @@ export class DraftPlaceState {
       snapshot.submitting ||
       snapshot.pendingPlacementSessionKey ||
       !this.isAdmin() ||
-      !this.repositoryState.availableForAllocation() ||
+      !this.worktreeAvailable() ||
+      !this.repositoryState.allocationAvailable() ||
       !profile ||
       Boolean(this.modelControl.cloudRuntimeUnsupportedReason(profile))
     ) {
@@ -617,12 +604,13 @@ export class DraftPlaceState {
     this.callbacks.requestUpdate();
   }
 
-  toggleWorktree() {
-    this.repositoryState.toggle();
+  selectWorktree(value: boolean) {
+    this.repositoryState.select(value);
   }
 
   setBaseRef(baseRef: string) {
     this.repositoryState.setBaseRef(baseRef, this.read().submitting);
+    this.repositoryState.refreshAllocationStatus();
   }
 
   setWorktreeName(worktreeName: string) {
@@ -676,7 +664,12 @@ export class DraftPlaceState {
         (!preferredProject || this.browser.projectId === preferredProject) &&
         this.repositoryState.matchesCurrentRepo() &&
         this.repository.kind !== "checking";
-      if (profileAvailable && repositoryReady && this.repositoryState.availableForAllocation()) {
+      const profileReady =
+        profileAvailable &&
+        repositoryReady &&
+        this.worktreeAvailable() &&
+        this.repositoryState.allocationAvailable();
+      if (profileReady) {
         this.deviceIdValue = "";
         this.autoDeviceValue = false;
         this.cloudProfileIdValue = preferredWhere.id;
