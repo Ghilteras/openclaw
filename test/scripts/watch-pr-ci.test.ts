@@ -77,12 +77,15 @@ if (process.argv[1] === ${JSON.stringify(fileURLToPath(new URL("../../scripts/wa
             },
           },
           (error, stdout, stderr) => {
-            const exitCode = error ? error.code : 0;
-            if (typeof exitCode !== "number") {
-              reject(error);
+            if (error) {
+              if (typeof error.code !== "number") {
+                reject(new Error("CI watcher did not exit normally", { cause: error }));
+                return;
+              }
+              resolve({ status: error.code, stdout, stderr });
               return;
             }
-            resolve({ status: exitCode, stdout, stderr });
+            resolve({ status: 0, stdout, stderr });
           },
         );
       },
@@ -108,7 +111,9 @@ function replayPlaceholder(
     const payload = join(root, "payload.json");
     const calls = join(root, "calls.jsonl");
     // The live capture is merged. Only lifecycle is reopened for the historical watch.
-    if (!evidence.merged) fixture.graphql.data.repository.pullRequest.state = "OPEN";
+    if (!evidence.merged) {
+      fixture.graphql.data.repository.pullRequest.state = "OPEN";
+    }
     writeFileSync(payload, JSON.stringify({ ...fixture, ...evidence }));
     writeFileSync(calls, "");
     const result = await runWatcher(
@@ -316,8 +321,9 @@ esac
           .map((line) => JSON.parse(line));
         expect(calls.filter((call) => call[1]?.includes("/attempts/"))).toHaveLength(1);
         const directReads = calls.filter((call) => call[1]?.includes("/actions/jobs/"));
-        expect(directReads.map((call) => Number(call[1]?.split("/").at(-1))).toSorted()).toEqual(
-          fixture.directJobs.map((job) => job.id).toSorted(),
+        const directIds = directReads.map((call) => Number(call[1]?.split("/").at(-1)));
+        expect(directIds.toSorted((left, right) => left - right)).toEqual(
+          fixture.directJobs.map((job) => job.id).toSorted((left, right) => left - right),
         );
         const finalEvidenceRead = calls.findLastIndex(
           (call) => call[1] === "repos/openclaw/openclaw/actions/runs/33155056361",
@@ -451,14 +457,12 @@ esac
       expect(result.stdout).not.toContain("GREEN");
     });
 
-    it.each(
-      [
-        { status: "IN_PROGRESS", conclusion: null, exitCode: 16 },
-        { status: "COMPLETED", conclusion: "FAILURE", exitCode: 15 },
-      ].flatMap((outcome) =>
-        [false, true].map((initiallyVisible) => ({ ...outcome, initiallyVisible })),
-      ),
-    )(
+    it.each([
+      { status: "IN_PROGRESS", conclusion: null, exitCode: 16, initiallyVisible: false },
+      { status: "IN_PROGRESS", conclusion: null, exitCode: 16, initiallyVisible: true },
+      { status: "COMPLETED", conclusion: "FAILURE", exitCode: 15, initiallyVisible: false },
+      { status: "COMPLETED", conclusion: "FAILURE", exitCode: 15, initiallyVisible: true },
+    ])(
       "keeps a changed lower-ID alias blocking ($status, initially visible: $initiallyVisible)",
       async ({ status, conclusion, exitCode, initiallyVisible }) => {
         const fixture = structuredClone(placeholderFixture);
@@ -486,9 +490,12 @@ esac
       },
     );
 
-    it.each([33155056361, 33155056360])(
-      "still supersedes an older failed check from run %s",
-      async (runId) => {
+    it.each([
+      { runId: 33155056361, exitCode: 0, output: "GREEN" },
+      { runId: 33155056360, exitCode: 15, output: "ambiguous check recency:" },
+    ])(
+      "requires supported recency for an older failed check from run $runId",
+      async ({ runId, exitCode, output }) => {
         const fixture = structuredClone(placeholderFixture);
         const contexts = fixture.graphql.data.repository.pullRequest.statusCheckRollup.contexts;
         const queued = contexts.nodes.find((check) => check.databaseId === 98802098786);
@@ -502,9 +509,11 @@ esac
         older.checkSuite.workflowRun.databaseId = runId;
         contexts.nodes.push(older);
         contexts.totalCount += 1;
+        // This capture predates startedAt collection; it proves same-run alias
+        // authority, not cross-run chronology for the synthetic failed sibling.
         const result = await replayPlaceholder(fixture, { watchTimeout: 5 });
-        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-        expect(result.stdout).toContain("GREEN");
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(exitCode);
+        expect(result.stdout).toContain(output);
       },
     );
 
@@ -562,12 +571,12 @@ esac
       ["failed job", { conclusion: "failure" }],
     ])("requires direct unexecuted-job proof: %s", async (_label, patch) => {
       const fixture = structuredClone(placeholderFixture);
-      const result = await replayPlaceholder(fixture, {
-        watchTimeout: 5,
-        directJobs: fixture.directJobs.map((job) =>
-          job.id === 98802098786 ? { ...job, ...patch } : job,
-        ),
-      });
+      // Malformed response IDs must not change the fake endpoint's routing IDs.
+      const directJobs = structuredClone(fixture.directJobs);
+      const alias = directJobs.find((job) => job.id === 98802098786);
+      assert(alias);
+      Object.assign(alias, patch);
+      const result = await replayPlaceholder(fixture, { watchTimeout: 5, directJobs });
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(16);
       expect(result.stdout).not.toContain("GREEN");
       expect(result.calls).toContain('"repos/openclaw/openclaw/actions/jobs/98802098786"');
@@ -580,11 +589,10 @@ esac
       ["malformed", { run_attempt: undefined }],
     ])("keeps the group pending when a non-rollup sibling is %s", async (_label, patch) => {
       const fixture = structuredClone(placeholderFixture);
-      const result = await replayPlaceholder(fixture, {
-        directJobs: fixture.directJobs.map((job) =>
-          job.id === 98802098559 ? { ...job, ...patch } : job,
-        ),
-      });
+      const alias = fixture.directJobs.find((job) => job.id === 98802098559);
+      assert(alias);
+      Object.assign(alias, patch);
+      const result = await replayPlaceholder(fixture);
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(16);
       expect(result.stdout).not.toContain("GREEN");
       expect(result.calls).toContain('"repos/openclaw/openclaw/actions/jobs/98802098559"');
@@ -711,7 +719,9 @@ esac
       const result = await replayPlaceholder(fixture, { watchTimeout: 5 });
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(exitCode);
       expect(result.stdout).not.toContain("GREEN");
-      if (exitCode === 16) expect(result.stdout).toContain("superseded=1");
+      if (exitCode === 16) {
+        expect(result.stdout).toContain("superseded=1");
+      }
     });
 
     it.concurrent.each(["unknown", "truncated", "unfinished pagination", "missing count"])(
@@ -719,11 +729,15 @@ esac
       async (scenario) => {
         const fixture = structuredClone(placeholderFixture);
         const rollup = fixture.graphql.data.repository.pullRequest.statusCheckRollup;
-        if (scenario === "unknown") rollup.state = "UNKNOWN";
-        else if (scenario === "truncated") rollup.contexts.totalCount += 1;
-        else if (scenario === "missing count")
+        if (scenario === "unknown") {
+          rollup.state = "UNKNOWN";
+        } else if (scenario === "truncated") {
+          rollup.contexts.totalCount += 1;
+        } else if (scenario === "missing count") {
           Object.assign(rollup.contexts, { totalCount: undefined });
-        else rollup.contexts.pageInfo.hasNextPage = true;
+        } else {
+          rollup.contexts.pageInfo.hasNextPage = true;
+        }
         const result = await replayPlaceholder(fixture);
         expect(result.status, `${result.stdout}\n${result.stderr}`).not.toBe(0);
         expect(result.stdout).not.toContain("GREEN");
@@ -766,9 +780,15 @@ esac
         const firstPage = { total_count: 100 + fixture.jobs.total_count, jobs: padding };
         const lastPage = { total_count: firstPage.total_count, jobs: fixture.jobs.jobs };
         const jobPages = [firstPage, lastPage];
-        if (scenario === "missing page") jobPages.pop();
-        if (scenario === "changed count") lastPage.total_count += 1;
-        if (scenario === "over limit") firstPage.total_count = 1_001;
+        if (scenario === "missing page") {
+          jobPages.pop();
+        }
+        if (scenario === "changed count") {
+          lastPage.total_count += 1;
+        }
+        if (scenario === "over limit") {
+          firstPage.total_count = 1_001;
+        }
         const result = await replayPlaceholder(fixture, {
           jobPages,
           watchTimeout: scenario === "complete" ? 5 : 1,
@@ -776,7 +796,9 @@ esac
         expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(
           scenario === "complete" ? 0 : 16,
         );
-        if (scenario === "complete") expect(result.calls).toContain("per_page=100&page=2");
+        if (scenario === "complete") {
+          expect(result.calls).toContain("per_page=100&page=2");
+        }
       },
     );
   });
@@ -983,18 +1005,22 @@ esac
           nodes: [
             {
               kind: "CheckRun",
+              databaseId: 1_000,
               name: "Real behavior proof",
               status: "COMPLETED",
               conclusion: "CANCELLED",
+              startedAt: "2026-09-03T09:24:37Z",
               checkSuite: {
                 workflowRun: { databaseId: 100, workflow: { databaseId: 10 } },
               },
             },
             {
               kind: "CheckRun",
+              databaseId: 2_000,
               name: "Real behavior proof",
               status: "IN_PROGRESS",
               conclusion: null,
+              startedAt: "2026-09-03T09:24:45Z",
               checkSuite: {
                 workflowRun: { databaseId: 200, workflow: { databaseId: 10 } },
               },
@@ -1012,105 +1038,78 @@ esac
     ).toEqual({ verdict: "PENDING", pendingCount: 2, failingNames: [], supersededCount: 1 });
   });
 
-  it.each<{
-    label: string;
-    name?: string;
-    conclusion?: string;
-    event?: string | null;
-    workflowId?: number | null;
-    newerRunId?: number;
-    newerWorkflowId?: number | null;
-    ciStatus?: string;
-    verdict?: string;
-  }>([
-    { label: "pending CI", ciStatus: "IN_PROGRESS", verdict: "PENDING" },
-    { label: "successful CI with a different check name", name: "target guard", verdict: "GREEN" },
-    { label: "latest target cancellation", newerRunId: 100 },
-    { label: "real target failure", conclusion: "FAILURE" },
-    { label: "another event's cancellation", event: "pull_request" },
-    { label: "another workflow", newerWorkflowId: 20 },
-    { label: "unknown event", event: null },
-    { label: "unknown visible workflow identity", workflowId: null },
-    { label: "unknown replacement workflow identity", newerWorkflowId: null },
-  ])(
-    "uses newer same-workflow target-run identity without hiding $label",
-    ({
-      name = "dispatch",
-      conclusion = "CANCELLED",
-      event = "pull_request_target",
-      workflowId = 10,
-      newerRunId = 200,
-      newerWorkflowId = 10,
-      ciStatus = "COMPLETED",
-      verdict = "FAILING",
-    }) => {
+  it.each(["pull_request", "pull_request_target"])(
+    "keeps a %s cancellation without a same-name replacement",
+    (event) => {
       expect(
-        classifyRollup(
-          {
-            state: "FAILURE",
-            contexts: {
-              nodes: [
-                {
-                  kind: "CheckRun",
-                  name,
-                  status: "COMPLETED",
-                  conclusion,
-                  checkSuite: {
-                    workflowRun: {
-                      databaseId: 100,
-                      event: event ?? undefined,
-                      workflow: { databaseId: workflowId ?? undefined },
-                    },
-                  },
+        classifyRollup({
+          state: "FAILURE",
+          contexts: {
+            nodes: [
+              {
+                kind: "CheckRun",
+                databaseId: 1_000,
+                name: "target guard",
+                status: "COMPLETED",
+                conclusion: "CANCELLED",
+                startedAt: "2026-09-03T09:24:37Z",
+                checkSuite: {
+                  workflowRun: { databaseId: 100, event, workflow: { databaseId: 10 } },
                 },
-                {
-                  kind: "CheckRun",
-                  name: "CI",
-                  status: ciStatus,
-                  conclusion: ciStatus === "COMPLETED" ? "SUCCESS" : null,
-                  checkSuite: { workflowRun: { databaseId: 200, workflow: { databaseId: 20 } } },
+              },
+              {
+                kind: "CheckRun",
+                databaseId: 2_000,
+                name: "another job",
+                status: "COMPLETED",
+                conclusion: "SUCCESS",
+                startedAt: "2026-09-03T09:24:45Z",
+                checkSuite: {
+                  workflowRun: { databaseId: 200, event, workflow: { databaseId: 10 } },
                 },
-              ],
-            },
+              },
+            ],
           },
-          [{ id: newerRunId, workflow_id: newerWorkflowId ?? undefined }],
-        ),
+        }),
       ).toEqual({
-        verdict,
-        pendingCount: ciStatus === "IN_PROGRESS" ? 1 : 0,
-        failingNames: verdict === "FAILING" ? [name] : [],
-        supersededCount: verdict === "FAILING" ? 0 : 1,
+        verdict: "FAILING",
+        pendingCount: 0,
+        failingNames: ["target guard"],
+        supersededCount: 0,
       });
     },
   );
 
-  it("keeps only the newest same-run check attempt while its replacement is pending", () => {
-    expect(
-      classifyRollup({
-        state: "FAILURE",
-        contexts: {
-          nodes: [
-            {
-              kind: "CheckRun",
-              databaseId: 1_000,
-              name: "unit",
-              status: "COMPLETED",
-              conclusion: "CANCELLED",
-              checkSuite: { workflowRun: { databaseId: 500, workflow: { databaseId: 20 } } },
-            },
-            {
-              kind: "CheckRun",
-              databaseId: 2_000,
-              name: "unit",
-              status: "IN_PROGRESS",
-              conclusion: null,
-              checkSuite: { workflowRun: { databaseId: 500, workflow: { databaseId: 20 } } },
-            },
-          ],
-        },
-      }),
-    ).toEqual({ verdict: "PENDING", pendingCount: 1, failingNames: [], supersededCount: 1 });
-  });
+  it.each(["QUEUED", "IN_PROGRESS"])(
+    "keeps only the newest same-run check attempt while its replacement is %s",
+    (status) => {
+      expect(
+        classifyRollup({
+          state: "FAILURE",
+          contexts: {
+            nodes: [
+              {
+                kind: "CheckRun",
+                databaseId: 1_000,
+                name: "unit",
+                status: "COMPLETED",
+                conclusion: "CANCELLED",
+                checkSuite: { workflowRun: { databaseId: 500, workflow: { databaseId: 20 } } },
+              },
+              {
+                kind: "CheckRun",
+                databaseId: 2_000,
+                name: "unit",
+                status,
+                conclusion: null,
+                checkSuite: { workflowRun: { databaseId: 500, workflow: { databaseId: 20 } } },
+              },
+            ],
+          },
+        }),
+      ).toEqual({ verdict: "PENDING", pendingCount: 1, failingNames: [], supersededCount: 1 });
+    },
+  );
 
   it("accepts a successful newest check attempt when the aggregate remains failed", () => {
     expect(
@@ -1140,7 +1139,7 @@ esac
     ).toEqual({ verdict: "GREEN", pendingCount: 0, failingNames: [], supersededCount: 1 });
   });
 
-  it("accepts newest successful runs when the aggregate remains failed", () => {
+  it("reports genuine failures and unreplaced cancellations together", () => {
     expect(
       classifyRollup({
         state: "FAILURE",
@@ -1148,51 +1147,7 @@ esac
           nodes: [
             {
               kind: "CheckRun",
-              name: "old proof",
-              status: "COMPLETED",
-              conclusion: "CANCELLED",
-              checkSuite: {
-                workflowRun: { databaseId: 100, workflow: { databaseId: 10 } },
-              },
-            },
-            {
-              kind: "CheckRun",
-              name: "proof",
-              status: "COMPLETED",
-              conclusion: "SUCCESS",
-              checkSuite: {
-                workflowRun: { databaseId: 200, workflow: { databaseId: 10 } },
-              },
-            },
-            {
-              kind: "CheckRun",
-              name: "old CI",
-              status: "COMPLETED",
-              conclusion: "CANCELLED",
-              checkSuite: { workflowRun: { databaseId: 150, workflow: { databaseId: 20 } } },
-            },
-            {
-              kind: "CheckRun",
-              name: "CI",
-              status: "COMPLETED",
-              conclusion: "SUCCESS",
-              checkSuite: { workflowRun: { databaseId: 250, workflow: { databaseId: 20 } } },
-            },
-          ],
-        },
-      }),
-    ).toEqual({ verdict: "GREEN", pendingCount: 0, failingNames: [], supersededCount: 2 });
-  });
-
-  it("preserves a genuine failure from the newest workflow run", () => {
-    expect(
-      classifyRollup({
-        state: "FAILURE",
-        contexts: {
-          nodes: [
-            {
-              kind: "CheckRun",
-              name: "superseded cancellation",
+              name: "unreplaced cancellation",
               status: "COMPLETED",
               conclusion: "CANCELLED",
               checkSuite: { workflowRun: { databaseId: 100, workflow: { databaseId: 20 } } },
@@ -1210,8 +1165,8 @@ esac
     ).toEqual({
       verdict: "FAILING",
       pendingCount: 0,
-      failingNames: ["unit"],
-      supersededCount: 1,
+      failingNames: ["unit", "unreplaced cancellation"],
+      supersededCount: 0,
     });
   });
 
@@ -1223,9 +1178,11 @@ esac
           nodes: [
             {
               kind: "CheckRun",
-              name: "old deploy",
+              databaseId: 1_000,
+              name: "deploy",
               status: "COMPLETED",
               conclusion: "CANCELLED",
+              startedAt: "2026-09-03T09:24:37Z",
               checkSuite: { workflowRun: { databaseId: 200, workflow: { databaseId: 20 } } },
             },
             {
@@ -1237,9 +1194,11 @@ esac
             },
             {
               kind: "CheckRun",
+              databaseId: 2_000,
               name: "deploy",
               status: "COMPLETED",
               conclusion: "SUCCESS",
+              startedAt: "2026-09-03T09:24:45Z",
               checkSuite: { workflowRun: { databaseId: 400, workflow: { databaseId: 20 } } },
             },
           ],
@@ -1286,33 +1245,180 @@ esac
     });
   });
 
-  it("supersedes same-name checks across runs of the same workflow", () => {
-    expect(
-      classifyRollup({
-        state: "FAILURE",
-        contexts: {
-          nodes: [
-            {
-              kind: "CheckRun",
-              databaseId: 1_000,
-              name: "unit",
-              status: "COMPLETED",
-              conclusion: "FAILURE",
-              checkSuite: { workflowRun: { databaseId: 300, workflow: { databaseId: 20 } } },
-            },
-            {
-              kind: "CheckRun",
-              databaseId: 2_000,
-              name: "unit",
-              status: "COMPLETED",
-              conclusion: "SUCCESS",
-              checkSuite: { workflowRun: { databaseId: 400, workflow: { databaseId: 20 } } },
-            },
-          ],
+  it.each<{
+    label: string;
+    laterRunId?: number;
+    laterCheckId?: number;
+    laterStartedAt?: string | null;
+    earlierConclusion?: string;
+    laterConclusion?: string | null;
+    laterStatus?: string;
+    laterWorkflowId?: number | null;
+    rollupState?: string;
+    ambiguous?: boolean;
+    priorAttempt?: boolean;
+    verdict?: string;
+    pendingCount?: number;
+    supersededCount?: number;
+  }>([
+    { label: "captured inverse run/check ordering" },
+    {
+      label: "obsolete same-run attempt without a timestamp",
+      priorAttempt: true,
+      supersededCount: 2,
+    },
+    { label: "aligned run/check ordering", laterRunId: 33738672199 },
+    { label: "start order opposite check creation", laterCheckId: 100595207889 },
+    {
+      label: "pending replacement",
+      laterStatus: "IN_PROGRESS",
+      laterConclusion: null,
+      verdict: "PENDING",
+      pendingCount: 1,
+    },
+    {
+      label: "successful observations with ambiguous recency",
+      earlierConclusion: "SUCCESS",
+      laterStartedAt: null,
+      rollupState: "SUCCESS",
+      ambiguous: true,
+      verdict: "FAILING",
+      supersededCount: 0,
+    },
+    {
+      label: "successful observations tied at the same instant",
+      earlierConclusion: "SUCCESS",
+      laterStartedAt: "2026-09-03T11:24:37+02:00",
+      rollupState: "SUCCESS",
+      ambiguous: true,
+      verdict: "FAILING",
+      supersededCount: 0,
+    },
+    {
+      label: "later cancellation",
+      earlierConclusion: "SUCCESS",
+      laterConclusion: "CANCELLED",
+      verdict: "FAILING",
+    },
+    {
+      label: "later failure",
+      earlierConclusion: "SUCCESS",
+      laterConclusion: "FAILURE",
+      verdict: "FAILING",
+    },
+    {
+      label: "queued sibling without a start timestamp",
+      earlierConclusion: "SUCCESS",
+      laterStatus: "QUEUED",
+      laterConclusion: null,
+      laterStartedAt: null,
+      ambiguous: true,
+      verdict: "FAILING",
+      pendingCount: 1,
+      supersededCount: 0,
+    },
+    {
+      label: "missing start time",
+      laterStartedAt: null,
+      ambiguous: true,
+      verdict: "FAILING",
+      supersededCount: 0,
+    },
+    {
+      label: "invalid start time",
+      laterStartedAt: "invalid",
+      ambiguous: true,
+      verdict: "FAILING",
+      supersededCount: 0,
+    },
+    {
+      label: "tied start times",
+      laterStartedAt: "2026-09-03T09:24:37Z",
+      ambiguous: true,
+      verdict: "FAILING",
+      supersededCount: 0,
+    },
+    {
+      label: "different workflow",
+      laterWorkflowId: 267519340,
+      verdict: "FAILING",
+      supersededCount: 0,
+    },
+    {
+      label: "missing workflow identity",
+      laterWorkflowId: null,
+      verdict: "FAILING",
+      supersededCount: 0,
+    },
+  ])(
+    "resolves same-name checks by execution recency: $label",
+    ({
+      laterRunId = 33738671610,
+      laterCheckId = 100595224460,
+      laterStartedAt = "2026-09-03T09:24:45Z",
+      earlierConclusion = "CANCELLED",
+      laterConclusion = "SUCCESS",
+      laterStatus = "COMPLETED",
+      laterWorkflowId = 267519339,
+      rollupState = "FAILURE",
+      ambiguous = false,
+      priorAttempt = false,
+      verdict = "GREEN",
+      pendingCount = 0,
+      supersededCount = 1,
+    }) => {
+      // Captured dispatch IDs/times: concurrency canceled the larger run ID
+      // before the smaller run's check started. The check name is immaterial.
+      const nodes = [
+        {
+          kind: "CheckRun" as const,
+          databaseId: 100595207890,
+          name: "unit",
+          status: "COMPLETED",
+          conclusion: earlierConclusion,
+          startedAt: "2026-09-03T09:24:37Z",
+          checkSuite: {
+            workflowRun: { databaseId: 33738672198, workflow: { databaseId: 267519339 } },
+          },
         },
-      }),
-    ).toEqual({ verdict: "GREEN", pendingCount: 0, failingNames: [], supersededCount: 1 });
-  });
+        {
+          kind: "CheckRun" as const,
+          databaseId: laterCheckId,
+          name: "unit",
+          status: laterStatus,
+          conclusion: laterConclusion,
+          startedAt: laterStartedAt ?? undefined,
+          checkSuite: {
+            workflowRun: {
+              databaseId: laterRunId,
+              workflow: { databaseId: laterWorkflowId ?? undefined },
+            },
+          },
+        },
+      ];
+      const earlier = nodes[0];
+      assert(earlier);
+      const obsolete = {
+        ...earlier,
+        databaseId: 100595100000,
+        startedAt: undefined,
+        status: "QUEUED",
+        conclusion: null,
+      };
+      const observed = priorAttempt ? [obsolete, ...nodes] : nodes;
+      const failingNames = ambiguous ? ["ambiguous check recency: unit"] : ["unit"];
+      const expected = {
+        verdict,
+        pendingCount,
+        failingNames: verdict === "FAILING" ? failingNames : [],
+        supersededCount,
+      };
+      const results = [observed, observed.toReversed()].map((ordered) =>
+        classifyRollup({ state: rollupState, contexts: { nodes: ordered } }),
+      );
+      expect(results).toEqual([expected, expected]);
+    },
+  );
 
   it("fails conservatively when unseen contexts may explain aggregate failure", () => {
     expect(
@@ -1323,16 +1429,20 @@ esac
           nodes: [
             {
               kind: "CheckRun",
-              name: "old CI",
+              databaseId: 1_000,
+              name: "CI",
               status: "COMPLETED",
               conclusion: "CANCELLED",
+              startedAt: "2026-09-03T09:24:37Z",
               checkSuite: { workflowRun: { databaseId: 100, workflow: { databaseId: 20 } } },
             },
             {
               kind: "CheckRun",
+              databaseId: 2_000,
               name: "CI",
               status: "COMPLETED",
               conclusion: "SUCCESS",
+              startedAt: "2026-09-03T09:24:45Z",
               checkSuite: { workflowRun: { databaseId: 200, workflow: { databaseId: 20 } } },
             },
           ],
