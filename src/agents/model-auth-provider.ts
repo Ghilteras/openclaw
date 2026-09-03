@@ -165,7 +165,7 @@ export async function resolveApiKeyForProviderCore(params: {
   agentDir?: string;
   workspaceDir?: string;
   /** When true, treat profileId as a user-locked selection that must not be
-   *  silently overridden by env/config credentials. */
+   *  silently replaced by another profile or env/config credentials. */
   lockedProfile?: boolean;
   forceRefresh?: boolean;
   credentialPrecedence?: ProviderCredentialPrecedence;
@@ -225,6 +225,7 @@ export async function resolveApiKeyForProviderCore(params: {
       profileId,
       agentDir,
       forceRefresh: params.forceRefresh,
+      allowProfileFallback: !params.lockedProfile,
     });
     if (!resolved) {
       throw new Error(`No credentials found for profile "${profileId}".`);
