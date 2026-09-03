@@ -608,7 +608,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
 
     respond(true, { ts: Date.now(), previews } satisfies SessionsPreviewResult, undefined);
   },
-  "sessions.describe": ({ params, respond, context }) => {
+  "sessions.describe": ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateSessionsDescribeParams, "sessions.describe", respond)) {
       return;
     }
@@ -627,7 +627,9 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
       cfg,
       ...(requestedAgent.agentId ? { agentId: requestedAgent.agentId } : {}),
     });
-    if (!entry) {
+    const boundaryFilter =
+      hasOperatorBoundary(client, cfg) && createSessionListEntryFilter({ client, cfg });
+    if (!entry || (boundaryFilter && !boundaryFilter(target.canonicalKey, entry))) {
       respond(true, { session: null }, undefined);
       return;
     }
