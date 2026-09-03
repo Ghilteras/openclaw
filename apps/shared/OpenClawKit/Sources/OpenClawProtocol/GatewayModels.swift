@@ -22944,6 +22944,56 @@ public enum BoardCommand: Codable, Sendable {
     }
 }
 
+public struct GatewayErrorDetailsGithubPreviewUnavailable: Codable, Sendable {
+    public let code: String
+    public let reason: String
+
+    public init(
+        reason: String
+    )
+    {
+        self.code = "GITHUB_PREVIEW_UNAVAILABLE"
+        self.reason = reason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case code
+        case reason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
+        let unexpectedKeys = rawContainer.allKeys
+            .map(\.stringValue)
+            .filter { !Set(["code", "reason"]).contains($0) }
+        if !unexpectedKeys.isEmpty {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: rawContainer.codingPath,
+                    debugDescription: "Unexpected keys for GatewayErrorDetailsGithubPreviewUnavailable: \(unexpectedKeys.sorted().joined(separator: ", "))"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedCode = try container.decode(String.self, forKey: .code)
+        guard decodedCode == "GITHUB_PREVIEW_UNAVAILABLE" else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .code,
+                in: container,
+                debugDescription: "Expected code to equal GITHUB_PREVIEW_UNAVAILABLE"
+            )
+        }
+        self.code = "GITHUB_PREVIEW_UNAVAILABLE"
+        self.reason = try container.decode(String.self, forKey: .reason)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode("GITHUB_PREVIEW_UNAVAILABLE", forKey: .code)
+        try container.encode(reason, forKey: .reason)
+    }
+}
+
 public enum GatewayErrorDetails: Codable, Sendable {
     case cronJobNotFound(CronJobNotFoundErrorDetails)
     case missingScope(MissingScopeErrorDetails)
@@ -22952,6 +23002,7 @@ public enum GatewayErrorDetails: Codable, Sendable {
     case userPrefsLimitExceeded(UserPrefsLimitExceededErrorDetails)
     case skillProposalRevisionChanged(SkillProposalRevisionChangedErrorDetails)
     case projectCloneFailed(ProjectCloneErrorDetails)
+    case githubPreviewUnavailable(GatewayErrorDetailsGithubPreviewUnavailable)
     case unknownAgentId(UnknownAgentIdErrorDetails)
     case wizardNotFound(WizardNotFoundErrorDetails)
     case setupAdmissionBusy(SetupAdmissionBusyErrorDetails)
@@ -22975,6 +23026,7 @@ public enum GatewayErrorDetails: Codable, Sendable {
         case .userPrefsLimitExceeded(let value): value.code
         case .skillProposalRevisionChanged(let value): value.code
         case .projectCloneFailed(let value): value.code
+        case .githubPreviewUnavailable(let value): value.code
         case .unknownAgentId(let value): value.code
         case .wizardNotFound(let value): value.code
         case .setupAdmissionBusy(let value): value.code
@@ -23006,6 +23058,7 @@ public enum GatewayErrorDetails: Codable, Sendable {
         case "USER_PREFS_LIMIT_EXCEEDED": self = try .userPrefsLimitExceeded(UserPrefsLimitExceededErrorDetails(from: decoder))
         case "SKILL_PROPOSAL_REVISION_CHANGED": self = try .skillProposalRevisionChanged(SkillProposalRevisionChangedErrorDetails(from: decoder))
         case "PROJECT_CLONE_FAILED": self = try .projectCloneFailed(ProjectCloneErrorDetails(from: decoder))
+        case "GITHUB_PREVIEW_UNAVAILABLE": self = try .githubPreviewUnavailable(GatewayErrorDetailsGithubPreviewUnavailable(from: decoder))
         case "UNKNOWN_AGENT_ID": self = try .unknownAgentId(UnknownAgentIdErrorDetails(from: decoder))
         case "WIZARD_NOT_FOUND": self = try .wizardNotFound(WizardNotFoundErrorDetails(from: decoder))
         case "SETUP_ADMISSION_BUSY": self = try .setupAdmissionBusy(SetupAdmissionBusyErrorDetails(from: decoder))
@@ -23027,6 +23080,7 @@ public enum GatewayErrorDetails: Codable, Sendable {
         case .userPrefsLimitExceeded(let value): try value.encode(to: encoder)
         case .skillProposalRevisionChanged(let value): try value.encode(to: encoder)
         case .projectCloneFailed(let value): try value.encode(to: encoder)
+        case .githubPreviewUnavailable(let value): try value.encode(to: encoder)
         case .unknownAgentId(let value): try value.encode(to: encoder)
         case .wizardNotFound(let value): try value.encode(to: encoder)
         case .setupAdmissionBusy(let value): try value.encode(to: encoder)

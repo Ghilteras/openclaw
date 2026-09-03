@@ -1225,7 +1225,7 @@ openclaw-session-progress-hovercard-provider {
   background: color-mix(in srgb, var(--card) 96%, var(--bg) 4%);
   box-shadow: var(--overlay-shadow);
   color: var(--text);
-  font-family: var(--font-body);
+  overflow-wrap: anywhere;
   /* Interactive by design: hover intent and text selection both need the card to
      receive pointer events (see github-link-hovercard.runtime.ts). */
   pointer-events: auto;
@@ -1256,6 +1256,10 @@ openclaw-session-progress-hovercard-provider {
 
 .github-link-hovercard__header {
   gap: 9px;
+}
+
+.github-link-hovercard__header,
+.github-link-hovercard__unavailable {
   color: var(--muted);
   font-size: var(--control-ui-text-sm);
 }
@@ -1302,12 +1306,8 @@ openclaw-session-progress-hovercard-provider {
   white-space: nowrap;
 }
 
-.github-link-hovercard__repo:hover,
-.github-link-hovercard__repo:focus-visible,
-.github-link-hovercard__author:hover,
-.github-link-hovercard__author:focus-visible {
+:is(.github-link-hovercard__repo, .github-link-hovercard__author):is(:hover, :focus-visible) {
   color: var(--text-strong);
-  text-decoration: none;
 }
 
 .github-link-hovercard__time {
@@ -1324,12 +1324,10 @@ openclaw-session-progress-hovercard-provider {
   font-weight: 650;
   letter-spacing: -0.012em;
   line-height: 1.35;
-  overflow-wrap: anywhere;
   text-decoration: none;
 }
 
-a.github-link-hovercard__title:hover,
-a.github-link-hovercard__title:focus-visible {
+a.github-link-hovercard__title:is(:hover, :focus-visible) {
   text-decoration: underline;
 }
 
@@ -1420,10 +1418,6 @@ a.github-link-hovercard__title:focus-visible {
 
 .github-link-hovercard__unavailable {
   margin-bottom: 12px;
-  color: var(--muted);
-  font-size: var(--control-ui-text-sm);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
 }
 
 .github-link-hovercard__skeleton .skeleton {
