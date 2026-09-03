@@ -621,7 +621,7 @@ ${runner.slice(boundary)}
       isolatedCwd,
     );
     for (const requestPath of completeRequestPaths.filter(
-      (requestPath) => !requestPath.endsWith("/security"),
+      (candidatePath) => !candidatePath.endsWith("/security"),
     )) {
       const response = await fetch(`${legacyBaseUrl}${requestPath}`);
       expect(response.status).toBe(200);
