@@ -40,10 +40,21 @@ export async function inspectWorkshopReviewTree(params: {
     const afterFileDirs = new Set([...afterFiles.values()].map((file) => file.relativeDir));
     const revertedDirs = new Set<string>();
     const reviewErrors: string[] = [];
-    const changedFiles = [...afterFiles.values()].filter((file) => {
-      const previous = params.beforeFiles.get(file.relativePath);
-      return !previous || previous.contentHash !== file.contentHash;
-    });
+    const changedPaths = new Set(
+      [...new Set([...params.beforeFiles.keys(), ...afterFiles.keys()])].filter(
+        (relativePath) =>
+          params.beforeFiles.get(relativePath)?.contentHash !==
+          afterFiles.get(relativePath)?.contentHash,
+      ),
+    );
+    const changedDirs = new Set(
+      [...params.beforeFiles.values(), ...afterFiles.values()]
+        .filter((file) => changedPaths.has(file.relativePath))
+        .map((file) => file.relativeDir),
+    );
+    const changedFiles = [...afterFiles.values()].filter((file) =>
+      changedPaths.has(file.relativePath),
+    );
     const criticalFilesByDir = new Map<string, string>();
     const skillsRootAccess = await root(params.skillsRoot);
     for (const file of changedFiles) {
@@ -72,6 +83,7 @@ export async function inspectWorkshopReviewTree(params: {
     }
     for (const [relativeDir, relativePath] of beforeFilesByDirectory(params.beforeFiles)) {
       if (
+        !changedDirs.has(relativeDir) ||
         relativeDir === "." ||
         afterFileDirs.has(relativeDir) ||
         params.beforeLoadedDirs.has(relativeDir)
@@ -117,6 +129,7 @@ export async function inspectWorkshopReviewTree(params: {
     }
     for (const file of afterFiles.values()) {
       if (
+        !changedDirs.has(file.relativeDir) ||
         afterLoadedDirs.has(file.relativeDir) ||
         revertedDirs.has(file.relativeDir) ||
         (!params.beforeLoadedDirs.has(file.relativeDir) && !beforeFileDirs.has(file.relativeDir))
