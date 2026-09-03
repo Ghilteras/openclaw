@@ -65,9 +65,8 @@ export function createDiscordVoiceTestHelpers(updateVoiceStateMock: ReturnType<t
 
   const createClient = () => ({
     rest: { get: vi.fn() as Mock },
-    fetchChannel: vi.fn(
-      async (channelId: string): Promise<VoiceChannelInfo | null> =>
-        createVoiceChannelInfo(channelId),
+    fetchChannel: vi.fn(async (channelId: string): Promise<VoiceChannelInfo | null> =>
+      createVoiceChannelInfo(channelId),
     ),
     fetchGuild: vi.fn(async (guildId: string) => ({ id: guildId, name: "Guild One" })),
     getPlugin: vi.fn((_id?: string): unknown => ({
