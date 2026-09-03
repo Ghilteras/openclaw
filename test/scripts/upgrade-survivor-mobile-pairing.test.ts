@@ -599,6 +599,93 @@ describe("upgrade survivor mobile pairing client", () => {
     );
   });
 
+  it.each(["watchos-direct-node", "mobile-pairing-reconnect"])(
+    "skips generic plugin fixture phases for the %s companion survivor",
+    (scenario) => {
+      const source = readFileSync(RUNNER_PATH, "utf8");
+      const helpers = source.slice(
+        source.indexOf("companion_survivor_scenario()"),
+        source.indexOf("\npackage_root()"),
+      );
+      const result = execFileSync(
+        "bash",
+        [
+          "-c",
+          `set -eu
+SCENARIO="$1"
+${helpers}
+phase() { printf '%s\\n' "$1"; }
+run_plugin_fixture_phase fixture-phase true
+`,
+          "companion-plugin-phase",
+          scenario,
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(result).toBe("");
+    },
+  );
+
+  it("keeps generic plugin fixtures in non-companion upgrade survivor scenarios", () => {
+    const source = readFileSync(RUNNER_PATH, "utf8");
+    const helpers = source.slice(
+      source.indexOf("companion_survivor_scenario()"),
+      source.indexOf("\npackage_root()"),
+    );
+    const result = execFileSync(
+      "bash",
+      [
+        "-c",
+        `set -eu
+SCENARIO=base
+${helpers}
+phase() { printf '%s\\n' "$1"; }
+run_plugin_fixture_phase fixture-phase true
+`,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result).toBe("fixture-phase\n");
+  });
+
+  it("routes every generic plugin fixture phase through the companion guard", () => {
+    const source = readFileSync(RUNNER_PATH, "utf8");
+    const orchestration = source.slice(source.indexOf("phase storage-preflight"));
+    const guardedPhases = [
+      "install-baseline-plugin-dependencies",
+      "seed-legacy-plugin-dependency-debris",
+      "assert-legacy-plugin-dependency-debris",
+      "seed-source-only-plugin-shadow",
+      "seed-legacy-runtime-deps-symlink",
+      "configure-plugin-registry",
+      "assert-prepublish-requests",
+      "assert-legacy-plugin-dependency-debris-before-doctor",
+      "assert-legacy-plugin-dependency-debris-cleaned",
+      "assert-legacy-runtime-deps-symlink-repaired",
+      "fixture-plugin-consent",
+    ];
+
+    expect(orchestration).toContain(
+      [
+        "if companion_survivor_scenario; then",
+        "  unset OPENCLAW_CLAWHUB_URL CLAWHUB_URL",
+        "else",
+        "  phase configure-clawhub-fixture configure_clawhub_fixture",
+        "fi",
+      ].join("\n"),
+    );
+    for (const phase of guardedPhases) {
+      expect(orchestration).toContain(`run_plugin_fixture_phase ${phase} `);
+      expect(orchestration).not.toMatch(new RegExp(`^phase ${phase} `, "mu"));
+    }
+    expect(orchestration).toContain("phase bootstrap-mobile-pairing bootstrap_mobile_pairing");
+    expect(orchestration).toContain("phase mobile-pairing-candidate-first");
+    expect(orchestration).toContain("phase mobile-pairing-candidate-restart");
+    expect(orchestration).toContain("phase mobile-pairing-final");
+  });
+
   it("selects package replacement by the immutable 8.1 source SHA, not its version alone", () => {
     const source = readFileSync(RUNNER_PATH, "utf8");
     const functions = source.slice(

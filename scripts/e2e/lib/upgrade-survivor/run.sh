@@ -512,6 +512,15 @@ phase() {
   CURRENT_PHASE=""
 }
 
+companion_survivor_scenario() {
+  [ "$SCENARIO" = "watchos-direct-node" ] || [ "$SCENARIO" = "mobile-pairing-reconnect" ]
+}
+
+run_plugin_fixture_phase() {
+  companion_survivor_scenario && return 0
+  phase "$@"
+}
+
 package_root() {
   printf '%s/lib/node_modules/openclaw\n' "$npm_config_prefix"
 }
@@ -1538,11 +1547,7 @@ repair_fixture_plugin_consent() {
     fi
   fi
   if [ -n "${OPENCLAW_CLAWHUB_URL:-}" ]; then
-    if [ "$SCENARIO" = "watchos-direct-node" ]; then
-      phase assert-prepublish-recovery-idle assert_prepublish_fixture_idle
-    else
-      phase assert-prepublish-recovery-requests assert_prepublish_plugin_install
-    fi
+    phase assert-prepublish-recovery-requests assert_prepublish_plugin_install
   fi
 }
 
@@ -1725,16 +1730,20 @@ fi
 phase validate-baseline-config validate_baseline_config
 phase resolve-candidate resolve_candidate_version
 phase resolve-candidate-install-mode resolve_candidate_install_mode
-phase configure-clawhub-fixture configure_clawhub_fixture
+if companion_survivor_scenario; then
+  unset OPENCLAW_CLAWHUB_URL CLAWHUB_URL
+else
+  phase configure-clawhub-fixture configure_clawhub_fixture
+fi
 phase prepare-update-restart-probe prepare_update_restart_probe
 phase bootstrap-mobile-pairing bootstrap_mobile_pairing
 # Start the published baseline before adding migration specimens: its startup
 # guards correctly reject them, and baseline Doctor would consume candidate proof.
 phase seed-state seed_state
-phase install-baseline-plugin-dependencies install_baseline_plugin_dependencies
-phase seed-legacy-plugin-dependency-debris seed_legacy_plugin_dependency_debris
-phase assert-legacy-plugin-dependency-debris assert_legacy_plugin_dependency_debris_present
-phase seed-source-only-plugin-shadow seed_source_only_plugin_shadow
+run_plugin_fixture_phase install-baseline-plugin-dependencies install_baseline_plugin_dependencies
+run_plugin_fixture_phase seed-legacy-plugin-dependency-debris seed_legacy_plugin_dependency_debris
+run_plugin_fixture_phase assert-legacy-plugin-dependency-debris assert_legacy_plugin_dependency_debris_present
+run_plugin_fixture_phase seed-source-only-plugin-shadow seed_source_only_plugin_shadow
 if [ "$SCENARIO" = "sqlite-volume" ]; then
   phase seed-baseline-shared-state node scripts/e2e/lib/upgrade-survivor/sqlite-volume-shared-state.mjs \
     seed-baseline-plugin-state "$(package_root)"
@@ -1748,7 +1757,7 @@ fi
 if [ "$SCENARIO" = "recovery-cleanup" ]; then
   phase seed-recovery-state node scripts/e2e/lib/upgrade-survivor/recovery-cleanup.mjs seed
 fi
-phase seed-legacy-runtime-deps-symlink seed_legacy_runtime_deps_symlink
+run_plugin_fixture_phase seed-legacy-runtime-deps-symlink seed_legacy_runtime_deps_symlink
 if [ "$SCENARIO" = "recovery-cleanup" ]; then
   if [ "$CANDIDATE_KIND" != "tarball" ]; then
     echo "recovery-cleanup requires one packed candidate tarball" >&2
@@ -1756,7 +1765,7 @@ if [ "$SCENARIO" = "recovery-cleanup" ]; then
   fi
   phase recovery-package-evidence node scripts/e2e/lib/upgrade-survivor/recovery-cleanup.mjs packages "$baseline_spec" "$CANDIDATE_SPEC"
 fi
-phase configure-plugin-registry configure_plugin_registry
+run_plugin_fixture_phase configure-plugin-registry configure_plugin_registry
 phase update-candidate update_candidate_for_install_mode
 if [ "$candidate_install_mode" = "historical-package-replacement" ]; then
   phase assert-historical-package-replacement-prestart \
@@ -1777,22 +1786,18 @@ if [ "$SCENARIO" = "recovery-cleanup" ]; then
   phase assert-recovery-migration node scripts/e2e/lib/upgrade-survivor/recovery-cleanup.mjs migrated
 fi
 if [ -n "${OPENCLAW_CLAWHUB_URL:-}" ]; then
-  if [ "$SCENARIO" = "watchos-direct-node" ]; then
-    phase assert-prepublish-idle assert_prepublish_fixture_idle
-  else
-    phase assert-prepublish-requests assert_prepublish_plugin_install 1
-  fi
+  run_plugin_fixture_phase assert-prepublish-requests assert_prepublish_plugin_install 1
 fi
 phase root-managed-vps-cli-usable assert_root_managed_vps_cli_usable
-phase assert-legacy-plugin-dependency-debris-before-doctor assert_legacy_plugin_dependency_debris_before_doctor
+run_plugin_fixture_phase assert-legacy-plugin-dependency-debris-before-doctor assert_legacy_plugin_dependency_debris_before_doctor
 if [ "$SCENARIO" != "sqlite-volume" ] && [ "$SCENARIO" != "recovery-cleanup" ]; then
   phase doctor run_doctor
 fi
-phase assert-legacy-plugin-dependency-debris-cleaned assert_legacy_plugin_dependency_debris_cleaned
-phase assert-legacy-runtime-deps-symlink-repaired assert_legacy_runtime_deps_symlink_repaired
+run_plugin_fixture_phase assert-legacy-plugin-dependency-debris-cleaned assert_legacy_plugin_dependency_debris_cleaned
+run_plugin_fixture_phase assert-legacy-runtime-deps-symlink-repaired assert_legacy_runtime_deps_symlink_repaired
 phase validate-post-doctor-config validate_post_doctor_config
 phase assert-survival assert_survival
-phase fixture-plugin-consent repair_fixture_plugin_consent
+run_plugin_fixture_phase fixture-plugin-consent repair_fixture_plugin_consent
 if [ "$SCENARIO" = "recovery-cleanup" ]; then
   phase recovery-custom-restore node scripts/e2e/lib/upgrade-survivor/recovery-cleanup.mjs custom-restore
 fi
