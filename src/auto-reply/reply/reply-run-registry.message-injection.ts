@@ -308,7 +308,7 @@ export async function finalizeReplyMessageInjectionAttempt(params: {
   attempt: ReplyMessageInjectionAttempt;
   target: ReplyMessageInjectionTarget;
   inboundAudio?: boolean;
-  onAccepted?: () => void;
+  onOutcome?: (outcome: "accepted" | "indeterminate") => void;
   onAdopted?: () => void | Promise<void>;
   shouldAbortOnAdoptionError?: (error: unknown) => boolean;
 }) {
@@ -316,6 +316,8 @@ export async function finalizeReplyMessageInjectionAttempt(params: {
   if (outcome.status === "rejected") {
     return { status: "rejected" as const, outcome, targetRunId: params.attempt.targetRunId };
   }
+  // Retained input custody must be visible before fallible source adoption.
+  params.onOutcome?.(outcome.status);
   if (outcome.status === "indeterminate") {
     let adoptionError: unknown;
     try {
@@ -335,7 +337,6 @@ export async function finalizeReplyMessageInjectionAttempt(params: {
   recordAcceptedReplyMessageInjectionTarget(params.target, {
     inboundAudio: params.inboundAudio,
   });
-  params.onAccepted?.();
   let aborted = outcome.result?.transcriptCommit === "unconfirmed";
   if (aborted) {
     abortReplyMessageInjectionTarget(params.target);

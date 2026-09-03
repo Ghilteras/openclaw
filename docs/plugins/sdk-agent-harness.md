@@ -315,6 +315,13 @@ route and scoped profiles, or the harness's native account when the plan leaves
 auth to the harness. The harness must not switch routes, reuse a native thread,
 attach tools, invoke agent lifecycle hooks, or deliver output.
 
+When supplied, call `params.assertCurrent()` immediately before each inference
+request or process start, including after preparation awaits and on retries.
+It revalidates the caller's live authority and expires when the completion ends.
+A thrown assertion ends execution; do not treat it as a credential failure or
+retry with another profile. Continue to honor `abortSignal`; cleanup must remain
+available after authority expires.
+
 Return `{ assistant: AssistantMessage }`. Core accepts only terminal text/thinking
 content with a `stop` or `length` stop reason; tool calls, failed stops, and empty
 output are rejected. Title requests set `outputTextPolicy: "strict-visible"`:
@@ -585,6 +592,22 @@ secret-input, timeout, and cancellation fencing. Harnesses keep ownership of
 their protocol envelope and must pass the exact turn signal and active-owner
 check; `run(...)` returns an answered, declined, cancelled, or unsupported
 outcome for the adapter to translate.
+
+Pass the original prepared attempt, including its exact `hostCapabilities`
+object, as `delivery` when using the native question helpers. Core captures the
+question creator's prepared caller policy and lifetime before any steering handle
+is published. Copies of the capability object do not carry that binding. Built-in
+tools capture their creation scope; CLI native questions retain the original
+caller policy before tool-cap translation. The answering turn's model choice or
+queued operation never replaces the question creator's authority.
+
+Plain-text channel answers use this creator binding even when the runtime cannot
+accept ordinary steering. Missing, closed, or mismatched creator authority produces
+a visible refusal, not a new agent turn. The incoming source and creator must
+both remain current through the final answer dispatch. Gateway-launched CLI MCP
+tools use the same original caller snapshot, bound to their exact live grant.
+Standalone attach grants have no prepared run snapshot; their questions retain
+structured question controls but do not accept ordinary channel text.
 
 Omit `gatewayCall` in `runAgentHarnessGatewayQuestion(...)` or
 `agentHarnessStructuredInput.run(...)` to use the core-owned Gateway transport.
@@ -882,6 +905,24 @@ The OpenClaw transcript remains the compatibility layer for:
 - transcript search and indexing
 - switching back to the built-in OpenClaw harness on a later turn
 - generic `/new`, `/reset`, and session deletion behavior
+
+For user-message mirrors, use
+`restorePreparedUserTurnOperationalMetaForRuntime({ runtimeMessage, preparedMessage })`
+from `openclaw/plugin-sdk/agent-harness-runtime`. Pass an independent, trusted
+snapshot of the host-prepared input as `preparedMessage`. Clone `content` and
+selected-mention metadata before hooks that can mutate them in place, and keep
+that snapshot unchanged.
+
+The helper restores operational metadata on user messages without replacing
+native or hook-rewritten content. Non-user runtime messages are returned unchanged.
+Human mentions survive only when the entire `content` value exactly matches the
+prepared snapshot; changed text must not inherit the old selections.
+
+Restored metadata neither authorizes actions nor proves a fresh transcript append.
+After the canonical append, pass its committed message, anchor, and actual
+`{ appended }` result to `userTurnTranscriptRecorder.markRuntimePersisted(...)`.
+Only `appended: true` can trigger an original-input commit notification; an
+idempotent history match must report `false`.
 
 Store native bindings in plugin state. Implement `reset(...)` for an in-place
 session reset and `withSessionDeletion(params, run)` for removal of a session

@@ -14,6 +14,10 @@ import {
   type AgentQuestionDispatcher,
 } from "../harness/gateway-question-dispatch.js";
 import { registerPendingAgentQuestion } from "../harness/gateway-question.js";
+import {
+  resolveAgentQuestionAnswerAuthority,
+  withAgentQuestionAnswerAuthority,
+} from "../harness/host-private-capabilities.js";
 import { ASK_USER_TOOL_DISPLAY_SUMMARY, describeAskUserTool } from "../tool-description-presets.js";
 import {
   DEFAULT_ASK_USER_TIMEOUT_SECONDS,
@@ -509,6 +513,8 @@ export function createAskUserTool(params: {
   runId?: string;
   gatewayCall?: AgentHarnessQuestionGatewayCall | AgentQuestionDispatcher;
 }): AnyAgentTool {
+  // Tool callbacks may run outside their creation scope; never borrow the invoker's owner.
+  const questionAuthority = resolveAgentQuestionAnswerAuthority();
   const gatewayCall = resolveAgentQuestionGatewayCall(params.gatewayCall);
   return {
     label: "Ask User",
@@ -584,25 +590,27 @@ export function createAskUserTool(params: {
         throw new Error("question.waitAnswer returned an invalid status");
       };
       try {
-        state.claim = registerPendingAgentQuestion({
-          questionId,
-          sessionKey,
-          questions: normalized.questions.map(({ questionId: id, ...question }) => ({
-            ...question,
-            id,
-          })),
-          gatewayCall: params.gatewayCall,
-          onCancel: () => {
-            if (
-              askUserQuestions.get(questionId) === state &&
-              state.phase.kind !== "reserved" &&
-              state.phase.kind !== "resolving" &&
-              state.phase.kind !== "prompt-failed"
-            ) {
-              transitionAskUserQuestion(state, { kind: "resolving" });
-            }
-          },
-        });
+        state.claim = withAgentQuestionAnswerAuthority(questionAuthority, () =>
+          registerPendingAgentQuestion({
+            questionId,
+            sessionKey,
+            questions: normalized.questions.map(({ questionId: id, ...question }) => ({
+              ...question,
+              id,
+            })),
+            gatewayCall: params.gatewayCall,
+            onCancel: () => {
+              if (
+                askUserQuestions.get(questionId) === state &&
+                state.phase.kind !== "reserved" &&
+                state.phase.kind !== "resolving" &&
+                state.phase.kind !== "prompt-failed"
+              ) {
+                transitionAskUserQuestion(state, { kind: "resolving" });
+              }
+            },
+          }),
+        );
         const registration = Promise.resolve().then(
           () =>
             gatewayCall(

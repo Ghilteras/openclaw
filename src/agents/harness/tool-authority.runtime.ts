@@ -10,6 +10,11 @@ import {
   getGatewayToolCallerIdentity,
   withGatewayToolCallerIdentity,
 } from "../tools/gateway-caller-context.js";
+import {
+  createAgentQuestionAnswerAuthority,
+  registerAgentHarnessQuestionAnswerAuthority,
+  withAgentQuestionAnswerAuthority,
+} from "./host-private-capabilities.js";
 import type { AgentHarnessAttemptParamsV2 } from "./types.js";
 
 type ToolAuthorityAttempt = Pick<
@@ -97,9 +102,38 @@ export async function withPreparedEmbeddedRunToolAuthority<T, Attempt extends To
       throw new Error("embedded tool authority lost its source execution claim");
     }
   }
+  const questionAuthority = sessionKey
+    ? createAgentQuestionAnswerAuthority({
+        sessionKey,
+        fingerprint,
+        project: (caller) =>
+          operation
+            ? operation.projectToolAuthorityFingerprint(caller)
+            : direct?.project(caller, route),
+        assertActive: () => {
+          assertActive();
+          if (
+            operation &&
+            (resolveActiveReplyOperationForSessionId(sessionId) !== operation ||
+              operation.toolAuthorityRoute?.provider !== route.provider ||
+              operation.toolAuthorityRoute.model !== route.model ||
+              operation.toolAuthorityFingerprint !== fingerprint)
+          ) {
+            throw new Error("question creator reply authority is no longer active");
+          }
+        },
+      })
+    : undefined;
+  if (attempt.hostCapabilities && questionAuthority) {
+    registerAgentHarnessQuestionAnswerAuthority(attempt.hostCapabilities, questionAuthority);
+  }
+  const runPrepared = () =>
+    withAgentQuestionAnswerAuthority(questionAuthority, () =>
+      run({ ...attempt, toolAuthorityFingerprint: fingerprint }),
+    );
   try {
     if (!agentId || !sessionKey) {
-      return await run({ ...attempt, toolAuthorityFingerprint: fingerprint });
+      return await runPrepared();
     }
     return await withGatewayToolCallerIdentity(
       {
@@ -150,7 +184,7 @@ export async function withPreparedEmbeddedRunToolAuthority<T, Attempt extends To
           };
         },
       },
-      () => run({ ...attempt, toolAuthorityFingerprint: fingerprint }),
+      runPrepared,
     );
   } finally {
     // Retained ALS callbacks do not extend the attempt's authority.

@@ -27,6 +27,7 @@ import {
   createShouldEmitToolResult,
   isAudioPayload,
 } from "./agent-runner-helpers.js";
+import { runReplyQuestionInput } from "./agent-runner-question-input.js";
 import { resetReplyRunSession } from "./agent-runner-session-reset.js";
 import { runActiveReplySteer } from "./agent-runner-steer-adoption.js";
 import { resolveQueuedReplyExecutionConfig } from "./agent-runner-utils.js";
@@ -207,6 +208,13 @@ export async function runReplyAgent(
     releaseAdmissionTicket();
     typing.cleanup();
     return undefined;
+  }
+
+  const questionInput = await runReplyQuestionInput(params);
+  if (questionInput.handled) {
+    releaseAdmissionTicket();
+    typing.cleanup();
+    return questionInput.payload;
   }
 
   const baseShouldEmitToolResult = createShouldEmitToolResult({

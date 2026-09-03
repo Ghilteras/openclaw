@@ -4,6 +4,7 @@ import type {
   QuestionRequestQuestion,
   QuestionWaitAnswerResult,
 } from "../../../packages/gateway-protocol/src/schema/questions.js";
+import type { ReplyToolAuthorityOverlay } from "../../auto-reply/reply/reply-run-registry.contracts.js";
 import { resolveGlobalMap } from "../../shared/global-singleton.js";
 import type { EmbeddedRunAttemptParams } from "../embedded-agent-runner/run/types.js";
 import type { GatewayQuestionCall } from "../tools/gateway-question-lifecycle.js";
@@ -14,6 +15,13 @@ import {
   type AgentHarnessQuestionGatewayCall,
   type AgentQuestionDispatcher,
 } from "./gateway-question-dispatch.js";
+import type { AgentHarnessHostCapabilities } from "./host-capability-types.js";
+import {
+  captureAgentQuestionAnswerAuthority,
+  resolveAgentQuestionAnswerAuthority,
+  withAgentQuestionAnswerAuthority,
+  type PreparedQuestionAnswerAuthority,
+} from "./host-private-capabilities.js";
 import {
   buildAgentHarnessUserInputAnswers,
   deliverAgentHarnessQuestionPrompt,
@@ -32,6 +40,7 @@ type PendingAgentGatewayQuestion = {
   kind: "gateway";
   questionId: string;
   sessionKey: string;
+  answerAuthority?: PreparedQuestionAnswerAuthority;
   questions: readonly AgentHarnessUserInputQuestion[];
   gatewayCall: GatewayQuestionCall;
   supportsSourceBound: boolean;
@@ -48,6 +57,7 @@ type PendingAgentGatewayQuestion = {
 type PendingAgentSecretInput = {
   kind: "secret";
   sessionKey: string;
+  answerAuthority?: PreparedQuestionAnswerAuthority;
   resolving: boolean;
   settle: (text?: string) => boolean;
 };
@@ -109,6 +119,7 @@ function reserveQuestionInput(
   const assertCurrent = () => {
     try {
       authority?.assertCurrent();
+      state.answerAuthority?.assertActive();
       if (pendingAgentQuestions.get(state.sessionKey) !== state) {
         throw new Error("pending question is no longer current");
       }
@@ -167,6 +178,7 @@ export function registerPendingAgentQuestion(params: {
   dispose: () => void;
 } {
   const sessionKey = params.sessionKey.trim();
+  const answerAuthority = captureAgentQuestionAnswerAuthority(sessionKey);
   const existing = pendingAgentQuestions.get(sessionKey);
   if (existing) {
     throw new Error(`session already has a pending agent input request: ${sessionKey}`);
@@ -183,6 +195,7 @@ export function registerPendingAgentQuestion(params: {
     kind: "gateway",
     ...params,
     sessionKey,
+    answerAuthority,
     gatewayCall: resolveAgentQuestionGatewayCall(params.gatewayCall),
     supportsSourceBound: typeof params.gatewayCall !== "function",
     registration,
@@ -224,6 +237,45 @@ export function registerPendingAgentQuestion(params: {
   };
 }
 
+/** Core ingress claims require the question creator's policy, not an answering-turn owner. */
+export async function claimPendingAgentQuestionAnswerFromCaller(params: {
+  sessionKey?: string;
+  text: string;
+  persist?: () => Promise<void>;
+  caller: ReplyToolAuthorityOverlay;
+  assertSourceCurrent: () => void;
+}): Promise<boolean> {
+  const state = params.sessionKey ? pendingAgentQuestions.get(params.sessionKey.trim()) : undefined;
+  return claimPendingAgentQuestionAnswer({
+    sessionKey: params.sessionKey,
+    text: params.text,
+    persist: params.persist,
+    authority: {
+      kind: "source-bound",
+      assertCurrent: () => {
+        try {
+          params.assertSourceCurrent();
+          if (state) {
+            if (!state.answerAuthority) {
+              throw new Error("pending question has no prepared creator authority");
+            }
+            state.answerAuthority.assertCaller(params.caller);
+            if (pendingAgentQuestions.get(state.sessionKey) !== state) {
+              throw new Error("pending question is no longer current");
+            }
+          }
+          params.assertSourceCurrent();
+        } catch (error) {
+          throw new QuestionDispatchRefusedError(
+            error instanceof Error ? error.message : "question answer authority refused",
+            { cause: error },
+          );
+        }
+      },
+    },
+  });
+}
+
 /** Claims the next queued plain-text message for the session's gateway question. */
 export async function claimPendingAgentQuestionAnswer(params: {
   sessionKey?: string;
@@ -238,6 +290,7 @@ export async function claimPendingAgentQuestionAnswer(params: {
     return false;
   }
   if (state.kind === "secret") {
+    state.answerAuthority?.assertActive();
     state.resolving = true;
     return state.settle(params.text);
   }
@@ -321,6 +374,7 @@ export async function cancelPendingAgentQuestionForSession(params: {
     return false;
   }
   if (state.kind === "secret") {
+    state.answerAuthority?.assertActive();
     state.resolving = true;
     return state.settle();
   }
@@ -359,7 +413,9 @@ type RunAgentHarnessSecretInputParams = {
   questions: readonly AgentHarnessUserInputQuestion[];
   sessionKey: string;
   timeoutMs: number;
-  delivery: Pick<EmbeddedRunAttemptParams, "onBlockReply" | "onPartialReply">;
+  delivery: Pick<EmbeddedRunAttemptParams, "onBlockReply" | "onPartialReply"> & {
+    hostCapabilities?: AgentHarnessHostCapabilities;
+  };
   promptOptions?: AgentHarnessUserInputPromptOptions;
   signal?: AbortSignal;
 };
@@ -370,6 +426,7 @@ function runAgentHarnessSecretInput(
 ): Promise<string | undefined> {
   params.signal?.throwIfAborted();
   const sessionKey = params.sessionKey.trim();
+  const answerAuthority = captureAgentQuestionAnswerAuthority(sessionKey);
   if (!sessionKey) {
     throw new Error("secret input requires a session key");
   }
@@ -395,6 +452,7 @@ function runAgentHarnessSecretInput(
     const state: PendingAgentSecretInput = {
       kind: "secret",
       sessionKey,
+      answerAuthority,
       resolving: false,
       settle: finish,
     };
@@ -419,7 +477,9 @@ type RunAgentHarnessGatewayQuestionParams = {
   runId?: string;
   timeoutMs: number;
   gatewayCall?: AgentHarnessQuestionGatewayCall | AgentQuestionDispatcher;
-  delivery: Pick<EmbeddedRunAttemptParams, "onBlockReply" | "onPartialReply">;
+  delivery: Pick<EmbeddedRunAttemptParams, "onBlockReply" | "onPartialReply"> & {
+    hostCapabilities?: AgentHarnessHostCapabilities;
+  };
   promptOptions?: AgentHarnessUserInputPromptOptions;
   signal?: AbortSignal;
   questionId?: string;
@@ -427,6 +487,15 @@ type RunAgentHarnessGatewayQuestionParams = {
 
 /** Registers, presents, and waits for one harness-owned gateway question record. */
 export async function runAgentHarnessGatewayQuestion(
+  params: RunAgentHarnessGatewayQuestionParams,
+): Promise<QuestionWaitAnswerResult> {
+  const authority = resolveAgentQuestionAnswerAuthority(params.delivery.hostCapabilities);
+  return await withAgentQuestionAnswerAuthority(authority, () =>
+    runScopedAgentHarnessQuestion(params),
+  );
+}
+
+async function runScopedAgentHarnessQuestion(
   params: RunAgentHarnessGatewayQuestionParams,
 ): Promise<QuestionWaitAnswerResult> {
   if (params.questions.some((question) => question.isSecret)) {

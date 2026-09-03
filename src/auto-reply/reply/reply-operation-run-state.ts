@@ -10,7 +10,8 @@ type ReplyOperationAdmissionSnapshot =
         | "aborted"
         | "lifecycle-invalidated"
         | "queue-cap"
-        | "question-response-indeterminate";
+        | "question-response-indeterminate"
+        | "question-response-refused";
     };
 
 export type ReplyOperationRunState = {

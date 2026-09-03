@@ -3,6 +3,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { isIngressAdoptionLostError } from "../../channels/message/ingress-drain.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { markReplyPayloadForSourceSuppressionDelivery } from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
 import {
   scheduleFollowupDrainAfterReplyOperationClear,
@@ -170,9 +171,12 @@ export async function runActiveReplySteer(
       attempt: injectionAttempt,
       target: injectionTarget,
       inboundAudio: followupRun.currentInboundAudio === true,
-      onAccepted: () => {
+      onOutcome: (outcome) => {
         if (replyOperationRunState) {
-          replyOperationRunState.admission = { status: "accepted", mode: "steer" };
+          replyOperationRunState.admission =
+            outcome === "indeterminate"
+              ? { status: "skipped", reason: "question-response-indeterminate" }
+              : { status: "accepted", mode: "steer" };
         }
       },
       onAdopted: () => admitFollowupRunLifecycle(followupRun),
@@ -181,18 +185,15 @@ export async function runActiveReplySteer(
     if (finalization.status === "rejected") {
       return await fallback(finalization.outcome.reason);
     }
-    // Uncertain dispatch cannot relinquish source custody through onAbandoned,
-    // even if the source's later adoption callback rejects.
-    parked.consume(finalization.status === "indeterminate" ? "consumed" : undefined);
+    // Accepted or indeterminate input cannot be abandoned for replay, even
+    // when the source's later adoption callback rejects.
+    parked.consume("consumed");
     if (finalization.status === "indeterminate") {
-      if (replyOperationRunState) {
-        replyOperationRunState.admission = {
-          status: "skipped",
-          reason: "question-response-indeterminate",
-        };
-      }
       typing.cleanup();
-      return { text: finalization.outcome.errorMessage, isError: true };
+      return markReplyPayloadForSourceSuppressionDelivery({
+        text: finalization.outcome.errorMessage,
+        isError: true,
+      });
     }
     const transcriptCommitUnconfirmed =
       finalization.outcome.result?.transcriptCommit === "unconfirmed";

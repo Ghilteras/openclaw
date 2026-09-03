@@ -25,6 +25,13 @@ import {
   withoutGatewayToolCallerIdentity,
   withGatewayToolCallerIdentity,
 } from "../tools/gateway-caller-context.js";
+import type { AgentQuestionDispatcher } from "./gateway-question-dispatch.js";
+import {
+  claimPendingAgentQuestionAnswer,
+  claimPendingAgentQuestionAnswerFromCaller,
+  registerPendingAgentQuestion,
+  runAgentHarnessGatewayQuestion,
+} from "./gateway-question.js";
 import { withPreparedEmbeddedRunToolAuthority } from "./tool-authority.runtime.js";
 
 const sessionId = "authority-session";
@@ -124,6 +131,167 @@ afterEach(() => {
 });
 
 describe("host-prepared embedded tool authority", () => {
+  it.each(["claim", "wrapper", "lifecycle", "persistence"] as const)(
+    "refuses early native-question answers after creator %s closure",
+    async (closure) => {
+      await admitted(async ({ admittedRunContext, close }) => {
+        const gatewayCall = vi.fn(async () => ({ status: "answered" }));
+        let question: ReturnType<typeof registerPendingAgentQuestion> | undefined;
+        const answer = () =>
+          claimPendingAgentQuestionAnswer({
+            sessionKey,
+            text: "Continue",
+            persist: async () => {
+              if (closure === "persistence") {
+                close();
+              }
+            },
+          });
+        try {
+          await withPreparedEmbeddedRunToolAuthority(
+            { admittedRunContext },
+            attempt,
+            undefined,
+            async () => {
+              // Native callbacks can ask before publishing an embedded queue handle.
+              question = registerPendingAgentQuestion({
+                questionId: "early-native-question",
+                sessionKey,
+                questions: [{ id: "choice", header: "Choice", question: "Continue?" }],
+                gatewayCall,
+                answer: Promise.resolve({ status: "pending" }),
+              });
+              question.attachRegistration(Promise.resolve({ id: "early-native-question" }));
+              if (closure === "wrapper") {
+                return;
+              }
+              if (closure === "claim") {
+                close();
+              } else if (closure === "lifecycle") {
+                rotateAgentEventLifecycleGeneration();
+              }
+              await expect(answer()).rejects.toThrow("no longer active");
+            },
+          );
+          if (closure === "wrapper") {
+            await expect(answer()).rejects.toThrow("no longer active");
+          }
+          expect(gatewayCall).not.toHaveBeenCalled();
+        } finally {
+          question?.dispose();
+        }
+      });
+    },
+  );
+
+  it("checks early question caller policy without a published handle", async () => {
+    await admitted(async ({ admittedRunContext }) =>
+      withPreparedEmbeddedRunToolAuthority({ admittedRunContext }, attempt, undefined, async () => {
+        const dispatch = vi.fn<AgentQuestionDispatcher["call"]>(async ({ authority }) => {
+          if (authority.kind === "source-bound") {
+            authority.assertCurrent();
+          }
+          return { status: "answered" };
+        });
+        const question = registerPendingAgentQuestion({
+          questionId: "early-caller-policy",
+          sessionKey,
+          questions: [{ id: "choice", header: "Choice", question: "Continue?" }],
+          gatewayCall: { version: 2, call: dispatch },
+          answer: Promise.resolve({ status: "pending" }),
+        });
+        question.attachRegistration(Promise.resolve({ id: "early-caller-policy" }));
+        const source = vi.fn();
+        const answer = (caller: ReplyToolAuthorityOverlay) =>
+          claimPendingAgentQuestionAnswerFromCaller({
+            sessionKey,
+            text: "Continue",
+            caller,
+            assertSourceCurrent: source,
+          });
+        try {
+          await expect(answer({ ...own, toolsAllow: [] })).rejects.toThrow("caller policy");
+          await expect(answer({ ...own, permissionMode: "guarded" })).rejects.toThrow(
+            "caller policy",
+          );
+          expect(dispatch).not.toHaveBeenCalled();
+          await expect(answer(own)).resolves.toBe(true);
+          expect(dispatch).toHaveBeenCalledOnce();
+          expect(source).toHaveBeenCalled();
+        } finally {
+          question.dispose();
+        }
+      }),
+    );
+  });
+
+  it("does not upgrade a legacy unbound question through the caller-gated entry", async () => {
+    const gatewayCall = vi.fn(async () => ({ status: "answered" }));
+    const question = registerPendingAgentQuestion({
+      questionId: "legacy-unbound-question",
+      sessionKey,
+      questions: [{ id: "choice", header: "Choice", question: "Continue?" }],
+      gatewayCall,
+      answer: Promise.resolve({ status: "pending" }),
+    });
+    question.attachRegistration(Promise.resolve({ id: "legacy-unbound-question" }));
+    try {
+      await expect(
+        claimPendingAgentQuestionAnswerFromCaller({
+          sessionKey,
+          text: "Continue",
+          caller: own,
+          assertSourceCurrent: () => {},
+        }),
+      ).rejects.toThrow("no prepared creator authority");
+      expect(gatewayCall).not.toHaveBeenCalled();
+      await expect(claimPendingAgentQuestionAnswer({ sessionKey, text: "Continue" })).resolves.toBe(
+        true,
+      );
+    } finally {
+      question.dispose();
+    }
+  });
+
+  it("keeps secret input behind the same creator caller policy", async () => {
+    await admitted(async ({ admittedRunContext }) =>
+      withPreparedEmbeddedRunToolAuthority({ admittedRunContext }, attempt, undefined, async () => {
+        const controller = new AbortController();
+        const pending = runAgentHarnessGatewayQuestion({
+          sessionKey,
+          timeoutMs: 1_000,
+          delivery: {},
+          signal: controller.signal,
+          questions: [
+            { id: "choice", header: "Choice", question: "Secret input?", isSecret: true },
+          ],
+        });
+        try {
+          await expect(
+            claimPendingAgentQuestionAnswerFromCaller({
+              sessionKey,
+              text: "synthetic-input",
+              caller: { ...own, toolsAllow: [] },
+              assertSourceCurrent: () => {},
+            }),
+          ).rejects.toThrow("caller policy");
+          await expect(
+            claimPendingAgentQuestionAnswerFromCaller({
+              sessionKey,
+              text: "synthetic-input",
+              caller: own,
+              assertSourceCurrent: () => {},
+            }),
+          ).resolves.toBe(true);
+          await expect(pending).resolves.toMatchObject({ status: "answered" });
+        } finally {
+          controller.abort();
+          await pending;
+        }
+      }),
+    );
+  });
+
   it("requires voice caller evidence without audit identity and strips host evidence", async () => {
     await published(async ({ handle, queue }) => {
       expect(getGatewayToolCallerIdentity()?.executionIdentityToken).toBeUndefined();
