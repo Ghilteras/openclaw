@@ -9,7 +9,9 @@ export function createTaskUpdateFixture(firstFireAt, parent = tmpdir()) {
   const root = fs.mkdtempSync(path.resolve(parent, "vitest-task-updates-"));
   const observation = path.join(root, "observation.json");
   const packageRoot = path.dirname(fileURLToPath(import.meta.resolve("vitest/package.json")));
-  const fixture = (name) => fileURLToPath(new URL(name, import.meta.url));
+  // Literal module URLs keep the generated runner and preload traceable.
+  const runner = fileURLToPath(new URL("./vitest-runner-task-updates.runner.mjs", import.meta.url));
+  const clock = fileURLToPath(new URL("./vitest-runner-task-updates.clock.mjs", import.meta.url));
   const config = path.join(root, "vitest.config.mjs");
   fs.writeFileSync(path.join(root, "package.json"), '{"type":"module","workspaces":[]}');
   fs.writeFileSync(
@@ -23,8 +25,8 @@ export function createTaskUpdateFixture(firstFireAt, parent = tmpdir()) {
       test: {
         globals: true,
         include: ["passive.test.mjs"],
-        runner: fixture("vitest-runner-task-updates.runner.mjs"),
-        execArgv: ["--import", fixture("vitest-runner-task-updates.clock.mjs")],
+        runner,
+        execArgv: ["--import", clock],
         provide: { firstFireAt, observation },
         pool: "threads",
         maxWorkers: 1,
