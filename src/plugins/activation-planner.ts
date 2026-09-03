@@ -5,8 +5,7 @@ import { uniqueStrings } from "@openclaw/normalization-core/string-normalization
 import type { OpenClawConfig } from "../config/types.js";
 import { normalizePluginsConfig } from "./config-state.js";
 import {
-  hasExplicitManifestOwnerTrust,
-  isBundledManifestOwner,
+  hasExplicitManifestOwnerActivationTrust,
   passesManifestOwnerBasePolicy,
 } from "./manifest-owner-policy.js";
 import type { PluginManifestRecord } from "./manifest-registry.js";
@@ -104,7 +103,7 @@ export function resolveManifestActivationPlan(
       }
       if (
         params.requireExplicitManifestOwnerTrust &&
-        !hasExplicitActivationPlannerManifestOwnerTrust({
+        !hasExplicitManifestOwnerActivationTrust({
           plugin,
           normalizedConfig,
         })
@@ -138,23 +137,6 @@ export function resolveManifestActivationPluginIds(
   params: ResolveManifestActivationPlanParams,
 ): string[] {
   return [...resolveManifestActivationPlan(params).pluginIds];
-}
-
-function hasExplicitActivationPlannerManifestOwnerTrust(params: {
-  plugin: Pick<PluginManifestRecord, "id" | "origin">;
-  normalizedConfig: ReturnType<typeof normalizePluginsConfig>;
-}): boolean {
-  // plugins.load.paths is already an operator-selected trust boundary. Keep
-  // the trust local to planner callers so setup-only channel imports retain
-  // their stricter scoped-import policy.
-  return (
-    isBundledManifestOwner(params.plugin) ||
-    params.plugin.origin === "config" ||
-    hasExplicitManifestOwnerTrust({
-      plugin: params.plugin,
-      normalizedConfig: params.normalizedConfig,
-    })
-  );
 }
 
 function listManifestActivationTriggerReasons(

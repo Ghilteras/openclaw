@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizePluginsConfig } from "./config-state.js";
 import {
+  hasExplicitManifestOwnerActivationTrust,
   hasExplicitManifestOwnerTrust,
   isActivatedManifestOwner,
   isBundledManifestOwner,
@@ -133,6 +134,29 @@ describe("manifest owner policy", () => {
       hasExplicitManifestOwnerTrust({
         plugin: { id: "demo" },
         normalizedConfig: normalizePluginsConfig({}),
+      }),
+    ).toBe(false);
+  });
+
+  it("includes bundled and load-path owners in explicit activation trust", () => {
+    const normalizedConfig = normalizePluginsConfig({});
+
+    expect(
+      hasExplicitManifestOwnerActivationTrust({
+        plugin: { id: "bundled", origin: "bundled" },
+        normalizedConfig,
+      }),
+    ).toBe(true);
+    expect(
+      hasExplicitManifestOwnerActivationTrust({
+        plugin: { id: "load-path", origin: "config" },
+        normalizedConfig,
+      }),
+    ).toBe(true);
+    expect(
+      hasExplicitManifestOwnerActivationTrust({
+        plugin: { id: "installed", origin: "global" },
+        normalizedConfig,
       }),
     ).toBe(false);
   });

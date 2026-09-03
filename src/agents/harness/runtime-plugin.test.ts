@@ -170,6 +170,40 @@ describe("harness runtime plugins", () => {
     );
   });
 
+  it("reports an installed harness owner without explicit trust as not activatable", async () => {
+    const pluginRegistry = createEmptyPluginRegistry();
+    const config = { plugins: { enabled: true } } satisfies OpenClawConfig;
+    attachPreparedPluginFacts(
+      pluginRegistry,
+      config,
+      makeRegistry([
+        {
+          id: "custom-owner",
+          channels: [],
+          origin: "global",
+          activation: { onAgentHarnesses: ["custom-harness"] },
+        },
+      ]),
+    );
+
+    const error = await ensureSelectedAgentHarnessPlugin({
+      provider: "custom-provider",
+      modelId: "custom-model",
+      agentHarnessRuntimeOverride: "custom-harness",
+      workspaceDir: "/tmp/workspace",
+      pluginRegistry,
+    }).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "(reason=owner-plugin-not-activatable, ownerPluginId=custom-owner)",
+    );
+    expect((error as Error).message).toContain(
+      'Owner plugin "custom-owner" is not activatable (installed without explicit trust). Add plugins.entries.custom-owner.enabled=true',
+    );
+    expect((error as Error).message).toContain('Run "openclaw doctor --fix"');
+  });
+
   it("reports global plugin disablement before a selected Codex owner's absence", async () => {
     const pluginRegistry = createEmptyPluginRegistry();
     const config = { plugins: { enabled: false } } satisfies OpenClawConfig;

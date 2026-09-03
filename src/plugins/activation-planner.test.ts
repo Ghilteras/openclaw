@@ -234,7 +234,17 @@ describe("activation planner", () => {
     ).toEqual(["custom-harness-plugin"]);
   });
 
-  it("treats load-path manifest owners as explicitly trusted for activation planning", () => {
+  it("uses shared activation trust for bundled and load-path manifest owners", () => {
+    expect(
+      resolveManifestActivationPluginIds({
+        trigger: {
+          kind: "agentHarness",
+          runtime: "codex",
+        },
+        requireExplicitManifestOwnerTrust: true,
+      }),
+    ).toEqual(["openai"]);
+
     expect(
       resolveManifestActivationPluginIds({
         trigger: {

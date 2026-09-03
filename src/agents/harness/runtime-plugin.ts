@@ -6,6 +6,7 @@ import {
   resolveEffectivePluginActivationState,
 } from "../../plugins/config-state.js";
 import { isPluginEnabledByDefaultForPlatform } from "../../plugins/default-enablement.js";
+import { hasExplicitManifestOwnerActivationTrust } from "../../plugins/manifest-owner-policy.js";
 import type { PluginRegistry } from "../../plugins/registry-types.js";
 import {
   pluginInstallPathMatchesRoot,
@@ -105,6 +106,16 @@ function describeMissingHarnessRegistration(
     if (!activation.activated) {
       blockers.push(
         `Owner plugin "${pluginId}" is not activatable${activation.reason ? ` (${activation.reason})` : ""}`,
+      );
+    } else if (
+      plugin &&
+      !hasExplicitManifestOwnerActivationTrust({
+        plugin,
+        normalizedConfig: plugins,
+      })
+    ) {
+      blockers.push(
+        `Owner plugin "${pluginId}" is not activatable (installed without explicit trust). Add plugins.entries.${pluginId}.enabled=true`,
       );
     } else if (!plugin) {
       blockers.push(`Owner plugin "${pluginId}" is absent from this prepared plugin generation`);

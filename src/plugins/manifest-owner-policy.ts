@@ -37,6 +37,19 @@ export function hasExplicitManifestOwnerTrust(params: {
   );
 }
 
+/** True when a manifest owner is trusted for explicit runtime activation. */
+export function hasExplicitManifestOwnerActivationTrust(params: {
+  plugin: Pick<PluginManifestRecord, "id" | "origin">;
+  normalizedConfig: NormalizedPluginsConfig;
+}): boolean {
+  // plugins.load.paths is already an operator-selected trust boundary.
+  return (
+    isBundledManifestOwner(params.plugin) ||
+    params.plugin.origin === "config" ||
+    hasExplicitManifestOwnerTrust(params)
+  );
+}
+
 /** True when a plugin passes global enablement, allowlist, denylist, and disabled checks. */
 export function passesManifestOwnerBasePolicy(params: {
   plugin: Pick<PluginManifestRecord, "id">;
