@@ -37,7 +37,11 @@ describe("managed OpenCode conversation headers at fetch egress", () => {
           if (!model.headers?.["X-OpenCode-Session"]) {
             expect(options?.headers?.["x-opencode-session"]).toBe("conversation-a");
           }
-          return streamSimpleGoogle({ ...model, api: "google-generative-ai" }, context, options);
+          return streamSimpleGoogle(
+            { ...model, api: "google-generative-ai", compat: undefined },
+            context,
+            options,
+          );
         },
       },
     });
@@ -46,7 +50,8 @@ describe("managed OpenCode conversation headers at fetch egress", () => {
       name: "Test model",
       api,
       provider: "opencode",
-      baseUrl: "https://opencode.ai/zen/v1",
+      baseUrl:
+        api === "anthropic-messages" ? "https://opencode.ai/zen" : "https://opencode.ai/zen/v1",
       reasoning: false,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
