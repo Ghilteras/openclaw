@@ -29,7 +29,7 @@ import {
   resolveAnthropicContextManagementBetaHeader,
 } from "../transports/anthropic-payload-policy.js";
 import { consumeAnthropicStream } from "../transports/anthropic-stream-reducer.js";
-import { isOpencodeEndpoint } from "../transports/session-affinity.js";
+import { resolveOpencodeSessionHeaders } from "../transports/session-affinity.js";
 import {
   assignTransportErrorDetails,
   finalizeTransportStream,
@@ -251,10 +251,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicComp
         }
 
         const cacheRetention = requestOptions?.cacheRetention ?? resolveCacheRetention();
-        const cacheSessionId =
-          cacheRetention === "none" && !isOpencodeEndpoint(model.baseUrl)
-            ? undefined
-            : requestOptions?.sessionId;
+        const cacheSessionId = cacheRetention === "none" ? undefined : requestOptions?.sessionId;
 
         const created = createClient(
           model,
@@ -262,7 +259,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicComp
           requestOptions?.thinkingEnabled === true,
           requestOptions?.interleavedThinking ?? true,
           shouldUseFineGrainedToolStreamingBeta(model, requestContext),
-          requestOptions?.headers,
+          resolveOpencodeSessionHeaders(model.baseUrl, requestOptions),
           copilotDynamicHeaders,
           cacheSessionId,
         );
@@ -607,14 +604,10 @@ function createClient(
   if (serverSideFallback) {
     betaFeatures.push(ANTHROPIC_SERVER_SIDE_FALLBACK_BETA);
   }
-  const isOpenCodeHost = isOpencodeEndpoint(model.baseUrl);
-  const sessionAffinityHeaders: Record<string, string | null> = sessionId
-    ? isOpenCodeHost
-      ? { "x-opencode-session": sessionId }
-      : getAnthropicCompat(model).sendSessionAffinityHeaders
-        ? { "x-session-affinity": sessionId }
-        : {}
-    : {};
+  const sessionAffinityHeaders: Record<string, string | null> =
+    sessionId && getAnthropicCompat(model).sendSessionAffinityHeaders
+      ? { "x-session-affinity": sessionId }
+      : {};
   const defaultHeaders = mergeHeaders(
     {
       accept: "application/json",

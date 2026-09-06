@@ -23,7 +23,7 @@ import {
   isOpenAICompletionsThinkingEnabled,
   resolveOpenAIClientBaseUrl,
 } from "../transports/openai-transport-shared.js";
-import { isOpencodeEndpoint } from "../transports/session-affinity.js";
+import { resolveOpencodeSessionHeaders } from "../transports/session-affinity.js";
 import {
   assignTransportErrorDetails,
   transportAbortError,
@@ -122,11 +122,15 @@ export const streamOpenAICompletions: StreamFunction<
         isOpenAICompletionsThinkingEnabled(options.reasoningEffort),
       );
       const cacheRetention = resolveCacheRetention(options?.cacheRetention);
-      const cacheSessionId =
-        cacheRetention === "none" && !isOpencodeEndpoint(model.baseUrl)
-          ? undefined
-          : options?.sessionId;
-      const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat);
+      const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
+      const client = createClient(
+        model,
+        context,
+        apiKey,
+        resolveOpencodeSessionHeaders(model.baseUrl, options),
+        cacheSessionId,
+        compat,
+      );
       let params = buildParams(model, context, options, compat, cacheRetention);
       const nextParams = await options?.onPayload?.(params, model);
       if (nextParams !== undefined) {
@@ -318,8 +322,6 @@ function createClient(
   if (sessionId && compat.sessionAffinity !== "none") {
     if (compat.sessionAffinity === "openrouter") {
       headers["x-session-id"] = sessionId;
-    } else if (compat.sessionAffinity === "opencode") {
-      headers["x-opencode-session"] = sessionId;
     } else {
       headers.session_id = sessionId;
       headers["x-client-request-id"] = sessionId;
