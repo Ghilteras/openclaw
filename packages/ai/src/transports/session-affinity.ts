@@ -1,4 +1,4 @@
-import type { StreamOptions } from "../types.js";
+import type { Model, StreamOptions } from "../types.js";
 
 function isOpencodeEndpoint(baseUrl: string): boolean {
   try {
@@ -11,14 +11,16 @@ function isOpencodeEndpoint(baseUrl: string): boolean {
 
 /** Required conversation identity is independent of optional prompt caching. */
 export function resolveOpencodeSessionHeaders(
-  baseUrl: string,
+  model: Pick<Model, "baseUrl" | "headers">,
   options?: Pick<StreamOptions, "sessionId" | "headers">,
 ): Record<string, string> | undefined {
-  if (!options?.sessionId || !isOpencodeEndpoint(baseUrl)) {
+  if (!options?.sessionId || !isOpencodeEndpoint(model.baseUrl)) {
     return options?.headers;
   }
   if (
-    Object.keys(options.headers ?? {}).some((name) => name.toLowerCase() === "x-opencode-session")
+    [model.headers, options.headers].some((headers) =>
+      Object.keys(headers ?? {}).some((name) => name.toLowerCase() === "x-opencode-session"),
+    )
   ) {
     return options.headers;
   }

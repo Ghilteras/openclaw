@@ -34,7 +34,7 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
     options,
     createClient: () => {
       const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
-      return createClient(model, apiKey, resolveOpencodeSessionHeaders(model.baseUrl, options));
+      return createClient(model, apiKey, resolveOpencodeSessionHeaders(model, options));
     },
     buildParams: () => buildParams(model, context, options),
     nextToolCallId: (name) => `${name}_${Date.now()}_${++toolCallCounter}`,

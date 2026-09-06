@@ -85,7 +85,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses", OpenAIRes
         model,
         context,
         apiKey,
-        resolveOpencodeSessionHeaders(model.baseUrl, options),
+        resolveOpencodeSessionHeaders(model, options),
         cacheSessionId,
       );
     },

@@ -259,7 +259,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicComp
           requestOptions?.thinkingEnabled === true,
           requestOptions?.interleavedThinking ?? true,
           shouldUseFineGrainedToolStreamingBeta(model, requestContext),
-          resolveOpencodeSessionHeaders(model.baseUrl, requestOptions),
+          resolveOpencodeSessionHeaders(model, requestOptions),
           copilotDynamicHeaders,
           cacheSessionId,
         );

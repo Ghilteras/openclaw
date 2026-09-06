@@ -127,7 +127,7 @@ export const streamOpenAICompletions: StreamFunction<
         model,
         context,
         apiKey,
-        resolveOpencodeSessionHeaders(model.baseUrl, options),
+        resolveOpencodeSessionHeaders(model, options),
         cacheSessionId,
         compat,
       );
